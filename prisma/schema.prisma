@@ -1,0 +1,299 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum CategoryCode {
+  MD
+  WD
+  XD
+}
+
+enum GroupAssignmentMode {
+  MANUAL
+  RANDOM_WITH_SEEDS
+}
+
+enum ScoringMode {
+  SINGLE_GAME_21
+  BEST_OF_3_21
+}
+
+enum MatchStage {
+  GROUP
+  SERIES_A
+  SERIES_B
+}
+
+enum MatchStatus {
+  SCHEDULED
+  COMPLETED
+  WALKOVER
+}
+
+enum Series {
+  A
+  B
+}
+
+model Player {
+  id        String       @id @default(cuid())
+  name      String
+  gender    Gender
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  teams     TeamMember[]
+
+  @@index([name])
+}
+
+model Category {
+  id        String       @id @default(cuid())
+  code      CategoryCode @unique
+  name      String
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  teams     Team[]
+  groups    Group[]
+
+  @@index([code])
+}
+
+model Team {
+  id          String       @id @default(cuid())
+  name        String
+  categoryId  String
+  category    Category     @relation(fields: [categoryId], references: [id])
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  members     TeamMember[]
+  groupLinks  GroupTeam[]
+  flags       TeamFlags?
+  homeMatches Match[]      @relation("HomeTeam")
+  awayMatches Match[]      @relation("AwayTeam")
+  wonMatches  Match[]      @relation("WinnerTeam")
+  seriesQualifiers SeriesQualifier[]
+  koHomeMatches    KnockoutMatch[] @relation("KOHomeTeam")
+  koAwayMatches    KnockoutMatch[] @relation("KOAwayTeam")
+  koWonMatches     KnockoutMatch[] @relation("KOWinnerTeam")
+  knockoutSeeds    KnockoutSeed[]
+
+  @@unique([name, categoryId])
+  @@index([categoryId])
+}
+
+model TeamMember {
+  id        String   @id @default(cuid())
+  teamId    String
+  playerId  String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, playerId])
+  @@index([playerId])
+}
+
+model Group {
+  id         String      @id @default(cuid())
+  name       String
+  categoryId String
+  category   Category    @relation(fields: [categoryId], references: [id])
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  teams      GroupTeam[]
+  matches    Match[]
+  randomDraws GroupRandomDraw[]
+  seriesQualifiers SeriesQualifier[]
+
+  @@unique([name, categoryId])
+  @@index([categoryId])
+}
+
+model GroupTeam {
+  id        String   @id @default(cuid())
+  groupId   String
+  teamId    String   @unique
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([groupId, teamId])
+  @@index([teamId])
+}
+
+model Match {
+  id         String      @id @default(cuid())
+  stage      MatchStage
+  status     MatchStatus @default(SCHEDULED)
+  groupId    String?
+  group      Group?      @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  round      Int?
+  homeTeamId String?
+  awayTeamId String?
+  homeTeam   Team?       @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam   Team?       @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  winnerTeamId String?
+  winnerTeam Team?       @relation("WinnerTeam", fields: [winnerTeamId], references: [id])
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  games      GameScore[]
+
+  @@index([stage, status])
+  @@index([groupId])
+  @@unique([groupId, homeTeamId, awayTeamId])
+}
+
+model GameScore {
+  id         String   @id @default(cuid())
+  matchId    String
+  gameNumber Int
+  homePoints Int
+  awayPoints Int
+  match      Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([matchId, gameNumber])
+}
+
+model TournamentSettings {
+  id                  String              @id @default(cuid())
+  groupAssignmentMode GroupAssignmentMode @default(MANUAL)
+  secondChanceEnabled Boolean             @default(false)
+  scoringMode         ScoringMode         @default(SINGLE_GAME_21)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+}
+
+model TeamFlags {
+  id             String  @id @default(cuid())
+  teamId         String  @unique
+  isGroupSeed    Boolean @default(false)
+  isKnockOutSeed Boolean @default(false)
+  team           Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+}
+
+model SeriesQualifier {
+  id           String       @id @default(cuid())
+  categoryCode CategoryCode
+  series       Series
+  groupId      String
+  teamId       String
+  groupRank    Int
+  createdAt    DateTime     @default(now())
+  group        Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  team         Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([categoryCode, series, teamId])
+  @@index([categoryCode, series])
+  @@index([groupId])
+}
+
+model KnockoutMatch {
+  id           String      @id @default(cuid())
+  categoryCode CategoryCode
+  series       Series
+  round        Int
+  matchNo      Int
+  homeTeamId   String?
+  awayTeamId   String?
+  winnerTeamId String?
+  status       MatchStatus @default(SCHEDULED)
+  isPublished  Boolean     @default(false)
+  nextMatchId  String?
+  nextSlot     Int?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  homeTeam     Team?         @relation("KOHomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam     Team?         @relation("KOAwayTeam", fields: [awayTeamId], references: [id])
+  winnerTeam   Team?         @relation("KOWinnerTeam", fields: [winnerTeamId], references: [id])
+  nextMatch    KnockoutMatch? @relation("KONext", fields: [nextMatchId], references: [id])
+  previousMatches KnockoutMatch[] @relation("KONext")
+  games        KnockoutGameScore[]
+
+  @@unique([categoryCode, series, round, matchNo])
+  @@index([categoryCode, series])
+}
+
+model KnockoutGameScore {
+  id              String        @id @default(cuid())
+  knockoutMatchId String
+  gameNumber      Int
+  homePoints      Int
+  awayPoints      Int
+  match           KnockoutMatch @relation(fields: [knockoutMatchId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+
+  @@unique([knockoutMatchId, gameNumber])
+}
+
+model KnockoutSeed {
+  id           String       @id @default(cuid())
+  categoryCode CategoryCode
+  series       Series
+  teamId       String
+  seedNo       Int
+  createdAt    DateTime     @default(now())
+
+  team         Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([categoryCode, series, teamId])
+  @@unique([categoryCode, series, seedNo])
+  @@index([categoryCode, series])
+}
+
+model KnockoutRandomDraw {
+  id           String       @id @default(cuid())
+  categoryCode CategoryCode
+  series       Series
+  round        Int
+  drawKey      String       @unique
+  payload      Json
+  createdAt    DateTime     @default(now())
+
+  @@index([categoryCode, series, round])
+}
+
+model CategoryConfig {
+  categoryCode CategoryCode @id
+  secondChanceEnabled Boolean @default(false)
+  updatedAt DateTime @updatedAt
+}
+
+model GroupAssignmentLock {
+  categoryCode CategoryCode @id
+  locked       Boolean      @default(false)
+  lockedAt     DateTime?
+  updatedAt    DateTime     @updatedAt
+}
+
+model GroupStageLock {
+  categoryCode CategoryCode @id
+  locked       Boolean      @default(false)
+  lockedAt     DateTime?
+  updatedAt    DateTime     @updatedAt
+}
+
+model GroupRandomDraw {
+  id             String       @id @default(cuid())
+  groupId        String
+  categoryCode   CategoryCode
+  tieKey         String       @unique
+  orderedTeamIds Json
+  createdAt      DateTime     @default(now())
+  group          Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@index([categoryCode])
+}
