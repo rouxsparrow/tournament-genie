@@ -549,12 +549,24 @@ export async function clearGroupStageMatches(formData: FormData) {
   redirect(`/matches?category=${categoryCode}`);
 }
 
-export async function randomizeAllGroupMatchResults(formData: FormData) {
+type TeamSearchTarget = {
+  name: string;
+  members: { player: { name: string } }[];
+};
+
+function teamSearchText(team: TeamSearchTarget | null) {
+  if (!team) return "";
+  const names = team.members.map((member) => member.player.name).join(" ");
+  return `${team.name} ${names}`.trim().toLowerCase();
+}
+
+export async function randomizeFilteredGroupMatchResults(formData: FormData) {
   // DEV ONLY -- do not enable in production
   if (process.env.NODE_ENV === "production") {
     redirect(`/matches?error=${encodeURIComponent("Not available in production.")}`);
   }
 
+  const redirectOptions = readMatchFilterRedirectOptions(formData);
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     redirect(`/matches?error=${encodeURIComponent("Invalid category.")}`);
@@ -564,25 +576,39 @@ export async function randomizeAllGroupMatchResults(formData: FormData) {
   await assertGroupStageUnlocked(categoryCode);
 
   const scoringMode = await getScoringMode();
+  const search = redirectOptions.search?.trim().toLowerCase();
 
   const matches = await prisma.match.findMany({
     where: {
       stage: "GROUP",
       status: "SCHEDULED",
-      group: { category: { code: categoryCode } },
+      group: {
+        category: { code: categoryCode },
+        ...(redirectOptions.groupId ? { id: redirectOptions.groupId } : {}),
+      },
     },
     include: {
       games: true,
+      homeTeam: { include: { members: { include: { player: true } } } },
+      awayTeam: { include: { members: { include: { player: true } } } },
     },
   });
 
-  if (matches.length === 0) {
+  const filteredMatches = search
+    ? matches.filter((match) => {
+        const home = teamSearchText(match.homeTeam);
+        const away = teamSearchText(match.awayTeam);
+        return home.includes(search) || away.includes(search);
+      })
+    : matches;
+
+  if (filteredMatches.length === 0) {
     revalidatePath("/matches");
-    redirect(`/matches?category=${categoryCode}`);
+    redirect(buildMatchesRedirect(categoryCode, redirectOptions));
   }
 
   await prisma.$transaction(
-    matches.flatMap((match) => {
+    filteredMatches.flatMap((match) => {
       if (match.games.length > 0) return [];
       const winner =
         Math.random() < 0.5 ? ("home" as const) : ("away" as const);
@@ -613,6 +639,7 @@ export async function randomizeAllGroupMatchResults(formData: FormData) {
           data: {
             status: "COMPLETED",
             winnerTeamId,
+            completedAt: new Date(),
           },
         }),
       ];
@@ -621,7 +648,7 @@ export async function randomizeAllGroupMatchResults(formData: FormData) {
 
   revalidatePath("/matches");
   revalidatePath("/standings");
-  redirect(`/matches?category=${categoryCode}`);
+  redirect(buildMatchesRedirect(categoryCode, redirectOptions));
 }
 
 export async function upsertMatchScore(formData: FormData) {
@@ -693,6 +720,18 @@ export async function upsertMatchScore(formData: FormData) {
         error: "Game 1 scores are required.",
       })
     );
+  }
+  if (game1Home === 0 && game1Away === 0) {
+    await prisma.$transaction([
+      prisma.gameScore.deleteMany({ where: { matchId: match.id } }),
+      prisma.match.update({
+        where: { id: match.id },
+        data: { status: "SCHEDULED", winnerTeamId: null, completedAt: null },
+      }),
+    ]);
+    revalidatePath("/matches");
+    revalidatePath("/standings");
+    redirect(successRedirect);
   }
   if (game1Home === game1Away) {
     redirect(
@@ -791,6 +830,7 @@ export async function upsertMatchScore(formData: FormData) {
       data: {
         status: "COMPLETED",
         winnerTeamId,
+        completedAt: new Date(),
       },
     }),
   ]);
@@ -835,6 +875,7 @@ export async function undoMatchResult(formData: FormData) {
       data: {
         status: "SCHEDULED",
         winnerTeamId: null,
+        completedAt: null,
       },
     }),
   ]);
@@ -943,6 +984,28 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
   if (game1Home === undefined || game1Away === undefined) {
     return { error: "Game 1 scores are required." };
   }
+  if (game1Home === 0 && game1Away === 0) {
+    await prisma.$transaction(async (tx) => {
+      if (match.winnerTeamId) {
+        await clearDownstreamSlot(tx, match.id, match.winnerTeamId);
+      }
+      await clearSecondChanceDrop(tx, match);
+      await tx.knockoutGameScore.deleteMany({
+        where: { knockoutMatchId: match.id },
+      });
+      await tx.knockoutMatch.update({
+        where: { id: match.id },
+        data: {
+          status: "SCHEDULED",
+          winnerTeamId: null,
+          completedAt: null,
+        },
+      });
+    });
+    revalidatePath("/matches");
+    revalidatePath("/knockout");
+    return { ok: true };
+  }
   if (game1Home === game1Away) {
     return { error: "Game 1 cannot be tied." };
   }
@@ -1014,6 +1077,7 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
       data: {
         status: "COMPLETED",
         winnerTeamId,
+        completedAt: new Date(),
       },
     });
     if (winnerTeamId) {
@@ -1052,6 +1116,7 @@ export async function undoKnockoutMatchResult(formData: FormData) {
       data: {
         status: "SCHEDULED",
         winnerTeamId: null,
+        completedAt: null,
       },
     });
   });
@@ -1093,6 +1158,8 @@ export async function randomizeAllKnockoutResultsDev(formData: FormData) {
   }
   const categoryCode = parsed.data;
   const series = parseSeriesFilter(formData.get("series"));
+  const roundFilter = String(formData.get("round") ?? "");
+  const search = String(formData.get("search") ?? "").trim().toLowerCase();
 
   const matches = await prisma.knockoutMatch.findMany({
     where: {
@@ -1102,10 +1169,22 @@ export async function randomizeAllKnockoutResultsDev(formData: FormData) {
     },
     include: {
       games: true,
+      homeTeam: { include: { members: { include: { player: true } } } },
+      awayTeam: { include: { members: { include: { player: true } } } },
     },
   });
 
-  if (matches.length === 0) {
+  const filteredMatches = matches.filter((match) => {
+    if (roundFilter && roundFilter !== "ALL" && String(match.round) !== roundFilter) {
+      return false;
+    }
+    if (!search) return true;
+    const home = teamSearchText(match.homeTeam);
+    const away = teamSearchText(match.awayTeam);
+    return home.includes(search) || away.includes(search);
+  });
+
+  if (filteredMatches.length === 0) {
     revalidatePath("/matches");
     return { ok: true };
   }
@@ -1113,7 +1192,7 @@ export async function randomizeAllKnockoutResultsDev(formData: FormData) {
   const scoringMode = await getScoringMode();
 
   await prisma.$transaction(
-    matches.flatMap((match) => {
+    filteredMatches.flatMap((match) => {
       if (match.games.length > 0) return [];
       if (!match.homeTeamId || !match.awayTeamId) {
         return [
@@ -1122,7 +1201,7 @@ export async function randomizeAllKnockoutResultsDev(formData: FormData) {
           }),
           prisma.knockoutMatch.update({
             where: { id: match.id },
-            data: { status: "SCHEDULED", winnerTeamId: null },
+            data: { status: "SCHEDULED", winnerTeamId: null, completedAt: null },
           }),
         ];
       }
@@ -1151,7 +1230,7 @@ export async function randomizeAllKnockoutResultsDev(formData: FormData) {
         }),
         prisma.knockoutMatch.update({
           where: { id: match.id },
-          data: { status: "COMPLETED", winnerTeamId },
+          data: { status: "COMPLETED", winnerTeamId, completedAt: new Date() },
         }),
       ];
     })

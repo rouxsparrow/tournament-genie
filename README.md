@@ -67,4 +67,5 @@ curl http://localhost:3000/api/health/db
 - M5: Groups + randomization
 - M6: Group matches, standings (wins, point diff, head-to-head, random draw), and group stage lock
 - M7: Series A/B split from final group standings and knockout bracket seeding
-- M8: Knockout matches, score entry, walkovers, and second-chance logic (optional)
+- M8: Knockout matches, score entry, and second-chance logic (optional)
+- M9: Scheduling matches

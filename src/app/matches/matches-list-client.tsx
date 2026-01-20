@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { undoMatchResult, upsertMatchScore } from "@/app/matches/actions";
+import {
+  randomizeFilteredGroupMatchResults,
+  undoMatchResult,
+  upsertMatchScore,
+} from "@/app/matches/actions";
 
 type TeamMember = {
   player: { name: string };
@@ -37,6 +41,7 @@ type MatchesListClientProps = {
   initialFilters?: { search?: string; groupId?: string };
   scoringMode: "SINGLE_GAME_21" | "BEST_OF_3_21";
   isStageLocked: boolean;
+  isDev: boolean;
 };
 
 function teamLabel(team: Team | null) {
@@ -68,6 +73,7 @@ export function MatchesListClient({
   initialFilters,
   scoringMode,
   isStageLocked,
+  isDev,
 }: MatchesListClientProps) {
   const storageKey = `matches:filters:${categoryCode}`;
   const [search, setSearch] = useState(initialFilters?.search ?? "");
@@ -152,6 +158,17 @@ export function MatchesListClient({
               className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none"
             />
           </div>
+          {isDev ? (
+            <form action={randomizeFilteredGroupMatchResults}>
+              <input type="hidden" name="category" value={categoryCode} />
+              <input type="hidden" name="filterGroupId" value={groupId} />
+              <input type="hidden" name="filterSearch" value={search} />
+              <input type="hidden" name="filterView" value="group" />
+              <Button type="submit" variant="destructive" size="sm">
+                ⚠️ Randomize match results (DEV)
+              </Button>
+            </form>
+          ) : null}
         </div>
       </div>
 

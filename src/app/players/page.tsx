@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { PlayersTable } from "@/app/players/players-table";
+import { ImportSection } from "@/components/import-section";
 
 export default async function PlayersPage() {
   const players = await prisma.player.findMany({
@@ -21,8 +22,25 @@ export default async function PlayersPage() {
           <Link href="/players/new">Add player</Link>
         </Button>
       </div>
-      <PlayersTable players={players} />
+      <div className="mt-6 space-y-6">
+        <ImportSection
+          title="Import players"
+          description="Bulk upload players from a CSV or XLSX template."
+          importUrl="/api/import/players"
+          importLabel="Players"
+          templateLinks={[
+            {
+              href: "/api/templates/players.csv",
+              label: "Download Players Template (CSV)",
+            },
+            {
+              href: "/api/templates/players.xlsx",
+              label: "Download Players Template (XLSX)",
+            },
+          ]}
+        />
+        <PlayersTable players={players} />
+      </div>
     </section>
   );
 }
-

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { TeamsTable } from "@/app/teams/teams-table";
+import { ImportSection } from "@/components/import-section";
 
 export default async function TeamsPage() {
   const teams = await prisma.team.findMany({
@@ -28,8 +29,25 @@ export default async function TeamsPage() {
           <Link href="/teams/new">Add team</Link>
         </Button>
       </div>
-      <TeamsTable teams={teams} />
+      <div className="mt-6 space-y-6">
+        <ImportSection
+          title="Import teams"
+          description="Bulk upload teams from a CSV or XLSX template."
+          importUrl="/api/import/teams"
+          importLabel="Teams"
+          templateLinks={[
+            {
+              href: "/api/templates/teams.csv",
+              label: "Download Teams Template (CSV)",
+            },
+            {
+              href: "/api/templates/teams.xlsx",
+              label: "Download Teams Template (XLSX)",
+            },
+          ]}
+        />
+        <TeamsTable teams={teams} />
+      </div>
     </section>
   );
 }
-

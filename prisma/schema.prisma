@@ -46,6 +46,17 @@ enum Series {
   B
 }
 
+enum MatchType {
+  GROUP
+  KNOCKOUT
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  CLEARED
+  CANCELED
+}
+
 model Player {
   id        String       @id @default(cuid())
   name      String
@@ -145,9 +156,11 @@ model Match {
   awayTeam   Team?       @relation("AwayTeam", fields: [awayTeamId], references: [id])
   winnerTeamId String?
   winnerTeam Team?       @relation("WinnerTeam", fields: [winnerTeamId], references: [id])
+  completedAt DateTime?
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
   games      GameScore[]
+  courtAssignments CourtAssignment[]
 
   @@index([stage, status])
   @@index([groupId])
@@ -210,6 +223,7 @@ model KnockoutMatch {
   winnerTeamId String?
   status       MatchStatus @default(SCHEDULED)
   isPublished  Boolean     @default(false)
+  completedAt  DateTime?
   nextMatchId  String?
   nextSlot     Int?
   createdAt    DateTime    @default(now())
@@ -221,6 +235,7 @@ model KnockoutMatch {
   nextMatch    KnockoutMatch? @relation("KONext", fields: [nextMatchId], references: [id])
   previousMatches KnockoutMatch[] @relation("KONext")
   games        KnockoutGameScore[]
+  courtAssignments CourtAssignment[]
 
   @@unique([categoryCode, series, round, matchNo])
   @@index([categoryCode, series])
@@ -296,4 +311,71 @@ model GroupRandomDraw {
 
   @@index([groupId])
   @@index([categoryCode])
+}
+
+model ScheduleConfig {
+  id                  String   @id @default(cuid())
+  dayStartAt          DateTime
+  firstPhaseCourts    Int      @default(5)
+  firstPhaseMinutes   Int      @default(420)
+  secondPhaseCourts   Int      @default(2)
+  secondPhaseMinutes  Int      @default(120)
+  autoScheduleEnabled Boolean  @default(false)
+  lastBatch           Json?
+  updatedAt           DateTime @updatedAt
+  createdAt           DateTime @default(now())
+}
+
+model Court {
+  id         String   @id
+  isLocked   Boolean  @default(false)
+  lockReason String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  assignments CourtAssignment[]
+}
+
+model CourtAssignment {
+  id              String           @id @default(cuid())
+  courtId         String
+  matchType       MatchType
+  groupMatchId    String?
+  knockoutMatchId String?
+  assignedAt      DateTime         @default(now())
+  clearedAt       DateTime?
+  status          AssignmentStatus @default(ACTIVE)
+
+  court         Court         @relation(fields: [courtId], references: [id])
+  groupMatch    Match?        @relation(fields: [groupMatchId], references: [id], onDelete: SetNull)
+  knockoutMatch KnockoutMatch? @relation(fields: [knockoutMatchId], references: [id], onDelete: SetNull)
+
+  @@index([courtId, status])
+}
+
+model BlockedMatch {
+  id              String   @id @default(cuid())
+  matchType       MatchType
+  groupMatchId    String?
+  knockoutMatchId String?
+  reason          String?
+  createdAt       DateTime @default(now())
+
+  @@index([matchType])
+}
+
+model ScheduleActionLog {
+  id        String   @id @default(cuid())
+  action    String
+  payload   Json
+  createdAt DateTime @default(now())
+}
+
+model ForcedMatchPriority {
+  id        String   @id @default(cuid())
+  matchType MatchType
+  matchId   String
+  createdAt DateTime @default(now())
+
+  @@unique([matchType, matchId])
+  @@index([createdAt])
 }

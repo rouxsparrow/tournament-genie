@@ -218,8 +218,10 @@ export function KnockoutMatchesSection({
             >
               <input type="hidden" name="category" value={categoryCode} />
               <input type="hidden" name="series" value={series} />
+              <input type="hidden" name="round" value={round} />
+              <input type="hidden" name="search" value={search} />
               <Button type="submit" variant="destructive" disabled={pending}>
-                ⚠️ Randomize ALL match results (DEV)
+                ⚠️ Randomize match results (DEV)
               </Button>
             </form>
           ) : null}

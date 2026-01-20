@@ -50,6 +50,12 @@ export default function RootLayout({
               <Link className="hover:text-foreground" href="/standings">
                 Standings
               </Link>
+              <Link className="hover:text-foreground" href="/schedule">
+                Schedule
+              </Link>
+              <Link className="hover:text-foreground" href="/schedule-overview">
+                Schedule Overview
+              </Link>
               <Link className="hover:text-foreground" href="/knockout">
                 Knockout
               </Link>
@@ -65,4 +71,3 @@ export default function RootLayout({
     </html>
   );
 }
-

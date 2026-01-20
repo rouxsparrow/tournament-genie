@@ -42,6 +42,30 @@ A player may participate in multiple categories, but:
 
 ---
 
+## Bulk Import (Players & Teams)
+- Import sections live on the Players and Teams pages (admin-only)
+- Supported formats: CSV and XLSX (first row is headers, case-insensitive)
+- Template routes:
+  - `/api/templates/players.csv`
+  - `/api/templates/players.xlsx`
+  - `/api/templates/teams.csv`
+  - `/api/templates/teams.xlsx`
+- Import routes:
+  - `POST /api/import/players`
+  - `POST /api/import/teams`
+- Players import validation:
+  - Required: name + gender (MALE/FEMALE)
+  - Trim whitespace and normalize values
+  - Deduplicate by player name (case-insensitive); existing names are skipped
+- Teams import validation:
+  - Required: Player 1, Player 2, Category (MD/WD/XD)
+  - Lookup players by name (case-insensitive); missing players error
+  - Enforce category gender rules (MD/WD/XD)
+  - Prevent duplicate teams (same two players + category, any order) -> skip
+  - A player cannot be in more than one team within the same category
+
+---
+
 ## Group Stage
 
 ### Group Creation
@@ -228,3 +252,42 @@ Pair the play-in teams using:
 - Implement features incrementally
 - Assume live tournament usage -- correctness > elegance
 - Avoid full page refreshes after actions (e.g., Generate matches, score input); prefer in-place UI updates.
+
+---
+
+## Schedule Page Controls
+- Live Courts view is split into Playing (court assignments) and Upcoming (top 5 eligible)
+- Auto Schedule ON fills free unlocked courts from Upcoming
+- Playing actions: Back to Queue, Block (default reason: injury / absent), Completed (verify DB), Lock, Assign Next
+- Queue view filters: Status (Eligible/Blocked) + Category
+- Force Next elevates a match to the top of eligible order and persists across refresh
+- Matches with players already in Playing are not eligible for assignment
+- Matches with in-play players can still appear in Queue/Upcoming; they are only blocked from court assignment
+- Empty courts show a muted note when no assignable match exists due to in-play conflicts
+- Queue controls include per-match “Back to correct position” and global “Reset the Queue” for forced priorities
+- Back to Queue on a playing court swaps in the next assignable match when possible
+- Back to Queue swaps only when Auto Schedule is ON; otherwise it just clears the court
+- Upcoming is derived from the sorted queue as the next playable set with no duplicate players
+- Upcoming prioritizes Force Next matches when selecting the next playable set
+- Upcoming selection is forced-first (before normal queue items), while still avoiding duplicate players
+- Forced matches show a “Forced” badge in Upcoming and Queue
+- Forced detection uses consistent matchKey mapping (GROUP:<id> / KNOCKOUT:<id>)
+- Schedule debug logs can be enabled via SCHEDULE_DEBUG / NEXT_PUBLIC_SCHEDULE_DEBUG
+- Upcoming tiers run forced assignable + forced waiting before normal assignable + normal waiting; Forced badge is red
+- Courts are always active on the Schedule page; Lock/Unlock is the only restriction.
+- Rested players are computed from playing courts + latest 5 completed matches (DB-based)
+- Last batch is derived from latest 5 effective assignments (canceled assignments excluded)
+
+---
+
+## Schedule Overview Page
+- Route: `/schedule-overview`
+- Static timetable for group stage matches only (no knockout)
+- Assumes 20-minute matches, starts at 12:30 PM
+- Lays out 5 courts in parallel (Court 1 through Court 5)
+- Uses per-slot rest from previous slot only, independent of Schedule.md rest logic
+- Enforces no player overlaps within a time slot; fairness-first priority
+- Fairness upgrade: no Force; hard cap consecutive <= 2 and total consecutive <= 2; courts may idle
+- Consecutive selection is weighted against high totalMatchesPlanned players
+- UI highlights players in consecutive runs across slots, with per-player colors
+- Shows a "Consecutive Ranking" table summarizing streak totals per player

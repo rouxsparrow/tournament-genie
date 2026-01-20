@@ -5,7 +5,6 @@ import {
   clearGroupStageMatches,
   generateGroupStageMatches,
   lockGroupStage,
-  randomizeAllGroupMatchResults,
   unlockGroupStage,
 } from "@/app/matches/actions";
 import { MatchesListClient } from "@/app/matches/matches-list-client";
@@ -195,14 +194,6 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
                   Clear matches
                 </Button>
               </form>
-              {process.env.NODE_ENV !== "production" ? (
-                <form action={randomizeAllGroupMatchResults}>
-                  <input type="hidden" name="category" value={selectedCategory} />
-                  <Button type="submit" variant="destructive">
-                    ⚠️ Randomize ALL match results (DEV)
-                  </Button>
-                </form>
-              ) : null}
             </div>
           </div>
 
@@ -270,6 +261,7 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
               initialFilters={{ groupId: initialGroupId, search: initialSearch }}
               scoringMode={scoringMode}
               isStageLocked={isStageLocked}
+              isDev={process.env.NODE_ENV !== "production"}
             />
           </div>
         </section>
@@ -315,5 +307,4 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
     </section>
   );
 }
-
 
