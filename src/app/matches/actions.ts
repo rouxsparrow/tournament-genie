@@ -3,18 +3,13 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
 
-const categorySchema = z.enum(["MD", "WD", "XD"], {
-  required_error: "Category is required.",
-  invalid_type_error: "Category is invalid.",
-});
+const categorySchema = z.enum(["MD", "WD", "XD"]);
 
-const seriesFilterSchema = z.enum(["A", "B", "ALL"], {
-  required_error: "Series is required.",
-  invalid_type_error: "Series is invalid.",
-});
+const seriesFilterSchema = z.enum(["A", "B", "ALL"]);
 
 const scoreSchema = z.object({
   matchId: z.string().min(1, "Match is required."),
@@ -138,7 +133,7 @@ function buildBestOfThreeScores(winner: "home" | "away") {
 }
 
 async function clearDownstreamSlot(
-  tx: typeof prisma,
+  tx: Prisma.TransactionClient,
   matchId: string,
   clearedTeamId: string
 ) {
@@ -189,7 +184,7 @@ async function clearDownstreamSlot(
 }
 
 async function applyWinnerToNextMatch(
-  tx: typeof prisma,
+  tx: Prisma.TransactionClient,
   matchId: string,
   winnerTeamId: string
 ) {
@@ -236,7 +231,7 @@ async function applyWinnerToNextMatch(
 }
 
 async function applySecondChanceDrop(
-  tx: typeof prisma,
+  tx: Prisma.TransactionClient,
   match: {
     id: string;
     categoryCode: "MD" | "WD" | "XD";
@@ -339,7 +334,7 @@ async function applySecondChanceDrop(
 }
 
 async function clearSecondChanceDrop(
-  tx: typeof prisma,
+  tx: Prisma.TransactionClient,
   match: {
     id: string;
     categoryCode: "MD" | "WD" | "XD";

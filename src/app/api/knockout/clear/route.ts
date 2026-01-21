@@ -28,7 +28,7 @@ export async function DELETE(request: Request) {
     );
   }
 
-  const seriesList = seriesParsed
+  const seriesList: ("A" | "B")[] = seriesParsed?.success
     ? [seriesParsed.data]
     : category === "WD"
       ? ["A"]

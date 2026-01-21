@@ -1133,27 +1133,28 @@ export async function getScheduleState(filters?: {
   });
 
   const lockByCourt = new Map(locks.map((lock) => [lock.courtId, lock]));
-  const playingByCourt = new Map(
-    refreshedAssignments
-      .map((assignment) => {
-        const match =
-          assignment.matchType === "GROUP" ? assignment.groupMatch : assignment.knockoutMatch;
-        if (!match) return null;
-        const matchKey =
-          assignment.matchType === "GROUP" && assignment.groupMatchId
-            ? buildMatchKey("GROUP", assignment.groupMatchId)
-            : assignment.matchType === "KNOCKOUT" && assignment.knockoutMatchId
-              ? buildMatchKey("KNOCKOUT", assignment.knockoutMatchId)
-              : null;
-        if (!matchKey) return null;
-
-        const detail =
-          assignment.matchType === "GROUP"
-            ? match.group
-              ? `Group ${match.group.name}`
-              : "Group Match"
-            : `Series ${match.series} • ${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`;
-
+  const playingByCourtEntries = refreshedAssignments.reduce<
+    Array<
+      readonly [
+        string,
+        {
+          matchKey: string;
+          matchType: MatchType;
+          categoryCode: string;
+          detail: string;
+          homeTeam: { name: string; players: string[] } | null;
+          awayTeam: { name: string; players: string[] } | null;
+        }
+      ]
+    >
+  >((entries, assignment) => {
+      if (assignment.matchType === "GROUP") {
+        const match = assignment.groupMatch;
+        if (!match || !assignment.groupMatchId) return entries;
+        const matchKey = buildMatchKey("GROUP", assignment.groupMatchId);
+        const detail = match.group
+          ? `Group ${match.group.name}`
+          : "Group Match";
         const homeTeam = match.homeTeam
           ? {
               name: match.homeTeam.name,
@@ -1166,26 +1167,51 @@ export async function getScheduleState(filters?: {
               players: match.awayTeam.members.map((member) => member.player.name),
             }
           : null;
-
-        return [
+        entries.push([
           assignment.courtId,
           {
             matchKey,
             matchType: assignment.matchType,
-            categoryCode:
-              assignment.matchType === "GROUP" && match.group
-                ? match.group.category.code
-                : assignment.matchType === "KNOCKOUT"
-                  ? match.categoryCode
-                  : "MD",
+            categoryCode: match.group?.category.code ?? "MD",
             detail,
             homeTeam,
             awayTeam,
           },
-        ] as const;
-      })
-      .filter((entry): entry is [string, unknown] => Boolean(entry))
-  );
+        ] as const);
+        return entries;
+      }
+
+      const match = assignment.knockoutMatch;
+      if (!match || !assignment.knockoutMatchId) return entries;
+      const matchKey = buildMatchKey("KNOCKOUT", assignment.knockoutMatchId);
+      const detail = `Series ${match.series} • ${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`;
+      const homeTeam = match.homeTeam
+        ? {
+            name: match.homeTeam.name,
+            players: match.homeTeam.members.map((member) => member.player.name),
+          }
+        : null;
+      const awayTeam = match.awayTeam
+        ? {
+            name: match.awayTeam.name,
+            players: match.awayTeam.members.map((member) => member.player.name),
+          }
+        : null;
+      entries.push([
+        assignment.courtId,
+        {
+          matchKey,
+          matchType: assignment.matchType,
+          categoryCode: match.categoryCode,
+          detail,
+          homeTeam,
+          awayTeam,
+        },
+      ] as const);
+      return entries;
+    }, []);
+
+  const playingByCourt = new Map(playingByCourtEntries);
 
   const assignedAfterAuto = new Set(
     refreshedAssignments

@@ -289,7 +289,7 @@ export async function generateKnockoutBracketInternal(params: {
     matchNo: number;
     homeTeamId: string | null;
     awayTeamId: string | null;
-  }[];
+  }[] = [];
   let playInTargets: {
     matchNo: number;
     nextRound: number;

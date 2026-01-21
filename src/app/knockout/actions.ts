@@ -8,15 +8,9 @@ import { loadGlobalGroupRanking, nextPowerOfTwo } from "@/app/knockout/logic";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
 import { BracketError, generateKnockoutBracketInternal } from "@/app/knockout/bracket-service";
 
-const categorySchema = z.enum(["MD", "WD", "XD"], {
-  required_error: "Category is required.",
-  invalid_type_error: "Category is invalid.",
-});
+const categorySchema = z.enum(["MD", "WD", "XD"]);
 
-const seriesSchema = z.enum(["A", "B"], {
-  required_error: "Series is required.",
-  invalid_type_error: "Series is invalid.",
-});
+const seriesSchema = z.enum(["A", "B"]);
 
 async function assertGroupStageLocked(categoryCode: "MD" | "WD" | "XD") {
   const lock = await prisma.groupStageLock.findUnique({

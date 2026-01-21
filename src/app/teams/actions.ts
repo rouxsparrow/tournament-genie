@@ -6,10 +6,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 
 const teamSchema = z.object({
-  category: z.enum(["MD", "WD", "XD"], {
-    required_error: "Category is required.",
-    invalid_type_error: "Category is invalid.",
-  }),
+  category: z.enum(["MD", "WD", "XD"]),
   player1Id: z.string().min(1, "Player 1 is required."),
   player2Id: z.string().min(1, "Player 2 is required."),
   isGroupSeed: z.preprocess((value) => value === "on", z.boolean()),

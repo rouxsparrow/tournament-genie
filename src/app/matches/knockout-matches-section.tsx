@@ -21,6 +21,12 @@ type Team = {
   members: TeamMember[];
 };
 
+type MatchGame = {
+  gameNumber: number;
+  homePoints: number;
+  awayPoints: number;
+};
+
 type KnockoutMatchItem = {
   id: string;
   series: "A" | "B";

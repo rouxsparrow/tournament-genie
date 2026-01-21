@@ -97,7 +97,7 @@ export function buildSeriesBWithSecondChance(
       round: 2,
       matchNo: index + 1,
       homeTeamId: null,
-      awayTeamId: seed && "teamId" in seed ? seed.teamId : null,
+      awayTeamId: seed && "teamId" in seed && seed.teamId ? seed.teamId : null,
     });
   }
 
@@ -111,7 +111,9 @@ export function buildSeriesBWithSecondChance(
   }
 
   const playInTargets = baseQFSeeds.flatMap((seed, index) => {
-    if (!("playInMatchNo" in seed)) return [];
+    if (!("playInMatchNo" in seed) || typeof seed.playInMatchNo !== "number") {
+      return [];
+    }
     return [
       {
         matchNo: seed.playInMatchNo,

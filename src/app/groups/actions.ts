@@ -6,10 +6,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { buildRandomizedGroups } from "@/lib/group-randomizer";
 
-const categorySchema = z.enum(["MD", "WD", "XD"], {
-  required_error: "Category is required.",
-  invalid_type_error: "Category is invalid.",
-});
+const categorySchema = z.enum(["MD", "WD", "XD"]);
 
 const createGroupsSchema = z.object({
   category: categorySchema,

@@ -7,10 +7,7 @@ import { prisma } from "@/lib/prisma";
 
 const playerSchema = z.object({
   name: z.string().trim().min(1, "Name is required.").max(80, "Name is too long."),
-  gender: z.enum(["MALE", "FEMALE"], {
-    required_error: "Gender is required.",
-    invalid_type_error: "Gender is invalid.",
-  }),
+  gender: z.enum(["MALE", "FEMALE"]),
 });
 
 function parsePlayer(formData: FormData) {
