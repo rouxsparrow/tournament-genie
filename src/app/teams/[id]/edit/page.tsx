@@ -5,6 +5,8 @@ import { updateTeam } from "@/app/teams/actions";
 import { Button } from "@/components/ui/button";
 import { PlayerSelect } from "@/app/teams/player-select";
 
+export const dynamic = "force-dynamic";
+
 type TeamsEditPageProps = {
   params: Promise<{ id: string }>;
   searchParams?: Promise<{ error?: string }>;

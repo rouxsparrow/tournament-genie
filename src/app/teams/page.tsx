@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { TeamsTable } from "@/app/teams/teams-table";
 import { ImportSection } from "@/components/import-section";
 
+export const dynamic = "force-dynamic";
+
 export default async function TeamsPage() {
   const teams = await prisma.team.findMany({
     orderBy: { createdAt: "desc" },

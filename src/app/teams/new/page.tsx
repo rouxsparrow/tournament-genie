@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { TeamForm } from "@/app/teams/new/team-form";
 
+export const dynamic = "force-dynamic";
+
 type TeamsNewPageProps = {
   searchParams?: Promise<{ error?: string; success?: string }>;
 };
@@ -47,4 +49,3 @@ export default async function TeamsNewPage({ searchParams }: TeamsNewPageProps) 
     </section>
   );
 }
-

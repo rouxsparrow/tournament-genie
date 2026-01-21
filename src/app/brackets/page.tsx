@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { BracketDiagram } from "@/app/knockout/bracket-diagram";
 
+export const dynamic = "force-dynamic";
+
 type BracketsPageProps = {
   searchParams?: Promise<{ category?: string; series?: "A" | "B" }>;
 };

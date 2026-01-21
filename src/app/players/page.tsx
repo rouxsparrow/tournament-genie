@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { PlayersTable } from "@/app/players/players-table";
 import { ImportSection } from "@/components/import-section";
 
+export const dynamic = "force-dynamic";
+
 export default async function PlayersPage() {
   const players = await prisma.player.findMany({
     orderBy: { createdAt: "desc" },

@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { computeStandings } from "@/app/standings/actions";
 import { StandingsClient } from "@/app/standings/standings-client";
 
+export const dynamic = "force-dynamic";
+
 type StandingsPageProps = {
   searchParams?: Promise<{ category?: string; error?: string }>;
 };
@@ -111,4 +113,3 @@ export default async function StandingsPage({ searchParams }: StandingsPageProps
     </section>
   );
 }
-

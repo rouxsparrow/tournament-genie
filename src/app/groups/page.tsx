@@ -11,6 +11,8 @@ import {
 } from "@/app/groups/actions";
 import { Button } from "@/components/ui/button";
 
+export const dynamic = "force-dynamic";
+
 type GroupsPageProps = {
   searchParams?: Promise<{ category?: string; error?: string }>;
 };
@@ -346,4 +348,3 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
     </section>
   );
 }
-

@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { updatePlayer } from "@/app/players/actions";
 import { Button } from "@/components/ui/button";
 
+export const dynamic = "force-dynamic";
+
 type PlayersEditPageProps = {
   params: Promise<{ id: string }>;
   searchParams?: { error?: string };

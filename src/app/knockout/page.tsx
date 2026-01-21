@@ -10,6 +10,8 @@ import { syncKnockoutPropagation } from "@/app/knockout/sync";
 import { ClearBracketButton } from "@/app/knockout/clear-bracket-button";
 import { GenerateBracketButton } from "@/app/knockout/generate-bracket-button";
 
+export const dynamic = "force-dynamic";
+
 type KnockoutPageProps = {
   searchParams?: Promise<{ category?: string; error?: string; adjusted?: string }>;
 };
