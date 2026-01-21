@@ -22,6 +22,7 @@ type ScheduleState = Awaited<ReturnType<typeof getScheduleState>>;
 type CategoryFilter = "ALL" | "MD" | "WD" | "XD";
 type QueueStatus = "ELIGIBLE" | "BLOCKED";
 type MatchType = "GROUP" | "KNOCKOUT";
+type ScheduleStage = "GROUP" | "KNOCKOUT";
 
 type ModalState =
   | null
@@ -46,6 +47,7 @@ function hasInPlayConflict(
 
 export function ScheduleClient({ initialState }: { initialState: ScheduleState }) {
   const router = useRouter();
+  const stage = initialState.stage as ScheduleStage;
   const [view, setView] = useState<"courts" | "queue">("courts");
   const [category, setCategory] = useState<CategoryFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<QueueStatus>("ELIGIBLE");
@@ -180,7 +182,7 @@ if (scheduleDebug) {
               onClick={() => {
                 const next = !autoSchedule;
                 setAutoSchedule(next);
-                handleAction(() => toggleAutoSchedule(next));
+                handleAction(() => toggleAutoSchedule(stage, next));
               }}
             >
               Auto Schedule {autoSchedule ? "ON" : "OFF"}
@@ -204,6 +206,12 @@ if (scheduleDebug) {
       {error ? (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
+        </div>
+      ) : null}
+
+      {stage === "KNOCKOUT" && initialState.matchPoolCount === 0 ? (
+        <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+          No knockout matches available. Generate brackets first.
         </div>
       ) : null}
 
@@ -239,7 +247,9 @@ if (scheduleDebug) {
                         size="sm"
                         variant={court.isLocked ? "outline" : "default"}
                         onClick={() =>
-                          handleAction(() => lockCourt(court.id, !court.isLocked))
+                          handleAction(() =>
+                            lockCourt(court.id, !court.isLocked, stage)
+                          )
                         }
                       >
                         {court.isLocked ? "Unlock" : "Lock"}
@@ -280,7 +290,7 @@ if (scheduleDebug) {
                         type="button"
                         size="sm"
                         variant="outline"
-                        onClick={() => handleAction(() => backToQueue(court.id))}
+                        onClick={() => handleAction(() => backToQueue(court.id, stage))}
                         disabled={!playing}
                       >
                         Back to Queue
@@ -293,7 +303,9 @@ if (scheduleDebug) {
                           if (!playing) return;
                           const matchId = playing.matchKey.split(":")[1] ?? "";
                           if (!matchId) return;
-                          handleAction(() => blockMatch(playing.matchType, matchId));
+                          handleAction(() =>
+                            blockMatch(playing.matchType, matchId, stage)
+                          );
                         }}
                         disabled={!playing}
                       >
@@ -303,7 +315,7 @@ if (scheduleDebug) {
                         type="button"
                         size="sm"
                         variant="outline"
-                        onClick={() => handleAction(() => markCompleted(court.id))}
+                        onClick={() => handleAction(() => markCompleted(court.id, stage))}
                         disabled={!playing}
                       >
                         Completed
@@ -406,7 +418,7 @@ if (scheduleDebug) {
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => handleAction(() => resetQueueForcedPriorities())}
+                onClick={() => handleAction(() => resetQueueForcedPriorities(stage))}
               >
                 Reset the Queue
               </Button>
@@ -469,7 +481,9 @@ if (scheduleDebug) {
                         type="button"
                         size="sm"
                         onClick={() =>
-                          handleAction(() => forceNext(match.matchType, match.matchId))
+                          handleAction(() =>
+                            forceNext(match.matchType, match.matchId, stage)
+                          )
                         }
                       >
                         Force Next
@@ -481,7 +495,11 @@ if (scheduleDebug) {
                           variant="outline"
                           onClick={() =>
                             handleAction(() =>
-                              clearForcedPriority(match.matchType, match.matchId)
+                              clearForcedPriority(
+                                match.matchType,
+                                match.matchId,
+                                stage
+                              )
                             )
                           }
                         >
@@ -493,7 +511,9 @@ if (scheduleDebug) {
                         size="sm"
                         variant="outline"
                         onClick={() =>
-                          handleAction(() => blockMatch(match.matchType, match.matchId))
+                          handleAction(() =>
+                            blockMatch(match.matchType, match.matchId, stage)
+                          )
                         }
                       >
                         Block
@@ -530,14 +550,16 @@ if (scheduleDebug) {
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button
-                      type="button"
-                      size="sm"
-                      onClick={() =>
-                        handleAction(() => unblockMatch(match.matchType, match.matchId))
-                      }
-                    >
-                      Unblock
-                    </Button>
+                        type="button"
+                        size="sm"
+                        onClick={() =>
+                          handleAction(() =>
+                            unblockMatch(match.matchType, match.matchId, stage)
+                          )
+                        }
+                      >
+                        Unblock
+                      </Button>
                   </div>
                 </div>
               ))
@@ -596,19 +618,20 @@ if (scheduleDebug) {
                 <Button
                   type="button"
                   onClick={() => {
-                    const match = eligibleForModal.find(
-                      (entry) => entry.key === selectedMatchKey
-                    );
-                    if (!match) return;
-                    handleAction(async () => {
-                      const result = await assignNext({
-                        courtId: modal.courtId,
-                        matchType: match.matchType,
-                        matchId: match.matchId,
+                      const match = eligibleForModal.find(
+                        (entry) => entry.key === selectedMatchKey
+                      );
+                      if (!match) return;
+                      handleAction(async () => {
+                        const result = await assignNext({
+                          courtId: modal.courtId,
+                          matchType: match.matchType,
+                          matchId: match.matchId,
+                          stage,
+                        });
+                        setModal(null);
+                        return result;
                       });
-                      setModal(null);
-                      return result;
-                    });
                   }}
                   disabled={isPending}
                 >

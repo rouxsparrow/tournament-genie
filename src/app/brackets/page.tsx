@@ -26,11 +26,13 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
   )
     ? (resolvedSearchParams?.category as (typeof categories)[number])
     : "MD";
-  const selectedSeries = seriesOptions.includes(
+  const requestedSeries = seriesOptions.includes(
     resolvedSearchParams?.series as (typeof seriesOptions)[number]
   )
     ? (resolvedSearchParams?.series as (typeof seriesOptions)[number])
     : "A";
+  const isWD = selectedCategory === "WD";
+  const selectedSeries = isWD && requestedSeries === "B" ? "A" : requestedSeries;
 
   const matches = await prisma.knockoutMatch.findMany({
     where: { categoryCode: selectedCategory, series: selectedSeries },
@@ -43,7 +45,7 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
     orderBy: [{ round: "asc" }, { matchNo: "asc" }],
   });
 
-  const showPlayIns = matches.some((match) => match.round === 1);
+  const showPlayIns = !isWD && matches.some((match) => match.round === 1);
 
   const seeds = await prisma.knockoutSeed.findMany({
     where: { categoryCode: selectedCategory, series: selectedSeries },
@@ -76,19 +78,30 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {seriesOptions.map((series) => (
-          <Button
-            key={series}
-            asChild
-            size="sm"
-            variant={series === selectedSeries ? "default" : "outline"}
-          >
-            <Link href={`/brackets?category=${selectedCategory}&series=${series}`}>
-              Series {series}
-            </Link>
-          </Button>
-        ))}
+        {seriesOptions.map((series) =>
+          isWD && series === "B" ? (
+            <Button key={series} size="sm" variant="outline" disabled>
+              Series B (WD n/a)
+            </Button>
+          ) : (
+            <Button
+              key={series}
+              asChild
+              size="sm"
+              variant={series === selectedSeries ? "default" : "outline"}
+            >
+              <Link href={`/brackets?category=${selectedCategory}&series=${series}`}>
+                Series {series}
+              </Link>
+            </Button>
+          )
+        )}
       </div>
+      {isWD ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Women&apos;s Doubles uses Series A only.
+        </p>
+      ) : null}
 
       {matches.length === 0 ? (
         <p className="mt-6 text-sm text-muted-foreground">

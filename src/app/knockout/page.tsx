@@ -2,13 +2,13 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import {
-  applySecondChanceDrop,
   computeSeriesQualifiers,
-  generateKnockoutBracket,
 } from "@/app/knockout/actions";
 import { SecondChanceToggle } from "@/app/knockout/second-chance-toggle";
 import { loadGlobalGroupRanking } from "@/app/knockout/logic";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
+import { ClearBracketButton } from "@/app/knockout/clear-bracket-button";
+import { GenerateBracketButton } from "@/app/knockout/generate-bracket-button";
 
 type KnockoutPageProps = {
   searchParams?: Promise<{ category?: string; error?: string; adjusted?: string }>;
@@ -54,6 +54,17 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
     where: { categoryCode: selectedCategory },
   });
 
+  const seriesAExists = await prisma.knockoutMatch.findFirst({
+    where: { categoryCode: selectedCategory, series: "A" },
+    select: { id: true },
+  });
+  const seriesBExists = isWD
+    ? null
+    : await prisma.knockoutMatch.findFirst({
+        where: { categoryCode: selectedCategory, series: "B" },
+        select: { id: true },
+      });
+
   const qualifiers = await prisma.seriesQualifier.findMany({
     where: { categoryCode: selectedCategory },
     include: {
@@ -83,15 +94,10 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
   const globalRanking = isLocked
     ? await loadGlobalGroupRanking(selectedCategory)
     : [];
-  const seriesASeedPreview = globalRanking.slice(0, 8);
-
-  const seriesAMatches = await prisma.knockoutMatch.findMany({
-    where: { categoryCode: selectedCategory, series: "A", round: 2 },
-  });
-  const seriesAQFsDone =
-    seriesAMatches.length > 0 &&
-    seriesAMatches.every((match) => match.status === "COMPLETED");
-
+  const seriesASeedPreview = globalRanking.slice(
+    0,
+    isWD ? (globalRanking.length >= 8 ? 8 : 4) : 8
+  );
 
   return (
     <section className="rounded-2xl border border-border bg-card p-8">
@@ -138,29 +144,19 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
             Compute Series Split
           </Button>
         </form>
-        <form action={generateKnockoutBracket}>
-          <input type="hidden" name="category" value={selectedCategory} />
-          <input type="hidden" name="series" value="A" />
-          <Button type="submit" variant="outline" disabled={!isLocked}>
-            Generate Series A Bracket
-          </Button>
-        </form>
+        <GenerateBracketButton
+          category={selectedCategory}
+          series="A"
+          disabled={!isLocked}
+          exists={Boolean(seriesAExists)}
+        />
         {!isWD ? (
-          <form action={generateKnockoutBracket}>
-            <input type="hidden" name="category" value={selectedCategory} />
-            <input type="hidden" name="series" value="B" />
-            <Button type="submit" variant="outline" disabled={!isLocked}>
-              Generate Series B Bracket
-            </Button>
-          </form>
-        ) : null}
-        {!isWD && categoryConfig?.secondChanceEnabled ? (
-          <form action={applySecondChanceDrop}>
-            <input type="hidden" name="category" value={selectedCategory} />
-            <Button type="submit" variant="outline" disabled={!seriesAQFsDone}>
-              Apply A QF losers to Series B QF
-            </Button>
-          </form>
+          <GenerateBracketButton
+            category={selectedCategory}
+            series="B"
+            disabled={!isLocked}
+            exists={Boolean(seriesBExists)}
+          />
         ) : null}
         {!isWD && categoryConfig?.secondChanceEnabled ? (
           <span className="text-xs text-muted-foreground">
@@ -185,6 +181,7 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
             Adjusted: moved lowest-ranked team(s) from Series A to Series B to make Series A even.
           </span>
         ) : null}
+        <ClearBracketButton category={selectedCategory} />
       </div>
 
 

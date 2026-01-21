@@ -51,6 +51,11 @@ enum MatchType {
   KNOCKOUT
 }
 
+enum ScheduleStage {
+  GROUP
+  KNOCKOUT
+}
+
 enum AssignmentStatus {
   ACTIVE
   CLEARED
@@ -315,6 +320,7 @@ model GroupRandomDraw {
 
 model ScheduleConfig {
   id                  String   @id @default(cuid())
+  stage               ScheduleStage @default(GROUP)
   dayStartAt          DateTime
   firstPhaseCourts    Int      @default(5)
   firstPhaseMinutes   Int      @default(420)
@@ -324,6 +330,8 @@ model ScheduleConfig {
   lastBatch           Json?
   updatedAt           DateTime @updatedAt
   createdAt           DateTime @default(now())
+
+  @@index([stage])
 }
 
 model Court {
@@ -333,11 +341,28 @@ model Court {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   assignments CourtAssignment[]
+  stageLocks  CourtStageLock[]
+}
+
+model CourtStageLock {
+  id         String        @id @default(cuid())
+  courtId    String
+  stage      ScheduleStage
+  locked     Boolean       @default(false)
+  lockReason String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  court Court @relation(fields: [courtId], references: [id], onDelete: Cascade)
+
+  @@unique([courtId, stage])
+  @@index([stage])
 }
 
 model CourtAssignment {
   id              String           @id @default(cuid())
   courtId         String
+  stage           ScheduleStage    @default(GROUP)
   matchType       MatchType
   groupMatchId    String?
   knockoutMatchId String?
@@ -349,7 +374,7 @@ model CourtAssignment {
   groupMatch    Match?        @relation(fields: [groupMatchId], references: [id], onDelete: SetNull)
   knockoutMatch KnockoutMatch? @relation(fields: [knockoutMatchId], references: [id], onDelete: SetNull)
 
-  @@index([courtId, status])
+  @@index([courtId, status, stage])
 }
 
 model BlockedMatch {

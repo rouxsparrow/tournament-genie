@@ -26,15 +26,19 @@ Courts are treated **equally** (no priority courts).
 
 ---
 
-## 3. Early Knockout Scheduling
+## 3. Stage Toggle and Independence
 
-- Group matches always have priority over knockout matches
-- Knockout matches may be scheduled **while other group matches are still running**
-  as long as:
-  - The KO bracket exists
-  - No eligible group-stage match is available at that moment
+The Schedule page has a stage toggle:
+- **Group Stage** mode schedules group matches only
+- **Knockout** mode schedules knockout matches only
 
-### In-Play Guard
+Each stage runs as a **separate scheduling system**:
+- Courts/Playing assignments are stage-scoped
+- Court locks are stage-scoped
+- Rest and in-play guard are stage-scoped
+- Queue, Upcoming, and Force Next are stage-scoped
+
+### In-Play Guard (Stage-Scoped)
 - A match **may appear** in Queue and Upcoming even if its players are currently playing.
 - A match **must not be assigned** to a court if any of its players are currently in a Playing (active) court assignment.
 - When filling a free court, skip matches that conflict with in-play players.
@@ -83,27 +87,27 @@ This rule applies **across all categories** (MD / WD / XD).
 
 ### Resting Source of Truth
 - Resting is computed from **DB state only** (completed matches + active courts).
+- Resting is scoped to the **selected stage** only.
 - Scheduling batches or UI history do not affect rest calculation.
 
 ### Tie-breaks (when rest score is equal)
 Use the following deterministic order:
-1) Group matches before KO
-2) Category code (MD, WD, XD)
-3) KO round (later rounds first)
-4) Match ID (stable fallback)
+1) Category code (MD, WD, XD)
+2) KO round (later rounds first)
+3) Match ID (stable fallback)
 
 ---
 
 ## 6. Category Handling
 - Categories are **independent**
 - Matches from MD / WD / XD may be mixed freely on any court
-- Player rest is tracked across categories
+- Player rest is tracked across categories (within the same stage)
 
 ---
 
 ## 7. Knockout Match Scheduling
 
-- Knockout matches are scheduled **only when no eligible group match exists**
+- Knockout matches are scheduled **only in Knockout mode**
 - When multiple KO matches are eligible:
   - Prefer later rounds (Semifinals / Finals) as a **soft preference**
   - No hard reservation window

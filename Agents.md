@@ -181,6 +181,7 @@ After group stage is locked:
 ### Women's Doubles (WD) Special Case
 - WD uses **Series A only** (no Series B)
 - WD **minimum teams: 4**, **maximum teams: 8**
+- WD **do NOT have Play-ins**
 - If WD has **< 8 teams**, Series A starts at **Semifinals** using the **top 4** from group stage ranking
 - If WD has **8 teams**, Series A starts at **Quarterfinals** using top-8 group stage ranking + Avg PA seeding rules
 - **Second chance is not available** for WD
@@ -271,6 +272,7 @@ Pair the play-in teams using:
 ---
 
 ## Schedule Page Controls
+- Stage toggle: Group Stage / Knockout; courts, locks, rest, in-play guard, queue, and Force Next are stage-scoped
 - Live Courts view is split into Playing (court assignments) and Upcoming (top 5 eligible)
 - Auto Schedule ON fills free unlocked courts from Upcoming
 - Playing actions: Back to Queue, Block (default reason: injury / absent), Completed (verify DB), Lock, Assign Next
@@ -290,7 +292,7 @@ Pair the play-in teams using:
 - Schedule debug logs can be enabled via SCHEDULE_DEBUG / NEXT_PUBLIC_SCHEDULE_DEBUG
 - Upcoming tiers run forced assignable + forced waiting before normal assignable + normal waiting; Forced badge is red
 - Courts are always active on the Schedule page; Lock/Unlock is the only restriction.
-- Rested players are computed from playing courts + latest 5 completed matches (DB-based)
+- Rested players are computed from playing courts + latest 5 completed matches (DB-based, stage-scoped)
 - Last batch is derived from latest 5 effective assignments (canceled assignments excluded)
 
 ---
