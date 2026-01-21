@@ -153,10 +153,11 @@ export async function syncKnockoutPropagation(categoryCode: CategoryCode) {
       }
 
       if (secondChanceEnabled) {
+        const isDev = process.env.NODE_ENV !== "production";
         const maxRoundA = maxRoundForSeries(matches as KnockoutMatchSnapshot[], "A");
         const maxRoundB = maxRoundForSeries(matches as KnockoutMatchSnapshot[], "B");
-        const qfRoundA = maxRoundA > 0 ? maxRoundA - 2 : 0;
-        const qfRoundB = maxRoundB > 0 ? maxRoundB - 2 : 0;
+        const qfRoundA = maxRoundA > 0 ? 2 : 0;
+        const qfRoundB = maxRoundB > 0 ? 2 : 0;
 
         if (qfRoundA > 0 && qfRoundB > 0) {
           const seriesAQFs = (matches as KnockoutMatchSnapshot[])
@@ -169,6 +170,25 @@ export async function syncKnockoutPropagation(categoryCode: CategoryCode) {
           const bqfHomeById = new Map(
             seriesBQFs.map((match) => [match.id, match.homeTeamId])
           );
+          if (isDev) {
+            const aLoserIds = seriesAQFs.flatMap((match) => {
+              const winner =
+                match.winnerTeamId ?? deriveWinnerFromGames(match, scoringMode);
+              if (!winner || !match.homeTeamId || !match.awayTeamId) return [];
+              return [
+                winner === match.homeTeamId ? match.awayTeamId : match.homeTeamId,
+              ];
+            });
+            const conflicts = seriesBQFs.filter(
+              (match) => match.awayTeamId && aLoserIds.includes(match.awayTeamId)
+            );
+            if (conflicts.length > 0) {
+              console.warn(
+                "Second chance conflict: A-drop loser appears in B QF base slot.",
+                conflicts.map((match) => match.matchNo)
+              );
+            }
+          }
 
           for (let index = 0; index < seriesAQFs.length; index += 1) {
             const match = seriesAQFs[index];

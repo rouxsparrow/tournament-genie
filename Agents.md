@@ -152,6 +152,14 @@ After group stage is locked:
 - No automatic advancement: teams only progress by winning a match.
 - If the number of teams does not fit the desired bracket size, use **play-in elimination matches**.
 
+### Round Numbering (Global)
+- Round 1 = Play-ins
+- Round 2 = Quarterfinals (QF)
+- Round 3 = Semifinals (SF)
+- Round 4 = Final
+- Series A starts at Round 2 (no Round 1 matches)
+- If knockout matches were previously generated, clear/regenerate to apply the new round model.
+
 ### Series Qualification Boundary (Important)
 - Knockout brackets MUST be generated ONLY from the qualified teams of that series.
 - Series A bracket must use ONLY the 8 Series A qualified teams.
@@ -202,6 +210,13 @@ Select the strongest `8 - B` teams from Series B using:
 1) groupRank tier (e.g., #1 > #2 > #3)
 2) Avg PA per match (lower is stronger)
 3) stored random draw
+
+Implementation note: Series B second-chance bracket generation supports B=4..8 with deterministic
+auto-advance selection, strongest-vs-weakest play-ins, and stable base QF slotting before A-drop insertion.
+
+Implementation note: Brackets render Series B play-ins for XD (category-agnostic), and Matches round filter
+stays enabled without auto-reset when Series = All.
+Implementation note: Knockout round numbers follow the global stage mapping above (Series A starts at Round 2).
 
 ### Pairing play-ins
 Pair the play-in teams using:
@@ -291,3 +306,4 @@ Pair the play-in teams using:
 - Consecutive selection is weighted against high totalMatchesPlanned players
 - UI highlights players in consecutive runs across slots, with per-player colors
 - Shows a "Consecutive Ranking" table summarizing streak totals per player
+- Analytics-only: overview ignores match completion status (uses all group matches)

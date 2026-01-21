@@ -11,6 +11,7 @@ import {
   nextPowerOfTwo,
   sortSeeds,
 } from "@/app/knockout/logic";
+import { buildSeriesBWithSecondChance } from "@/app/knockout/series-b-second-chance";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
 
 const categorySchema = z.enum(["MD", "WD", "XD"], {
@@ -144,12 +145,6 @@ function wireSeriesBPlayInMatches(params: {
   return updates;
 }
 
-function highestPowerOfTwoBelow(value: number) {
-  let power = 1;
-  while (power * 2 < value) power *= 2;
-  return power;
-}
-
 type SeedEntry = {
   teamId: string;
   seedNo: number;
@@ -157,83 +152,6 @@ type SeedEntry = {
   groupRank: number;
   avgPA: number;
 };
-
-type RankEntry = {
-  teamId: string;
-  groupRank: number;
-  avgPA: number;
-  groupId: string;
-};
-
-async function orderByGroupRankAndAvgPA(params: {
-  categoryCode: "MD" | "WD" | "XD";
-  tieKeyPrefix: string;
-  entries: RankEntry[];
-  series: "A" | "B";
-}) {
-  const sorted = [...params.entries].sort((a, b) => {
-    if (a.groupRank !== b.groupRank) return a.groupRank - b.groupRank;
-    if (a.avgPA !== b.avgPA) return a.avgPA - b.avgPA;
-    return a.teamId.localeCompare(b.teamId);
-  });
-
-  const resolved: RankEntry[] = [];
-  let index = 0;
-  while (index < sorted.length) {
-    let nextIndex = index + 1;
-    const key = `${sorted[index].groupRank}:${sorted[index].avgPA.toFixed(4)}`;
-    while (
-      nextIndex < sorted.length &&
-      `${sorted[nextIndex].groupRank}:${sorted[nextIndex].avgPA.toFixed(4)}` === key
-    ) {
-      nextIndex += 1;
-    }
-    const tieGroup = sorted.slice(index, nextIndex);
-    if (tieGroup.length > 1) {
-      const candidateIds = tieGroup.map((entry) => entry.teamId);
-      const candidateIdsSorted = [...candidateIds].sort();
-      const drawKey = `${params.categoryCode}:${params.series}:0:${params.tieKeyPrefix}:${candidateIdsSorted.join(",")}`;
-      const existing = await prisma.knockoutRandomDraw.findUnique({
-        where: { drawKey },
-      });
-      if (existing && typeof existing.payload === "object" && existing.payload) {
-        const payload = existing.payload as { orderedTeamIds?: string[] };
-        if (Array.isArray(payload.orderedTeamIds)) {
-          const ordered = payload.orderedTeamIds
-            .map((id) => tieGroup.find((entry) => entry.teamId === id))
-            .filter((entry): entry is RankEntry => Boolean(entry));
-          resolved.push(...ordered);
-          index = nextIndex;
-          continue;
-        }
-      }
-
-      const shuffled = [...candidateIdsSorted];
-      for (let i = shuffled.length - 1; i > 0; i -= 1) {
-        const swapIndex = Math.floor(Math.random() * (i + 1));
-        [shuffled[i], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[i]];
-      }
-      await prisma.knockoutRandomDraw.create({
-        data: {
-          categoryCode: params.categoryCode,
-          series: params.series,
-          round: 0,
-          drawKey,
-          payload: { orderedTeamIds: shuffled },
-        },
-      });
-      const ordered = shuffled
-        .map((id) => tieGroup.find((entry) => entry.teamId === id))
-        .filter((entry): entry is RankEntry => Boolean(entry));
-      resolved.push(...ordered);
-    } else {
-      resolved.push(...tieGroup);
-    }
-    index = nextIndex;
-  }
-
-  return resolved;
-}
 
 async function chooseOpponentWithDraw(params: {
   categoryCode: "MD" | "WD" | "XD";
@@ -324,19 +242,8 @@ async function buildRoundOnePairs(params: {
   return pairs;
 }
 
-function seedSlotsForEight() {
-  const seedOrder = [1, 8, 4, 5, 2, 7, 3, 6];
-  const slotMap = new Map<number, { matchNo: number; slot: 1 | 2 }>();
-  seedOrder.forEach((seed, index) => {
-    slotMap.set(seed, {
-      matchNo: Math.floor(index / 2) + 1,
-      slot: (index % 2 === 0 ? 1 : 2) as 1 | 2,
-    });
-  });
-  return slotMap;
-}
-
 export async function generateKnockoutBracket(formData: FormData) {
+  // Round model update: clear/regenerate existing knockout matches to apply new round numbering.
   const categoryParsed = categorySchema.safeParse(formData.get("category"));
   const seriesParsed = seriesSchema.safeParse(formData.get("series"));
 
@@ -446,86 +353,46 @@ export async function generateKnockoutBracket(formData: FormData) {
     categoryCode === "WD" ? false : categoryConfig?.secondChanceEnabled ?? false;
 
   let baseMatches: { round: number; matchNo: number; homeTeamId: string | null; awayTeamId: string | null }[];
-  let playInMatchCount = 0;
   let playInTargets: { matchNo: number; nextRound: number; nextMatchNo: number; nextSlot: number }[] = [];
 
   if (useSecondChance && series === "B") {
     const seriesBSeeds = orderedSeedEntries;
-    const rankedB = await orderByGroupRankAndAvgPA({
-      categoryCode,
-      tieKeyPrefix: "seriesB-playin",
-      entries: seriesBSeeds.map((seed) => ({
-        teamId: seed.teamId,
-        groupRank: seed.groupRank,
-        avgPA: seed.avgPA,
-        groupId: seed.groupId,
-      })),
-      series,
-    });
-
-    const directCount = Math.max(0, 8 - rankedB.length);
-    const directEntries = rankedB.slice(0, directCount);
-    const playInEntries = rankedB.slice(directCount);
-    playInMatchCount = Math.floor(playInEntries.length / 2);
-    baseMatches = [];
-
-    const playInSeeds: SeedEntry[] = playInEntries.map((entry, index) => ({
-      teamId: entry.teamId,
-      seedNo: directCount + index + 1,
-      groupId: entry.groupId,
-      groupRank: entry.groupRank,
-      avgPA: entry.avgPA,
+    const globalRanking = await loadGlobalGroupRanking(categoryCode);
+    const rankingMap = new Map(
+      globalRanking.map((entry, index) => [entry.teamId, index])
+    );
+    const rankedB = seriesBSeeds.map((seed) => ({
+      teamId: seed.teamId,
+      groupRank: seed.groupRank,
+      avgPA: seed.avgPA,
+      groupId: seed.groupId,
     }));
 
-    const playInPairs = await buildRoundOnePairs({
-      categoryCode,
-      series,
-      round: 1,
-      seeds: playInSeeds,
-    });
-    playInPairs.forEach((pair, index) => {
-      baseMatches.push({
-        round: 1,
-        matchNo: index + 1,
-        homeTeamId: pair.home.teamId,
-        awayTeamId: pair.away.teamId,
-      });
-    });
-
-    const bSlotOrder = [
-      { matchNo: 4, slot: 2 as const }, // B1 strongest
-      { matchNo: 3, slot: 2 as const }, // B2
-      { matchNo: 2, slot: 2 as const }, // B3
-      { matchNo: 1, slot: 2 as const }, // B4 weakest
-    ];
-
-    for (let matchNo = 1; matchNo <= 4; matchNo += 1) {
-      baseMatches.push({
-        round: 2,
-        matchNo,
-        homeTeamId: null,
-        awayTeamId: null,
-      });
+    let seriesB = null;
+    try {
+      seriesB = buildSeriesBWithSecondChance(rankedB, rankingMap, true);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Series B second chance bracket could not be built.";
+      redirect(
+        `/knockout?category=${categoryCode}&error=${encodeURIComponent(message)}`
+      );
+    }
+    if (!seriesB) {
+      redirect(
+        `/knockout?category=${categoryCode}&error=${encodeURIComponent(
+          "Series B second chance bracket could not be built."
+        )}`
+      );
     }
 
-    directEntries.forEach((entry, index) => {
-      const slot = bSlotOrder[index];
-      if (!slot) return;
-      const matchIndex = baseMatches.findIndex(
-        (match) => match.round === 2 && match.matchNo === slot.matchNo
-      );
-      if (matchIndex >= 0) {
-        baseMatches[matchIndex].awayTeamId = entry.teamId;
-      }
-    });
+    baseMatches = [];
+    baseMatches.push(...seriesB.playInMatches);
+    baseMatches.push(...seriesB.bqfMatches);
 
-    const playInSlots = bSlotOrder.slice(directCount).reverse();
-    playInTargets = playInSlots.map((slot, index) => ({
-      matchNo: index + 1,
-      nextRound: 2,
-      nextMatchNo: slot.matchNo,
-      nextSlot: slot.slot,
-    }));
+    playInTargets = seriesB.playInTargets;
 
     for (let matchNo = 1; matchNo <= 2; matchNo += 1) {
       baseMatches.push({ round: 3, matchNo, homeTeamId: null, awayTeamId: null });
@@ -533,25 +400,20 @@ export async function generateKnockoutBracket(formData: FormData) {
     baseMatches.push({ round: 4, matchNo: 1, homeTeamId: null, awayTeamId: null });
   } else if (series === "B") {
     const teamCount = orderedSeedEntries.length;
-    const target = (teamCount & (teamCount - 1)) === 0 ? teamCount : highestPowerOfTwoBelow(teamCount);
-    const playInCount = teamCount - target;
-    const playInTeams = orderedSeedEntries.slice(orderedSeedEntries.length - playInCount * 2);
-    const topSeeds = orderedSeedEntries.slice(0, orderedSeedEntries.length - playInTeams.length);
+    const isPowerOfTwo = (teamCount & (teamCount - 1)) === 0;
+    if (!isPowerOfTwo) {
+      redirect(
+        `/knockout?category=${categoryCode}&error=${encodeURIComponent(
+          "Series B requires Second Chance to run play-ins. Enable Second Chance or adjust team count."
+        )}`
+      );
+    }
 
-    const playInPairs = await buildRoundOnePairs({
-      categoryCode,
-      series,
-      round: 1,
-      seeds: playInTeams,
-    });
-    baseMatches = playInPairs.map((pair, index) => ({
-      round: 1,
-      matchNo: index + 1,
-      homeTeamId: pair.home.teamId,
-      awayTeamId: pair.away.teamId,
-    }));
+    baseMatches = [];
+    const startRound = 2;
+    const topSeeds = orderedSeedEntries;
 
-    const seedSlots = buildSeedOrder(target).map((seed, index) => ({
+    const seedSlots = buildSeedOrder(teamCount).map((seed, index) => ({
       seedNo: seed,
       matchNo: Math.floor(index / 2) + 1,
       slot: (index % 2 === 0 ? 1 : 2) as 1 | 2,
@@ -564,22 +426,12 @@ export async function generateKnockoutBracket(formData: FormData) {
       if (slot) slot.teamId = seed.teamId;
     });
 
-    const emptySeeds = seedSlots
-      .filter((slot) => !slot.teamId)
-      .sort((a, b) => b.seedNo - a.seedNo);
-
-    playInTargets = emptySeeds.map((slot, index) => ({
-      matchNo: index + 1,
-      nextRound: 2,
-      nextMatchNo: slot.matchNo,
-      nextSlot: slot.slot,
-    }));
-
-    const rounds = Math.log2(target);
-    for (let round = 2; round <= rounds + 1; round += 1) {
-      const matchCount = target / Math.pow(2, round - 1);
+    const rounds = Math.log2(teamCount);
+    for (let roundOffset = 0; roundOffset < rounds; roundOffset += 1) {
+      const round = startRound + roundOffset;
+      const matchCount = teamCount / Math.pow(2, roundOffset + 1);
       for (let matchNo = 1; matchNo <= matchCount; matchNo += 1) {
-        if (round === 2) {
+        if (roundOffset === 0) {
           const homeTeamId =
             seedSlots.find((slot) => slot.matchNo === matchNo && slot.slot === 1)?.teamId ??
             null;
@@ -595,84 +447,33 @@ export async function generateKnockoutBracket(formData: FormData) {
   } else {
     const teamCount = orderedSeedEntries.length;
     const isPowerOfTwo = (teamCount & (teamCount - 1)) === 0;
+    if (!isPowerOfTwo) {
+      redirect(
+        `/knockout?category=${categoryCode}&error=${encodeURIComponent(
+          "Series A must have 4 or 8 teams. Recompute series split."
+        )}`
+      );
+    }
     if (isPowerOfTwo) {
+      const startRound = 2;
       const pairs = await buildRoundOnePairs({
         categoryCode,
         series,
-        round: 1,
+        round: startRound,
         seeds: orderedSeedEntries,
       });
       baseMatches = pairs.map((pair, index) => ({
-        round: 1,
+        round: startRound,
         matchNo: index + 1,
         homeTeamId: pair.home.teamId,
         awayTeamId: pair.away.teamId,
       }));
       const rounds = Math.log2(teamCount);
-      for (let round = 2; round <= rounds; round += 1) {
-        const matchCount = teamCount / Math.pow(2, round);
+      for (let roundOffset = 1; roundOffset < rounds; roundOffset += 1) {
+        const round = startRound + roundOffset;
+        const matchCount = teamCount / Math.pow(2, roundOffset + 1);
         for (let matchNo = 1; matchNo <= matchCount; matchNo += 1) {
           baseMatches.push({ round, matchNo, homeTeamId: null, awayTeamId: null });
-        }
-      }
-    } else {
-      const target = highestPowerOfTwoBelow(teamCount);
-      const playInCount = teamCount - target;
-      const playInTeams = orderedSeedEntries.slice(orderedSeedEntries.length - playInCount * 2);
-      const topSeeds = orderedSeedEntries.slice(0, orderedSeedEntries.length - playInTeams.length);
-
-      const playInPairs = await buildRoundOnePairs({
-        categoryCode,
-        series,
-        round: 1,
-        seeds: playInTeams,
-      });
-      baseMatches = playInPairs.map((pair, index) => ({
-        round: 1,
-        matchNo: index + 1,
-        homeTeamId: pair.home.teamId,
-        awayTeamId: pair.away.teamId,
-      }));
-
-      const seedSlots = buildSeedOrder(target).map((seed, index) => ({
-        seedNo: seed,
-        matchNo: Math.floor(index / 2) + 1,
-        slot: (index % 2 === 0 ? 1 : 2) as 1 | 2,
-        teamId: null as string | null,
-      }));
-
-      topSeeds.forEach((seed, index) => {
-        const seedNo = index + 1;
-        const slot = seedSlots.find((entry) => entry.seedNo === seedNo);
-        if (slot) slot.teamId = seed.teamId;
-      });
-
-      const emptySeeds = seedSlots
-        .filter((slot) => !slot.teamId)
-        .sort((a, b) => b.seedNo - a.seedNo);
-
-      playInTargets = emptySeeds.map((slot, index) => ({
-        matchNo: index + 1,
-        nextRound: 2,
-        nextMatchNo: slot.matchNo,
-        nextSlot: slot.slot,
-      }));
-
-      const rounds = Math.log2(target);
-      for (let round = 2; round <= rounds + 1; round += 1) {
-        const matchCount = target / Math.pow(2, round - 1);
-        for (let matchNo = 1; matchNo <= matchCount; matchNo += 1) {
-          if (round === 2) {
-            const homeTeamId =
-              seedSlots.find((slot) => slot.matchNo === matchNo && slot.slot === 1)?.teamId ??
-              null;
-            const awayTeamId =
-              seedSlots.find((slot) => slot.matchNo === matchNo && slot.slot === 2)?.teamId ??
-              null;
-            baseMatches.push({ round, matchNo, homeTeamId, awayTeamId });
-          } else {
-            baseMatches.push({ round, matchNo, homeTeamId: null, awayTeamId: null });
-          }
         }
       }
     }
@@ -696,6 +497,15 @@ export async function generateKnockoutBracket(formData: FormData) {
         )}`
       );
     }
+  }
+
+  if (series === "A" && baseMatches.some((match) => match.round === 1)) {
+    console.error(
+      "[knockout][error] Attempted to create Series A Play-in match (round=1). This is invalid."
+    );
+    throw new Error(
+      "Series A Play-in match creation is invalid. Clear and regenerate brackets."
+    );
   }
 
   await prisma.$transaction(async (tx) => {
@@ -787,7 +597,7 @@ export async function applySecondChanceDrop(formData: FormData) {
   await assertGroupStageLocked(categoryCode);
 
   const roundOneMatches = await prisma.knockoutMatch.findMany({
-    where: { categoryCode, series: "A", round: 1 },
+    where: { categoryCode, series: "A", round: 2 },
     select: {
       id: true,
       status: true,
@@ -803,7 +613,7 @@ export async function applySecondChanceDrop(formData: FormData) {
   }
 
   if (roundOneMatches.some((match) => match.status !== "COMPLETED")) {
-    redirect(`/knockout?category=${categoryCode}&error=${encodeURIComponent("Complete all Series A Round 1 matches first.")}`);
+    redirect(`/knockout?category=${categoryCode}&error=${encodeURIComponent("Complete all Series A Quarterfinals first.")}`);
   }
 
   const losers: string[] = [];

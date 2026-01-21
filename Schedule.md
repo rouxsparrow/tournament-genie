@@ -107,6 +107,11 @@ Use the following deterministic order:
 - When multiple KO matches are eligible:
   - Prefer later rounds (Semifinals / Finals) as a **soft preference**
   - No hard reservation window
+- Knockout round mapping (global):
+  - Round 1 = Play-ins (Series B only, when Second Chance + play-ins needed)
+  - Round 2 = Quarterfinals (Series A starts here)
+  - Round 3 = Semifinals
+  - Round 4 = Final
 
 ---
 
@@ -167,6 +172,7 @@ Admin has full control for urgent or manual adjustments:
 - Fairness-first: courts may remain idle if constraints prevent assignment
 - Avoid consecutive assignments for high totalMatchesPlanned players
 - Rest badge uses only the previous slot (Rest: X/4)
+- Overview ignores completion status (analytics uses all group matches)
 
 ---
 

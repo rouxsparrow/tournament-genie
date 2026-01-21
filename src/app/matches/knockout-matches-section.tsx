@@ -53,12 +53,12 @@ function teamSearchText(team: Team | null) {
   return `${team.name} ${names}`.trim().toLowerCase();
 }
 
-function roundLabel(round: number, maxRound: number) {
-  const roundsFromEnd = maxRound - round;
-  if (roundsFromEnd === 0) return "Final";
-  if (roundsFromEnd === 1) return "Semifinals";
-  if (roundsFromEnd === 2) return "Quarterfinals";
-  return round === 1 ? "Play-ins" : `Round ${round}`;
+function roundLabel(round: number) {
+  if (round === 1) return "Play-ins";
+  if (round === 2) return "Quarterfinals";
+  if (round === 3) return "Semifinals";
+  if (round === 4) return "Final";
+  return `Round ${round}`;
 }
 
 export function KnockoutMatchesSection({
@@ -79,18 +79,6 @@ export function KnockoutMatchesSection({
     setError(null);
   }, [matches]);
 
-  const maxRoundBySeries = useMemo(() => {
-    const map = new Map<"A" | "B", number>([
-      ["A", 0],
-      ["B", 0],
-    ]);
-    matches.forEach((match) => {
-      const current = map.get(match.series) ?? 0;
-      if (match.round > current) map.set(match.series, match.round);
-    });
-    return map;
-  }, [matches]);
-
   const availableRounds = useMemo(() => {
     const unique = Array.from(
       new Set(
@@ -101,9 +89,9 @@ export function KnockoutMatchesSection({
     ).sort((a, b) => a - b);
     return unique.map((roundNo) => ({
       value: String(roundNo),
-      label: roundLabel(roundNo, maxRoundBySeries.get(series) ?? 0),
+      label: roundLabel(roundNo),
     }));
-  }, [matches, maxRoundBySeries, series]);
+  }, [matches, series]);
 
   useEffect(() => {
     if (series === "ALL") return;
@@ -242,13 +230,7 @@ export function KnockoutMatchesSection({
           <select
             value={series}
             onChange={(event) =>
-              setSeries((current) => {
-                const next = event.target.value as "ALL" | "A" | "B";
-                if (next === "ALL" && current !== "ALL") {
-                  setRound("ALL");
-                }
-                return next;
-              })
+              setSeries(event.target.value as "ALL" | "A" | "B")
             }
             className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
           >
@@ -264,7 +246,6 @@ export function KnockoutMatchesSection({
           <select
             value={round}
             onChange={(event) => setRound(event.target.value)}
-            disabled={series === "ALL"}
             className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
           >
             <option value="ALL">All rounds</option>
@@ -311,10 +292,7 @@ export function KnockoutMatchesSection({
                     {teamLabel(match.awayTeam)}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {roundLabel(
-                      match.round,
-                      maxRoundBySeries.get(match.series) ?? 0
-                    )}{" "}
+                    {roundLabel(match.round)}{" "}
                     · Series {match.series} · Match {match.matchNo}
                   </p>
                 </div>

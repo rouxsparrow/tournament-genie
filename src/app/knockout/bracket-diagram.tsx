@@ -19,7 +19,6 @@ type BracketMatch = {
 type BracketDiagramProps = {
   matches: BracketMatch[];
   showPlayIns: boolean;
-  maxRound: number;
 };
 
 const MATCH_H = 120;
@@ -31,17 +30,16 @@ const SF_STEP = QF_STEP * 2;
 const SF_OFFSET = QF_STEP / 2;
 const FINAL_OFFSET = SF_OFFSET + QF_STEP / 2;
 
-function roundLabel(round: number, maxRound: number) {
-  const roundsFromEnd = maxRound - round;
-  if (roundsFromEnd === 0) return "Final";
-  if (roundsFromEnd === 1) return "Semifinals";
-  if (roundsFromEnd === 2) return "Quarterfinals";
-  return round === 1 ? "Round 1" : `Round ${round}`;
+function roundLabel(round: number) {
+  if (round === 1) return "Play-ins";
+  if (round === 2) return "Quarterfinals";
+  if (round === 3) return "Semifinals";
+  if (round === 4) return "Final";
+  return `Round ${round}`;
 }
 
-function roundHeader(round: number, maxRound: number) {
-  if (round === 1 && maxRound > 3) return "Play-ins";
-  return roundLabel(round, maxRound);
+function roundHeader(round: number) {
+  return roundLabel(round);
 }
 
 function statusBadge(status: BracketMatch["status"]) {
@@ -64,15 +62,15 @@ function scoreSummary(games: BracketMatch["games"]) {
     .join(", ");
 }
 
-function placeholderLabel(match: BracketMatch, slot: "home" | "away", maxRound: number) {
+function placeholderLabel(match: BracketMatch, slot: "home" | "away") {
   const incoming = match.previousMatches.find(
     (prev) => prev.nextSlot === (slot === "home" ? 1 : 2)
   );
-  if (incoming && incoming.round === 1 && maxRound > 3) {
+  if (incoming && incoming.round === 1) {
     return `Winner of Play-in ${incoming.matchNo}`;
   }
   if (incoming && incoming.round) {
-    const label = roundLabel(incoming.round, maxRound);
+    const label = roundLabel(incoming.round);
     if (label === "Quarterfinals") return `Winner of QF${incoming.matchNo}`;
     if (label === "Semifinals") return `Winner of SF${incoming.matchNo}`;
     if (label === "Final") return "Winner of Final";
@@ -82,11 +80,9 @@ function placeholderLabel(match: BracketMatch, slot: "home" | "away", maxRound: 
 
 function MatchBox({
   match,
-  maxRound,
   label,
 }: {
   match: BracketMatch;
-  maxRound: number;
   label: string;
 }) {
   const homeWins = match.winnerTeamId === match.homeTeam.id;
@@ -111,10 +107,10 @@ function MatchBox({
 
   const homeLabel = match.homeTeam.id
     ? match.homeTeam.name
-    : placeholderLabel(match, "home", maxRound);
+    : placeholderLabel(match, "home");
   const awayLabel = match.awayTeam.id
     ? match.awayTeam.name
-    : placeholderLabel(match, "away", maxRound);
+    : placeholderLabel(match, "away");
 
   return (
     <div className="h-[120px] overflow-hidden rounded-md border border-border bg-card shadow-sm">
@@ -153,7 +149,7 @@ function columnTop(index: number, baseOffset: number, step: number) {
   return baseOffset + index * step;
 }
 
-export function BracketDiagram({ matches, showPlayIns, maxRound }: BracketDiagramProps) {
+export function BracketDiagram({ matches, showPlayIns }: BracketDiagramProps) {
   const byRound = new Map<number, BracketMatch[]>();
   for (const match of matches) {
     const list = byRound.get(match.round) ?? [];
@@ -170,23 +166,11 @@ export function BracketDiagram({ matches, showPlayIns, maxRound }: BracketDiagra
     .sort((a, b) => a.round - b.round);
 
   const playIn =
-    showPlayIns && maxRound > 3
-      ? roundEntries.find((entry) => entry.round === 1) ?? roundEntries[0]
-      : null;
-  const qfRound =
-    maxRound >= 3
-      ? roundEntries.find((entry) => entry.round === maxRound - 2) ??
-        roundEntries.find((entry) => entry.round === 1) ??
-        roundEntries[0]
-      : null;
-  const sfRound =
-    roundEntries.find((entry) => entry.round === maxRound - 1) ??
-    roundEntries.find((entry) => entry.round === 2) ??
-    roundEntries[1] ??
-    roundEntries[0];
+    showPlayIns ? roundEntries.find((entry) => entry.round === 1) ?? null : null;
+  const qfRound = roundEntries.find((entry) => entry.round === 2) ?? null;
+  const sfRound = roundEntries.find((entry) => entry.round === 3) ?? null;
   const finalRound =
-    roundEntries.find((entry) => entry.round === maxRound) ??
-    roundEntries[2] ??
+    roundEntries.find((entry) => entry.round === 4) ??
     roundEntries[roundEntries.length - 1];
 
   const height = HEADER_H + MATCH_H * 4 + GAP_QF * 3 + BOTTOM_PAD;
@@ -202,7 +186,7 @@ export function BracketDiagram({ matches, showPlayIns, maxRound }: BracketDiagra
   const sfMatches = sfRound?.matches ?? [];
   const finalMatches = finalRound?.matches ?? [];
 
-  const showQuarterfinals = maxRound >= 3;
+  const showQuarterfinals = Boolean(qfRound);
   const qfX = playInWidth;
   const sfX = showQuarterfinals ? qfX + columnWidth + connectorWidth : playInWidth;
   const finalX = sfX + columnWidth + connectorWidth;
@@ -221,12 +205,12 @@ export function BracketDiagram({ matches, showPlayIns, maxRound }: BracketDiagra
       {showPlayIns && playIn ? (
         <div className="mb-6">
           <p className="text-xs font-semibold text-muted-foreground">
-            {roundHeader(playIn.round, maxRound)}
+            {roundHeader(playIn.round)}
           </p>
           <div className="mt-3 flex flex-wrap gap-4">
             {playIn.matches.map((match, index) => (
               <div key={match.id} className="w-[280px]">
-                <MatchBox match={match} maxRound={maxRound} label={`PI${index + 1}`} />
+                <MatchBox match={match} label={`Play-in ${index + 1}`} />
               </div>
             ))}
           </div>
@@ -241,7 +225,7 @@ export function BracketDiagram({ matches, showPlayIns, maxRound }: BracketDiagra
             style={{ left: `${qfX}px`, height: `${height}px` }}
           >
             <p className="text-xs font-semibold text-muted-foreground">
-              Quarterfinals
+              {roundLabel(2)}
             </p>
             {qfMatches.map((match, index) => (
               <div
@@ -252,7 +236,7 @@ export function BracketDiagram({ matches, showPlayIns, maxRound }: BracketDiagra
                   width: "100%",
                 }}
               >
-                <MatchBox match={match} maxRound={maxRound} label={`QF${index + 1}`} />
+                <MatchBox match={match} label={`QF${index + 1}`} />
               </div>
             ))}
           </div>
@@ -263,7 +247,7 @@ export function BracketDiagram({ matches, showPlayIns, maxRound }: BracketDiagra
           style={{ left: `${sfX}px`, height: `${height}px` }}
         >
           <p className="text-xs font-semibold text-muted-foreground">
-            Semifinals
+            {roundLabel(3)}
           </p>
           {sfMatches.map((match, index) => (
             <div
@@ -274,7 +258,7 @@ export function BracketDiagram({ matches, showPlayIns, maxRound }: BracketDiagra
                 width: "100%",
               }}
             >
-              <MatchBox match={match} maxRound={maxRound} label={`SF${index + 1}`} />
+              <MatchBox match={match} label={`SF${index + 1}`} />
             </div>
           ))}
         </div>
@@ -283,7 +267,9 @@ export function BracketDiagram({ matches, showPlayIns, maxRound }: BracketDiagra
           className="absolute top-0 w-[280px]"
           style={{ left: `${finalX}px`, height: `${height}px` }}
         >
-          <p className="text-xs font-semibold text-muted-foreground">Final</p>
+          <p className="text-xs font-semibold text-muted-foreground">
+            {finalRound ? roundLabel(finalRound.round) : "Final"}
+          </p>
           {finalMatches.map((match) => (
             <div
               key={match.id}
@@ -293,7 +279,7 @@ export function BracketDiagram({ matches, showPlayIns, maxRound }: BracketDiagra
                 width: "100%",
               }}
             >
-              <MatchBox match={match} maxRound={maxRound} label="Final" />
+              <MatchBox match={match} label={finalRound ? roundLabel(finalRound.round) : "Final"} />
             </div>
           ))}
         </div>

@@ -86,9 +86,9 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
   const seriesASeedPreview = globalRanking.slice(0, 8);
 
   const seriesAMatches = await prisma.knockoutMatch.findMany({
-    where: { categoryCode: selectedCategory, series: "A", round: 1 },
+    where: { categoryCode: selectedCategory, series: "A", round: 2 },
   });
-  const seriesARound1Done =
+  const seriesAQFsDone =
     seriesAMatches.length > 0 &&
     seriesAMatches.every((match) => match.status === "COMPLETED");
 
@@ -157,8 +157,8 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
         {!isWD && categoryConfig?.secondChanceEnabled ? (
           <form action={applySecondChanceDrop}>
             <input type="hidden" name="category" value={selectedCategory} />
-            <Button type="submit" variant="outline" disabled={!seriesARound1Done}>
-              Apply A R1 losers to Series B QF
+            <Button type="submit" variant="outline" disabled={!seriesAQFsDone}>
+              Apply A QF losers to Series B QF
             </Button>
           </form>
         ) : null}
@@ -328,4 +328,3 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
     </section>
   );
 }
-

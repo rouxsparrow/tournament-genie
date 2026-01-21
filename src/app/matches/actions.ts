@@ -256,12 +256,8 @@ async function applySecondChanceDrop(
   });
   if (!config?.secondChanceEnabled) return;
 
-  const maxRoundA = await tx.knockoutMatch.aggregate({
-    where: { categoryCode: match.categoryCode, series: "A" },
-    _max: { round: true },
-  });
-  const qfRoundA = maxRoundA._max.round ? maxRoundA._max.round - 2 : null;
-  if (!qfRoundA || match.round !== qfRoundA) return;
+  const qfRoundA = 2;
+  if (match.round !== qfRoundA) return;
 
   if (!match.homeTeamId || !match.awayTeamId) return;
   const loserTeamId =
@@ -279,12 +275,7 @@ async function applySecondChanceDrop(
   const qfIndex = seriesAQFs.findIndex((entry) => entry.id === match.id);
   if (qfIndex < 0) return;
 
-  const maxRoundB = await tx.knockoutMatch.aggregate({
-    where: { categoryCode: match.categoryCode, series: "B" },
-    _max: { round: true },
-  });
-  const qfRoundB = maxRoundB._max.round ? maxRoundB._max.round - 2 : null;
-  if (!qfRoundB) return;
+  const qfRoundB = 2;
 
   const seriesBQFs = await tx.knockoutMatch.findMany({
     where: {
@@ -367,12 +358,8 @@ async function clearSecondChanceDrop(
   });
   if (!config?.secondChanceEnabled) return;
 
-  const maxRoundA = await tx.knockoutMatch.aggregate({
-    where: { categoryCode: match.categoryCode, series: "A" },
-    _max: { round: true },
-  });
-  const qfRoundA = maxRoundA._max.round ? maxRoundA._max.round - 2 : null;
-  if (!qfRoundA || match.round !== qfRoundA) return;
+  const qfRoundA = 2;
+  if (match.round !== qfRoundA) return;
 
   if (!match.winnerTeamId || !match.homeTeamId || !match.awayTeamId) return;
   const loserTeamId =
@@ -390,12 +377,7 @@ async function clearSecondChanceDrop(
   const qfIndex = seriesAQFs.findIndex((entry) => entry.id === match.id);
   if (qfIndex < 0) return;
 
-  const maxRoundB = await tx.knockoutMatch.aggregate({
-    where: { categoryCode: match.categoryCode, series: "B" },
-    _max: { round: true },
-  });
-  const qfRoundB = maxRoundB._max.round ? maxRoundB._max.round - 2 : null;
-  if (!qfRoundB) return;
+  const qfRoundB = 2;
 
   const seriesBQFs = await tx.knockoutMatch.findMany({
     where: {

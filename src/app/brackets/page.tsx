@@ -43,13 +43,7 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
     orderBy: [{ round: "asc" }, { matchNo: "asc" }],
   });
 
-  const maxRound = Math.max(0, ...matches.map((match) => match.round));
-  const rounds = Array.from(new Set(matches.map((match) => match.round))).sort(
-    (a, b) => a - b
-  );
-  const showPlayIns =
-    rounds.length > 3 &&
-    matches.filter((match) => match.round === rounds[0]).length < 4;
+  const showPlayIns = matches.some((match) => match.round === 1);
 
   const seeds = await prisma.knockoutSeed.findMany({
     where: { categoryCode: selectedCategory, series: selectedSeries },
@@ -131,11 +125,9 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
               },
             }))}
             showPlayIns={showPlayIns}
-            maxRound={maxRound}
           />
         </div>
       )}
     </section>
   );
 }
-

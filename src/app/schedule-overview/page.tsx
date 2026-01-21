@@ -89,30 +89,24 @@ function streakLenIfPicked(
 }
 
 export default async function ScheduleOverviewPage() {
-  const [matches, blocked] = await Promise.all([
-    prisma.match.findMany({
-      where: {
-        stage: "GROUP",
-        status: { not: "COMPLETED" },
-        homeTeamId: { not: null },
-        awayTeamId: { not: null },
+  const matches = await prisma.match.findMany({
+    where: {
+      stage: "GROUP",
+      homeTeamId: { not: null },
+      awayTeamId: { not: null },
+    },
+    include: {
+      group: { include: { category: true } },
+      homeTeam: {
+        include: { category: true, members: { include: { player: true } } },
       },
-      include: {
-        group: { include: { category: true } },
-        homeTeam: {
-          include: { category: true, members: { include: { player: true } } },
-        },
-        awayTeam: {
-          include: { category: true, members: { include: { player: true } } },
-        },
+      awayTeam: {
+        include: { category: true, members: { include: { player: true } } },
       },
-    }),
-    prisma.blockedMatch.findMany({ where: { matchType: "GROUP" } }),
-  ]);
+    },
+  });
 
-  const blockedIds = new Set(
-    blocked.map((entry) => entry.groupMatchId).filter((id): id is string => Boolean(id))
-  );
+  const blockedIds = new Set<string>();
 
   const categoryRank = new Map(CATEGORY_ORDER.map((code, index) => [code, index]));
   const playerNameMap = new Map<string, string>();
@@ -372,6 +366,10 @@ export default async function ScheduleOverviewPage() {
           <p className="mt-1 text-sm text-muted-foreground">
             Overview enforces no more than two consecutive slots per player.
             (20-min slots, Group Stage only)
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Analytics-only: generated from ALL group stage matches (ignores
+            completion status).
           </p>
         </div>
       </div>

@@ -6,8 +6,7 @@ This document defines the static overview schedule generation for
 ## Scope
 - Group stage matches only (no knockout)
 - Matches must have both teams set
-- Exclude completed matches (`status != COMPLETED`)
-- Exclude blocked matches when `BlockedMatch` exists for `GROUP`
+- Ignores match completion status (includes all generated group matches)
 
 ## Slot Model
 - 20-minute slots

@@ -224,7 +224,7 @@ export async function loadGlobalGroupRanking(categoryCode: CategoryCode) {
   }));
 }
 
-export function buildStandardBracket(teamIds: string[]) {
+export function buildStandardBracket(teamIds: string[], startRound = 2) {
   const teamCount = teamIds.length;
   const bracketSize = nextPowerOfTwo(teamCount);
   const seedOrder = buildSeedOrder(bracketSize);
@@ -243,10 +243,11 @@ export function buildStandardBracket(teamIds: string[]) {
     awayTeamId: string | null;
   }[] = [];
 
-  for (let round = 1; round <= rounds; round += 1) {
-    const matchCount = bracketSize / Math.pow(2, round);
+  for (let roundOffset = 0; roundOffset < rounds; roundOffset += 1) {
+    const round = startRound + roundOffset;
+    const matchCount = bracketSize / Math.pow(2, roundOffset + 1);
     for (let matchNo = 1; matchNo <= matchCount; matchNo += 1) {
-      if (round === 1) {
+      if (roundOffset === 0) {
         const index = (matchNo - 1) * 2;
         matches.push({
           round,
@@ -272,7 +273,7 @@ export function buildSeriesBPlayInBracket(teamIds: string[]) {
   const teamCount = teamIds.length;
   if (teamCount <= 8 || (teamCount & (teamCount - 1)) === 0) {
     return {
-      matches: buildStandardBracket(teamIds),
+      matches: buildStandardBracket(teamIds, 2),
       playInTargets: [],
     };
   }
