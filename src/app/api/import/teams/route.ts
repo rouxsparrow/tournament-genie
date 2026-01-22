@@ -135,6 +135,7 @@ export async function POST(request: Request) {
   const pendingPlayerCategory = new Map<string, Set<string>>();
   const errors: { row: number; message: string }[] = [];
   const teamsToCreate: {
+    row: number;
     name: string;
     categoryId: string;
     player1Id: string;
@@ -259,6 +260,7 @@ export async function POST(request: Request) {
     });
 
     teamsToCreate.push({
+      row: rowNumber,
       name: `${player1.name} + ${player2.name}`,
       categoryId,
       player1Id: player1.id,
@@ -268,20 +270,59 @@ export async function POST(request: Request) {
 
   let created = 0;
   if (teamsToCreate.length > 0) {
-    await prisma.$transaction(async (tx) => {
-      for (const team of teamsToCreate) {
-        const createdTeam = await tx.team.create({
-          data: { name: team.name, categoryId: team.categoryId },
-        });
-        await tx.teamMember.createMany({
-          data: [
-            { teamId: createdTeam.id, playerId: team.player1Id },
-            { teamId: createdTeam.id, playerId: team.player2Id },
-          ],
-        });
-        created += 1;
-      }
+    const teamsData = teamsToCreate.map((team) => ({
+      name: team.name,
+      categoryId: team.categoryId,
+    }));
+
+    await prisma.team.createMany({
+      data: teamsData,
+      skipDuplicates: true,
     });
+
+    const uniqueCategoryIds = Array.from(
+      new Set(teamsToCreate.map((team) => team.categoryId))
+    );
+    const uniqueNames = Array.from(
+      new Set(teamsToCreate.map((team) => team.name))
+    );
+
+    const createdTeams = await prisma.team.findMany({
+      where: {
+        categoryId: { in: uniqueCategoryIds },
+        name: { in: uniqueNames },
+      },
+      select: { id: true, name: true, categoryId: true },
+    });
+
+    const teamIdByKey = new Map<string, string>();
+    createdTeams.forEach((team) => {
+      teamIdByKey.set(`${team.categoryId}:${team.name}`, team.id);
+    });
+
+    const teamMemberRows: { teamId: string; playerId: string }[] = [];
+    teamsToCreate.forEach((team) => {
+      const teamId = teamIdByKey.get(`${team.categoryId}:${team.name}`);
+      if (!teamId) {
+        errors.push({
+          row: team.row,
+          message: "Team could not be created. Please retry the import.",
+        });
+        return;
+      }
+      teamMemberRows.push(
+        { teamId, playerId: team.player1Id },
+        { teamId, playerId: team.player2Id }
+      );
+      created += 1;
+    });
+
+    if (teamMemberRows.length > 0) {
+      await prisma.teamMember.createMany({
+        data: teamMemberRows,
+        skipDuplicates: true,
+      });
+    }
   }
 
   return Response.json({
