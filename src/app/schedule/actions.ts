@@ -404,7 +404,8 @@ function sortEligible(matches: ScheduleMatchItem[]) {
     if (aType !== bType) return aType - bType;
     if (a.restScore !== b.restScore) return b.restScore - a.restScore;
     if (a.categoryCode !== b.categoryCode) return a.categoryCode.localeCompare(b.categoryCode);
-    if (a.round !== b.round) return (b.round ?? 0) - (a.round ?? 0);
+    // KO tie-break: earlier rounds first (progression-first).
+    if (a.round !== b.round) return (a.round ?? 0) - (b.round ?? 0);
     if (a.matchNo !== b.matchNo) return (a.matchNo ?? 0) - (b.matchNo ?? 0);
     return a.matchId.localeCompare(b.matchId);
   });
@@ -1435,9 +1436,7 @@ export async function getScheduleState(filters?: {
     return null;
   });
 
-  const upcoming = config.autoScheduleEnabled
-    ? buildUpcoming(eligibleFinal, inPlayPlayerIds, 5)
-    : [];
+  const upcoming = buildUpcoming(eligibleFinal, inPlayPlayerIds, 5);
 
   if (SCHEDULE_DEBUG) {
     console.log(

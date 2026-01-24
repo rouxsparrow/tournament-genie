@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { GlobalLoadingProvider } from "@/components/global-loading-provider";
+import { GlobalLoadingIndicator } from "@/components/loading-indicator";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,44 +31,52 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-background antialiased`}
       >
-        <header className="border-b border-border bg-card">
-          <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4">
-            <Link href="/" className="text-lg font-semibold text-foreground">
-              Tournament Genie
-            </Link>
-            <nav className="flex flex-wrap gap-3 text-sm font-medium text-muted-foreground">
-              <Link className="hover:text-foreground" href="/players">
-                Players
+        <GlobalLoadingProvider>
+          <GlobalLoadingIndicator />
+          <header className="border-b border-border bg-card">
+            <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4">
+              <Link href="/" className="text-lg font-semibold text-foreground">
+                Tournament Genie
               </Link>
-              <Link className="hover:text-foreground" href="/teams">
-                Teams
-              </Link>
-              <Link className="hover:text-foreground" href="/groups">
-                Groups
-              </Link>
-              <Link className="hover:text-foreground" href="/matches">
-                Matches
-              </Link>
-              <Link className="hover:text-foreground" href="/standings">
-                Standings
-              </Link>
-              <Link className="hover:text-foreground" href="/schedule">
-                Schedule
-              </Link>
-              <Link className="hover:text-foreground" href="/schedule-overview">
-                Schedule Overview
-              </Link>
-              <Link className="hover:text-foreground" href="/knockout">
-                Knockout
-              </Link>
-              <Link className="hover:text-foreground" href="/brackets">
-                Brackets
-              </Link>
-            </nav>
-            <ThemeToggle />
-          </div>
-        </header>
-        <main className="mx-auto w-full max-w-6xl px-6 py-8">{children}</main>
+              <nav className="flex flex-wrap gap-3 text-sm font-medium text-muted-foreground">
+                <Link className="hover:text-foreground" href="/players">
+                  Players
+                </Link>
+                <Link className="hover:text-foreground" href="/teams">
+                  Teams
+                </Link>
+                <Link className="hover:text-foreground" href="/groups">
+                  Groups
+                </Link>
+                <Link className="hover:text-foreground" href="/matches">
+                  Matches
+                </Link>
+                <Link className="hover:text-foreground" href="/standings">
+                  Standings
+                </Link>
+                <Link className="hover:text-foreground" href="/schedule">
+                  Schedule
+                </Link>
+                <Link
+                  className="hover:text-foreground"
+                  href="/schedule-overview"
+                >
+                  Schedule Overview
+                </Link>
+                <Link className="hover:text-foreground" href="/knockout">
+                  Knockout
+                </Link>
+                <Link className="hover:text-foreground" href="/brackets">
+                  Brackets
+                </Link>
+              </nav>
+              <ThemeToggle />
+            </div>
+          </header>
+          <main className="mx-auto w-full max-w-6xl px-6 py-8">
+            {children}
+          </main>
+        </GlobalLoadingProvider>
       </body>
     </html>
   );

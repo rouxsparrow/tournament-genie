@@ -93,7 +93,7 @@ This rule applies **across all categories** (MD / WD / XD).
 ### Tie-breaks (when rest score is equal)
 Use the following deterministic order:
 1) Category code (MD, WD, XD)
-2) KO round (later rounds first)
+2) KO round (earlier rounds first)
 3) Match ID (stable fallback)
 
 ---
@@ -109,7 +109,7 @@ Use the following deterministic order:
 
 - Knockout matches are scheduled **only in Knockout mode**
 - When multiple KO matches are eligible:
-  - Prefer later rounds (Semifinals / Finals) as a **soft preference**
+  - Prefer earlier rounds (Play-ins / Quarterfinals) as a **soft preference**
   - No hard reservation window
 - Knockout round mapping (global):
   - Round 1 = Play-ins (Series B only, when Second Chance + play-ins needed)

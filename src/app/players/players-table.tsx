@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { deletePlayer } from "@/app/players/actions";
+import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 type Player = {
   id: string;
@@ -67,6 +68,7 @@ export function PlayersTable({ players }: PlayersTableProps) {
                         <Link href={`/players/${player.id}/edit`}>Edit</Link>
                       </Button>
                       <form action={deletePlayer.bind(null, player.id)}>
+                        <GlobalFormPendingBridge />
                         <Button type="submit" variant="destructive" size="sm">
                           Delete
                         </Button>
@@ -82,4 +84,3 @@ export function PlayersTable({ players }: PlayersTableProps) {
     </>
   );
 }
-

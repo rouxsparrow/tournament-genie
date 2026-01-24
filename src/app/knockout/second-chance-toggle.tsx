@@ -2,6 +2,7 @@
 
 import { useRef } from "react";
 import { toggleSecondChanceEnabled } from "@/app/knockout/actions";
+import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 type SecondChanceToggleProps = {
   category: "MD" | "WD" | "XD";
@@ -18,6 +19,7 @@ export function SecondChanceToggle({
 
   return (
     <form action={toggleSecondChanceEnabled} ref={formRef}>
+      <GlobalFormPendingBridge />
       <input type="hidden" name="category" value={category} />
       <label className="flex items-center gap-3 text-sm text-foreground">
         <span>Second Chance Mode</span>

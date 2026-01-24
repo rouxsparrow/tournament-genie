@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { updatePlayer } from "@/app/players/actions";
 import { Button } from "@/components/ui/button";
+import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,7 @@ export default async function PlayersEditPage({
         action={updatePlayer.bind(null, player.id)}
         className="mt-6 space-y-4"
       >
+        <GlobalFormPendingBridge />
         {errorMessage ? (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {errorMessage}

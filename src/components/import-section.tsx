@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useGlobalLoading } from "@/components/global-loading-provider";
 
 type ImportError = { row: number; message: string };
 type ImportResult = { created: number; skipped: number; errors: ImportError[] };
@@ -41,6 +42,7 @@ export function ImportSection({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
+  const { beginTask, endTask } = useGlobalLoading();
 
   const handleImport = async () => {
     const file = fileRef.current?.files?.[0];
@@ -54,6 +56,7 @@ export function ImportSection({
     setErrorMessage(null);
     setResult(null);
 
+    const token = beginTask();
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -81,6 +84,7 @@ export function ImportSection({
       setErrorMessage((error as Error).message ?? "Import failed.");
     } finally {
       setIsSubmitting(false);
+      endTask(token);
     }
   };
 

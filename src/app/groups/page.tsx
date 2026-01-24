@@ -10,6 +10,7 @@ import {
   unassignTeam,
 } from "@/app/groups/actions";
 import { Button } from "@/components/ui/button";
+import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -124,12 +125,14 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
         </div>
         <div className="flex gap-2">
           <form action={lockGroupAssignment}>
+            <GlobalFormPendingBridge />
             <input type="hidden" name="category" value={selectedCategory} />
             <Button size="sm" type="submit" disabled={isAssignmentLocked}>
               Lock group assignment
             </Button>
           </form>
           <form action={unlockGroupAssignment}>
+            <GlobalFormPendingBridge />
             <input type="hidden" name="category" value={selectedCategory} />
             <Button size="sm" type="submit" variant="outline" disabled={!isAssignmentLocked}>
               Unlock
@@ -168,6 +171,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
                       </p>
                     </div>
                     <form action={deleteGroup.bind(null, group.id)}>
+                      <GlobalFormPendingBridge />
                       <Button
                         variant="destructive"
                         size="sm"
@@ -204,6 +208,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
                         action={assignTeamToGroup}
                         className="rounded-md border border-border p-3"
                       >
+                        <GlobalFormPendingBridge />
                         <input type="hidden" name="teamId" value={team.id} />
                         <p className="text-sm font-medium text-foreground">
                           {teamLabel(team)}
@@ -269,6 +274,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
                                     entry.teamId
                                   )}
                                 >
+                                  <GlobalFormPendingBridge />
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -297,6 +303,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
               Create groups
             </h2>
             <form action={createGroupsManual} className="mt-4 space-y-3">
+              <GlobalFormPendingBridge />
               <input type="hidden" name="category" value={selectedCategory} />
               <div>
                 <label
@@ -332,6 +339,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
               unaffected.
             </p>
             <form action={randomizeGroups} className="mt-4">
+              <GlobalFormPendingBridge />
               <input type="hidden" name="category" value={selectedCategory} />
               <Button
                 type="submit"

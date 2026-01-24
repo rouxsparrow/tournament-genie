@@ -7,6 +7,7 @@ import {
   undoMatchResult,
   upsertMatchScore,
 } from "@/app/matches/actions";
+import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 type TeamMember = {
   player: { name: string };
@@ -160,6 +161,7 @@ export function MatchesListClient({
           </div>
           {isDev ? (
             <form action={randomizeFilteredGroupMatchResults}>
+              <GlobalFormPendingBridge />
               <input type="hidden" name="category" value={categoryCode} />
               <input type="hidden" name="filterGroupId" value={groupId} />
               <input type="hidden" name="filterSearch" value={search} />
@@ -234,6 +236,7 @@ export function MatchesListClient({
                 </div>
 
                 <form action={upsertMatchScore} className="mt-4 grid gap-2">
+                  <GlobalFormPendingBridge />
                   <input type="hidden" name="matchId" value={match.id} />
                   <input type="hidden" name="category" value={categoryCode} />
                   <input type="hidden" name="filterGroupId" value={groupId} />
@@ -328,6 +331,7 @@ export function MatchesListClient({
                 </form>
                 {match.status !== "SCHEDULED" ? (
                   <form action={undoMatchResult} className="mt-2">
+                    <GlobalFormPendingBridge />
                     <input type="hidden" name="matchId" value={match.id} />
                     <input type="hidden" name="category" value={categoryCode} />
                     <input type="hidden" name="filterGroupId" value={groupId} />

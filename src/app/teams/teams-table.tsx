@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { deleteTeam, toggleKnockOutSeed } from "@/app/teams/actions";
+import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 type TeamMember = {
   player: { name: string };
@@ -105,6 +106,7 @@ export function TeamsTable({ teams }: TeamsTableProps) {
                         action={toggleKnockOutSeed.bind(null, team.id)}
                         className="flex items-center gap-2"
                       >
+                        <GlobalFormPendingBridge />
                         <input
                           type="checkbox"
                           name="isKnockOutSeed"
@@ -121,6 +123,7 @@ export function TeamsTable({ teams }: TeamsTableProps) {
                           <Link href={`/teams/${team.id}/edit`}>Edit</Link>
                         </Button>
                         <form action={deleteTeam.bind(null, team.id)}>
+                          <GlobalFormPendingBridge />
                           <Button type="submit" variant="destructive" size="sm">
                             Delete
                           </Button>

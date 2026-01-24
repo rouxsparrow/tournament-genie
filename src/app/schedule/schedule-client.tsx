@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useGlobalTransition } from "@/components/use-global-transition";
 import {
   assignNext,
   backToQueue,
@@ -27,6 +28,53 @@ type ScheduleStage = "GROUP" | "KNOCKOUT";
 type ModalState =
   | null
   | { type: "assign"; courtId: string };
+
+const COURT_LABELS: Record<string, string> = {
+  C1: "P5",
+  C2: "P6",
+  C3: "P7",
+  C4: "P8",
+  C5: "P9",
+};
+
+function courtLabel(courtId: string) {
+  return COURT_LABELS[courtId] ?? courtId;
+}
+
+function seriesLabel(match: ScheduleState["eligibleMatches"][number]) {
+  if (match.matchType === "KNOCKOUT") {
+    const normalized = match.label.replace(/^Series\s+/i, "").trim();
+    return normalized || match.label;
+  }
+  return match.label;
+}
+
+function roundLabel(match: ScheduleState["eligibleMatches"][number]) {
+  if (match.matchType !== "KNOCKOUT") return match.detail || "Group";
+  if (match.round === 1) return "PI";
+  if (match.round === 2) return "QF";
+  if (match.round === 3) return "SF";
+  if (match.round === 4) return "F";
+  return match.round ? `R${match.round}` : "Round";
+}
+
+function assignPlayersLabel(match: ScheduleState["eligibleMatches"][number]) {
+  const home =
+    match.teams.homePlayers.length > 0
+      ? match.teams.homePlayers.join(" + ")
+      : match.teams.homeName;
+  const away =
+    match.teams.awayPlayers.length > 0
+      ? match.teams.awayPlayers.join(" + ")
+      : match.teams.awayName;
+  return `${home} vs ${away}`;
+}
+
+function assignOptionLabel(match: ScheduleState["eligibleMatches"][number]) {
+  return `${match.categoryCode}·${seriesLabel(match)}·${roundLabel(match)}·${assignPlayersLabel(
+    match
+  )}`;
+}
 
 function matchTypeLabel(matchType: MatchType) {
   return matchType === "GROUP" ? "Group" : "KO";
@@ -58,30 +106,30 @@ export function ScheduleClient({ initialState }: { initialState: ScheduleState }
   const [modal, setModal] = useState<ModalState>(null);
   const [selectedMatchKey, setSelectedMatchKey] = useState("");
   const [error, setError] = useState<string | null>(null);
-const [isPending, startTransition] = useTransition();
-const inPlayPlayerIds = useMemo(
-  () => new Set(initialState.inPlayPlayerIds ?? []),
-  [initialState.inPlayPlayerIds]
-);
-const scheduleDebug = process.env.NEXT_PUBLIC_SCHEDULE_DEBUG === "1";
+  const [isPending, startTransition] = useGlobalTransition();
+  const inPlayPlayerIds = useMemo(
+    () => new Set(initialState.inPlayPlayerIds ?? []),
+    [initialState.inPlayPlayerIds]
+  );
+  const scheduleDebug = process.env.NEXT_PUBLIC_SCHEDULE_DEBUG === "1";
 
-if (scheduleDebug) {
-  console.log(
-    "[schedule][debug][client] upcoming",
-    initialState.upcomingMatches.map((match) => ({
-      key: match.key,
-      forced: match.isForced ?? false,
-      waiting: hasInPlayConflict(match.teams.playerIds, inPlayPlayerIds),
-    }))
-  );
-  console.log(
-    "[schedule][debug][client] queue",
-    initialState.eligibleMatches.slice(0, 10).map((match) => ({
-      key: match.key,
-      forced: match.isForced ?? false,
-    }))
-  );
-}
+  if (scheduleDebug) {
+    console.log(
+      "[schedule][debug][client] upcoming",
+      initialState.upcomingMatches.map((match) => ({
+        key: match.key,
+        forced: match.isForced ?? false,
+        waiting: hasInPlayConflict(match.teams.playerIds, inPlayPlayerIds),
+      }))
+    );
+    console.log(
+      "[schedule][debug][client] queue",
+      initialState.eligibleMatches.slice(0, 10).map((match) => ({
+        key: match.key,
+        forced: match.isForced ?? false,
+      }))
+    );
+  }
 
   useEffect(() => {
     setAutoSchedule(initialState.config.autoScheduleEnabled);
@@ -237,7 +285,9 @@ if (scheduleDebug) {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <h3 className="text-lg font-semibold text-foreground">{court.id}</h3>
+                        <h3 className="text-lg font-semibold text-foreground">
+                          {courtLabel(court.id)}
+                        </h3>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {court.isLocked ? "Locked" : "Unlocked"}
                         </div>
@@ -345,20 +395,14 @@ if (scheduleDebug) {
               </div>
             </div>
             <div className="mt-4 space-y-3">
-              {autoSchedule && upcomingFiltered.length === 0 ? (
+              {upcomingFiltered.length === 0 ? (
                 <div className="text-sm text-muted-foreground">No upcoming matches.</div>
               ) : null}
-              {!autoSchedule ? (
-                <div className="text-sm text-muted-foreground">
-                  Auto Schedule is off. Upcoming matches are hidden.
-                </div>
-              ) : null}
-                      {autoSchedule
-                        ? upcomingFiltered.map((match) => (
-                    <div
-                      key={match.key}
-                      className="rounded-lg border border-border bg-muted/40 p-3"
-                    >
+              {upcomingFiltered.map((match) => (
+                <div
+                  key={match.key}
+                  className="rounded-lg border border-border bg-muted/40 p-3"
+                >
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
                           <div className="text-xs text-muted-foreground">
@@ -403,9 +447,8 @@ if (scheduleDebug) {
                           Waiting (players currently playing)
                         </div>
                       ) : null}
-                    </div>
-                  ))
-                : null}
+                </div>
+              ))}
             </div>
           </section>
         </div>
@@ -573,7 +616,7 @@ if (scheduleDebug) {
           <div className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-foreground">
-                Assign match to {modal.courtId}
+                Assign match to {courtLabel(modal.courtId)}
               </h3>
               <Button
                 type="button"
@@ -606,7 +649,7 @@ if (scheduleDebug) {
                           value={match.key}
                           disabled={isConflict}
                         >
-                        {match.label} • {match.teams.homeName} vs {match.teams.awayName}
+                          {assignOptionLabel(match)}
                         {isConflict ? " (players currently playing)" : ""}
                         </option>
                       );

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { updateTeam } from "@/app/teams/actions";
 import { Button } from "@/components/ui/button";
 import { PlayerSelect } from "@/app/teams/player-select";
+import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,7 @@ export default async function TeamsEditPage({
         action={updateTeam.bind(null, team.id)}
         className="mt-6 space-y-4"
       >
+        <GlobalFormPendingBridge />
         {errorMessage ? (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {errorMessage}
