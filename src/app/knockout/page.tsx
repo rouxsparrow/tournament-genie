@@ -9,6 +9,7 @@ import { loadGlobalGroupRanking } from "@/app/knockout/logic";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
 import { ClearBracketButton } from "@/app/knockout/clear-bracket-button";
 import { GenerateBracketButton } from "@/app/knockout/generate-bracket-button";
+import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -141,6 +142,7 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <form action={computeSeriesQualifiers}>
+          <GlobalFormPendingBridge />
           <input type="hidden" name="category" value={selectedCategory} />
           <Button type="submit" disabled={!isLocked}>
             Compute Series Split

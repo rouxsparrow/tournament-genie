@@ -10,6 +10,7 @@ import {
 import { MatchesListClient } from "@/app/matches/matches-list-client";
 import { KnockoutMatchesSection } from "@/app/matches/knockout-matches-section";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
+import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 type MatchesPageProps = {
   searchParams?: Promise<{
@@ -183,12 +184,14 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
                 action={generateGroupStageMatches}
                 className="flex items-center gap-2"
               >
+                <GlobalFormPendingBridge />
                 <input type="hidden" name="category" value={selectedCategory} />
                 <Button type="submit" disabled={!isAssignmentLocked}>
                   Generate matches
                 </Button>
               </form>
               <form action={clearGroupStageMatches}>
+                <GlobalFormPendingBridge />
                 <input type="hidden" name="category" value={selectedCategory} />
                 <Button type="submit" variant="outline">
                   Clear matches
@@ -206,12 +209,14 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
             </div>
             <div className="flex flex-wrap gap-2">
               <form action={lockGroupStage}>
+                <GlobalFormPendingBridge />
                 <input type="hidden" name="category" value={selectedCategory} />
                 <Button size="sm" type="submit" disabled={isStageLocked}>
                   Lock group stage
                 </Button>
               </form>
               <form action={unlockGroupStage}>
+                <GlobalFormPendingBridge />
                 <input type="hidden" name="category" value={selectedCategory} />
                 <Button
                   size="sm"
@@ -307,4 +312,3 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
     </section>
   );
 }
-

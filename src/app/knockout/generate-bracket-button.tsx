@@ -1,8 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useGlobalTransition } from "@/components/use-global-transition";
+import { useGlobalLoading } from "@/components/global-loading-provider";
 
 type GenerateBracketButtonProps = {
   category: "MD" | "WD" | "XD";
@@ -18,31 +20,41 @@ export function GenerateBracketButton({
   exists,
 }: GenerateBracketButtonProps) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [isPending, startTransition] = useGlobalTransition();
   const [notice, setNotice] = useState<string | null>(null);
+  const { beginTask, endTask } = useGlobalLoading();
 
   async function handleGenerate() {
     setNotice(null);
-    const response = await fetch("/api/knockout/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ category, series }),
-    });
+    const token = beginTask();
+    try {
+      const response = await fetch("/api/knockout/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category, series }),
+      });
 
-    if (!response.ok) {
-      const payload = await response.json().catch(() => null);
-      if (response.status === 409 && payload?.error === "BRACKET_EXISTS") {
-        setNotice("Bracket already exists. Use Clear Bracket to regenerate.");
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        if (response.status === 409 && payload?.error === "BRACKET_EXISTS") {
+          setNotice("Bracket already exists. Use Clear Bracket to regenerate.");
+          return;
+        }
+        setNotice(
+          payload?.message || "Unable to generate bracket. Please try again."
+        );
         return;
       }
-      setNotice(payload?.message || "Unable to generate bracket. Please try again.");
-      return;
-    }
 
-    startTransition(() => {
-      router.refresh();
-    });
-    setNotice(`Series ${series} bracket generated.`);
+      startTransition(() => {
+        router.refresh();
+      });
+      setNotice(`Series ${series} bracket generated.`);
+    } catch (error) {
+      setNotice((error as Error).message || "Unable to generate bracket.");
+    } finally {
+      endTask(token);
+    }
   }
 
   return (

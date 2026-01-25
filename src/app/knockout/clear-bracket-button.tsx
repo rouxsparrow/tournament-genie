@@ -1,8 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useGlobalTransition } from "@/components/use-global-transition";
+import { useGlobalLoading } from "@/components/global-loading-provider";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,8 +29,9 @@ export function ClearBracketButton({
   disabled,
 }: ClearBracketButtonProps) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [isPending, startTransition] = useGlobalTransition();
   const [notice, setNotice] = useState<string | null>(null);
+  const { beginTask, endTask } = useGlobalLoading();
 
   const scopeLabel = series ? `Series ${series}` : "Series A and B";
   const isWD = category === "WD";
@@ -40,22 +43,29 @@ export function ClearBracketButton({
     setNotice(null);
     const params = new URLSearchParams({ category });
     if (series) params.set("series", series);
-    const response = await fetch(`/api/knockout/clear?${params.toString()}`, {
-      method: "DELETE",
-    });
+    const token = beginTask();
+    try {
+      const response = await fetch(`/api/knockout/clear?${params.toString()}`, {
+        method: "DELETE",
+      });
 
-    if (!response.ok) {
-      const payload = await response.json().catch(() => null);
-      const message =
-        payload?.error || "Unable to clear the bracket. Please try again.";
-      setNotice(message);
-      return;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message =
+          payload?.error || "Unable to clear the bracket. Please try again.";
+        setNotice(message);
+        return;
+      }
+
+      startTransition(() => {
+        router.refresh();
+      });
+      setNotice("Bracket cleared.");
+    } catch (error) {
+      setNotice((error as Error).message || "Unable to clear the bracket.");
+    } finally {
+      endTask(token);
     }
-
-    startTransition(() => {
-      router.refresh();
-    });
-    setNotice("Bracket cleared.");
   }
 
   return (

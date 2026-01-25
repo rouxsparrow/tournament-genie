@@ -3,10 +3,12 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth";
 
 type CategoryFilter = "ALL" | "MD" | "WD" | "XD";
 type MatchType = "GROUP" | "KNOCKOUT";
 type ScheduleStage = "GROUP" | "KNOCKOUT";
+type AssignmentStatus = "ACTIVE" | "CLEARED" | "CANCELED";
 
 type ScheduleMatchItem = {
   key: string;
@@ -15,6 +17,7 @@ type ScheduleMatchItem = {
   categoryCode: "MD" | "WD" | "XD";
   label: string;
   detail: string;
+  series?: "A" | "B";
   round?: number;
   matchNo?: number;
   teams: {
@@ -52,6 +55,25 @@ function parseMatchKey(key: string): { matchType: MatchType; matchId: string } |
     return { matchType, matchId };
   }
   return null;
+}
+
+function isAssignmentEmpty(assignment: {
+  matchType: MatchType;
+  groupMatchId: string | null;
+  knockoutMatchId: string | null;
+}) {
+  if (assignment.matchType === "GROUP") return !assignment.groupMatchId;
+  if (assignment.matchType === "KNOCKOUT") return !assignment.knockoutMatchId;
+  return true;
+}
+
+function isOccupying(assignment: {
+  status: AssignmentStatus;
+  matchType: MatchType;
+  groupMatchId: string | null;
+  knockoutMatchId: string | null;
+}) {
+  return assignment.status === "ACTIVE" && !isAssignmentEmpty(assignment);
 }
 
 function ensureLastBatch(payload: unknown): LastBatchPayload {
@@ -199,6 +221,7 @@ function buildMatchItem(params: {
   categoryCode: "MD" | "WD" | "XD";
   label: string;
   detail: string;
+  series?: "A" | "B";
   round?: number;
   matchNo?: number;
   homeTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
@@ -220,6 +243,7 @@ function buildMatchItem(params: {
     categoryCode: params.categoryCode,
     label: params.label,
     detail: params.detail,
+    series: params.series,
     round: params.round,
     matchNo: params.matchNo,
     teams: {
@@ -383,8 +407,16 @@ function sortEligible(matches: ScheduleMatchItem[]) {
     const bType = b.matchType === "GROUP" ? 0 : 1;
     if (aType !== bType) return aType - bType;
     if (a.restScore !== b.restScore) return b.restScore - a.restScore;
-    if (a.categoryCode !== b.categoryCode) return a.categoryCode.localeCompare(b.categoryCode);
-    if (a.round !== b.round) return (b.round ?? 0) - (a.round ?? 0);
+    // KO tie-break: earlier rounds first (progression-first).
+    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.round !== b.round) {
+      return (a.round ?? 0) - (b.round ?? 0);
+    }
+    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.series !== b.series) {
+      const seriesRank: Record<string, number> = { B: 0, A: 1 };
+      const aSeries = a.series ? seriesRank[a.series] ?? 2 : 2;
+      const bSeries = b.series ? seriesRank[b.series] ?? 2 : 2;
+      if (aSeries !== bSeries) return aSeries - bSeries;
+    }
     if (a.matchNo !== b.matchNo) return (a.matchNo ?? 0) - (b.matchNo ?? 0);
     return a.matchId.localeCompare(b.matchId);
   });
@@ -402,26 +434,24 @@ async function buildLastBatchData(matchKeys: string[]): Promise<LastBatchPayload
     .filter((entry) => entry.matchType === "KNOCKOUT")
     .map((entry) => entry.matchId);
 
-  const [groupMatches, knockoutMatches] = await Promise.all([
-    groupIds.length
-      ? prisma.match.findMany({
-          where: { id: { in: groupIds } },
-          include: {
-            homeTeam: { include: { members: { include: { player: true } } } },
-            awayTeam: { include: { members: { include: { player: true } } } },
-          },
-        })
-      : Promise.resolve([]),
-    knockoutIds.length
-      ? prisma.knockoutMatch.findMany({
-          where: { id: { in: knockoutIds } },
-          include: {
-            homeTeam: { include: { members: { include: { player: true } } } },
-            awayTeam: { include: { members: { include: { player: true } } } },
-          },
-        })
-      : Promise.resolve([]),
-  ]);
+  const groupMatches = groupIds.length
+    ? await prisma.match.findMany({
+        where: { id: { in: groupIds } },
+        include: {
+          homeTeam: { include: { members: { include: { player: true } } } },
+          awayTeam: { include: { members: { include: { player: true } } } },
+        },
+      })
+    : [];
+  const knockoutMatches = knockoutIds.length
+    ? await prisma.knockoutMatch.findMany({
+        where: { id: { in: knockoutIds } },
+        include: {
+          homeTeam: { include: { members: { include: { player: true } } } },
+          awayTeam: { include: { members: { include: { player: true } } } },
+        },
+      })
+    : [];
 
   const playerIds = new Set<string>();
   for (const match of groupMatches) {
@@ -708,6 +738,7 @@ async function buildListEligibleMatches(params: {
           categoryCode: match.categoryCode,
           label: `Series ${match.series}`,
           detail: `${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`,
+          series: match.series,
           round: match.round,
           matchNo: match.matchNo,
           homeTeam: match.homeTeam,
@@ -745,14 +776,12 @@ async function clearInvalidAssignments(params: {
     .filter((assignment) => assignment.matchType === "KNOCKOUT" && assignment.knockoutMatchId)
     .map((assignment) => assignment.knockoutMatchId as string);
 
-  const [groupMatches, knockoutMatches] = await Promise.all([
-    groupIds.length
-      ? prisma.match.findMany({ where: { id: { in: groupIds } } })
-      : Promise.resolve([]),
-    knockoutIds.length
-      ? prisma.knockoutMatch.findMany({ where: { id: { in: knockoutIds } } })
-      : Promise.resolve([]),
-  ]);
+  const groupMatches = groupIds.length
+    ? await prisma.match.findMany({ where: { id: { in: groupIds } } })
+    : [];
+  const knockoutMatches = knockoutIds.length
+    ? await prisma.knockoutMatch.findMany({ where: { id: { in: knockoutIds } } })
+    : [];
 
   const groupById = new Map(groupMatches.map((match) => [match.id, match]));
   const knockoutById = new Map(knockoutMatches.map((match) => [match.id, match]));
@@ -789,6 +818,53 @@ async function clearInvalidAssignments(params: {
   return invalidAssignmentIds;
 }
 
+async function loadScheduleSnapshot(params: {
+  stage: ScheduleStage;
+  activeCourtIds: string[];
+}) {
+  const stageMatchType = params.stage === "GROUP" ? "GROUP" : "KNOCKOUT";
+  const courts = await prisma.court.findMany({
+    where: { id: { in: params.activeCourtIds } },
+  });
+  const locks = await prisma.courtStageLock.findMany({
+    where: { stage: params.stage, courtId: { in: params.activeCourtIds } },
+  });
+  const assignments = await prisma.courtAssignment.findMany({
+    where: {
+      status: "ACTIVE",
+      stage: params.stage,
+      courtId: { in: params.activeCourtIds },
+    },
+    select: {
+      id: true,
+      courtId: true,
+      status: true,
+      stage: true,
+      matchType: true,
+      groupMatchId: true,
+      knockoutMatchId: true,
+    },
+  });
+  const inPlayPlayerIds = await getInPlayPlayerIds(params.stage);
+  const recentlyPlayedSet = await getRecentCompletedPlayerIds(params.stage);
+  const eligibleSource = await loadScheduleMatches(params.stage, "ALL");
+  const blocked = await prisma.blockedMatch.findMany({
+    where: { matchType: stageMatchType },
+  });
+  const forcedData = await loadForcedPriorities(params.stage);
+
+  return {
+    courts,
+    locks,
+    assignments,
+    inPlayPlayerIds,
+    recentlyPlayedSet,
+    eligibleSource,
+    blocked,
+    forcedData,
+  };
+}
+
 async function applyAutoSchedule(params: {
   stage: ScheduleStage;
   configId: string;
@@ -800,33 +876,58 @@ async function applyAutoSchedule(params: {
 
   let assignedCount = 0;
   let loopGuard = 0;
+  const snapshot = await loadScheduleSnapshot({
+    stage: params.stage,
+    activeCourtIds: params.activeCourtIds,
+  });
+  let inPlayPlayerIds = snapshot.inPlayPlayerIds;
+
+  const ghostIds = snapshot.assignments
+    .filter((assignment) => isAssignmentEmpty(assignment))
+    .map((assignment) => assignment.id);
+  if (ghostIds.length > 0) {
+    await prisma.$transaction(async (tx) => {
+      await tx.courtAssignment.updateMany({
+        where: { id: { in: ghostIds } },
+        data: { status: "CLEARED", clearedAt: new Date() },
+      });
+      await tx.scheduleActionLog.create({
+        data: {
+          action: "AUTO_CLEAR_GHOST_ASSIGNMENTS",
+          payload: { stage: params.stage, count: ghostIds.length },
+        },
+      });
+    });
+    snapshot.assignments = snapshot.assignments.filter(
+      (assignment) => !ghostIds.includes(assignment.id)
+    );
+  }
 
   while (loopGuard < 10) {
     loopGuard += 1;
 
-    const stageMatchType = params.stage === "GROUP" ? "GROUP" : "KNOCKOUT";
-    const [courts, locks, assignments, inPlayPlayerIds, recentlyPlayedSet, eligibleSource, blocked, forcedData] =
-      await Promise.all([
-        prisma.court.findMany({ where: { id: { in: params.activeCourtIds } } }),
-        prisma.courtStageLock.findMany({
-          where: { stage: params.stage, courtId: { in: params.activeCourtIds } },
-        }),
-        prisma.courtAssignment.findMany({
-          where: {
-            status: "ACTIVE",
-            stage: params.stage,
-            courtId: { in: params.activeCourtIds },
-          },
-          select: { courtId: true },
-        }),
-        getInPlayPlayerIds(params.stage),
-        getRecentCompletedPlayerIds(params.stage),
-        loadScheduleMatches(params.stage, "ALL"),
-        prisma.blockedMatch.findMany({ where: { matchType: stageMatchType } }),
-        loadForcedPriorities(params.stage),
-      ]);
+    const { courts, locks, assignments, recentlyPlayedSet, eligibleSource, blocked, forcedData } =
+      snapshot;
 
-    const assignedCourtIds = new Set(assignments.map((entry) => entry.courtId));
+    if (SCHEDULE_DEBUG) {
+      console.log("[schedule] active assignments", {
+        stage: params.stage,
+        activeAssignments: assignments.slice(0, 3).map((assignment) => ({
+          courtId: assignment.courtId,
+          stage: assignment.stage,
+          matchKey:
+            assignment.matchType === "GROUP" && assignment.groupMatchId
+              ? buildMatchKey("GROUP", assignment.groupMatchId)
+              : assignment.matchType === "KNOCKOUT" && assignment.knockoutMatchId
+                ? buildMatchKey("KNOCKOUT", assignment.knockoutMatchId)
+                : null,
+        })),
+      });
+    }
+
+    const assignedCourtIds = new Set(
+      assignments.filter((entry) => isOccupying(entry)).map((entry) => entry.courtId)
+    );
     const lockByCourt = new Map(locks.map((lock) => [lock.courtId, lock]));
     const freeCourts = courts
       .filter(
@@ -839,10 +940,7 @@ async function applyAutoSchedule(params: {
     const freeCount = freeCourts.length;
 
     const assignedMatchKeys = new Set(
-      (await prisma.courtAssignment.findMany({
-        where: { status: "ACTIVE", stage: params.stage },
-        select: { groupMatchId: true, knockoutMatchId: true, matchType: true },
-      }))
+      assignments
         .map((entry) => {
           if (entry.matchType === "GROUP" && entry.groupMatchId) {
             return buildMatchKey("GROUP", entry.groupMatchId);
@@ -908,6 +1006,7 @@ async function applyAutoSchedule(params: {
             categoryCode: match.categoryCode,
             label: `Series ${match.series}`,
             detail: `${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`,
+            series: match.series,
             round: match.round,
             matchNo: match.matchNo,
             homeTeam: match.homeTeam,
@@ -939,6 +1038,11 @@ async function applyAutoSchedule(params: {
           }
         : null;
 
+    const ghostActiveCount = assignments.filter((assignment) =>
+      isAssignmentEmpty(assignment)
+    ).length;
+    const occupyingCount = assignments.filter((assignment) => isOccupying(assignment)).length;
+
     console.log("[schedule] auto", {
       activeCourtsCount: activeCount,
       freeCourtsCount: freeCount,
@@ -946,6 +1050,8 @@ async function applyAutoSchedule(params: {
       assignableCount: assignableNow.length,
       assignedCount,
       firstSkippedReason,
+      ghostActiveCount,
+      occupyingCount,
     });
 
     if (freeCourts.length === 0 || eligibleSorted.length === 0) break;
@@ -962,11 +1068,55 @@ async function applyAutoSchedule(params: {
     };
 
     await prisma.$transaction(async (tx) => {
-      await tx.courtAssignment.create({ data: assignment });
+      const existingEmpty = assignments.find(
+        (entry) =>
+          entry.courtId === targetCourt.id &&
+          entry.stage === params.stage &&
+          entry.status === "ACTIVE" &&
+          isAssignmentEmpty(entry)
+      );
+      if (existingEmpty) {
+        await tx.courtAssignment.update({
+          where: { id: existingEmpty.id },
+          data: {
+            matchType: assignment.matchType,
+            groupMatchId: assignment.groupMatchId,
+            knockoutMatchId: assignment.knockoutMatchId,
+            assignedAt: new Date(),
+            clearedAt: null,
+            status: "ACTIVE",
+          },
+        });
+      } else {
+        await tx.courtAssignment.create({ data: assignment });
+      }
       await tx.scheduleActionLog.create({
         data: { action: "AUTO_ASSIGN", payload: assignment },
       });
     });
+
+    const existingIndex = assignments.findIndex(
+      (entry) =>
+        entry.courtId === assignment.courtId &&
+        entry.stage === assignment.stage &&
+        entry.status === "ACTIVE" &&
+        isAssignmentEmpty(entry)
+    );
+    const nextAssignment = {
+      id: existingIndex >= 0 ? assignments[existingIndex].id : `NEW_${Date.now()}`,
+      courtId: assignment.courtId,
+      status: "ACTIVE" as AssignmentStatus,
+      stage: assignment.stage,
+      matchType: assignment.matchType,
+      groupMatchId: assignment.groupMatchId,
+      knockoutMatchId: assignment.knockoutMatchId,
+    };
+    if (existingIndex >= 0) {
+      assignments[existingIndex] = nextAssignment;
+    } else {
+      assignments.push(nextAssignment);
+    }
+    for (const id of next.teams.playerIds) inPlayPlayerIds.add(id);
 
     const matchKey = buildMatchKey(
       assignment.matchType,
@@ -996,30 +1146,30 @@ export async function getScheduleState(filters?: {
   const activeCourtIds = ACTIVE_COURT_IDS;
 
   const stageMatchType = stage === "GROUP" ? "GROUP" : "KNOCKOUT";
-  const [courts, locks, assignments, blocked, forcedData] = await Promise.all([
-    prisma.court.findMany({ orderBy: { id: "asc" } }),
-    prisma.courtStageLock.findMany({ where: { stage } }),
-    prisma.courtAssignment.findMany({
-      where: { status: "ACTIVE", stage },
-      include: {
-        groupMatch: {
-          include: {
-            group: { include: { category: true } },
-            homeTeam: { include: { members: { include: { player: true } } } },
-            awayTeam: { include: { members: { include: { player: true } } } },
-          },
-        },
-        knockoutMatch: {
-          include: {
-            homeTeam: { include: { members: { include: { player: true } } } },
-            awayTeam: { include: { members: { include: { player: true } } } },
-          },
+  const courts = await prisma.court.findMany({ orderBy: { id: "asc" } });
+  const locks = await prisma.courtStageLock.findMany({ where: { stage } });
+  const assignments = await prisma.courtAssignment.findMany({
+    where: { status: "ACTIVE", stage },
+    include: {
+      groupMatch: {
+        include: {
+          group: { include: { category: true } },
+          homeTeam: { include: { members: { include: { player: true } } } },
+          awayTeam: { include: { members: { include: { player: true } } } },
         },
       },
-    }),
-    prisma.blockedMatch.findMany({ where: { matchType: stageMatchType } }),
-    loadForcedPriorities(stage),
-  ]);
+      knockoutMatch: {
+        include: {
+          homeTeam: { include: { members: { include: { player: true } } } },
+          awayTeam: { include: { members: { include: { player: true } } } },
+        },
+      },
+    },
+  });
+  const blocked = await prisma.blockedMatch.findMany({
+    where: { matchType: stageMatchType },
+  });
+  const forcedData = await loadForcedPriorities(stage);
 
   const blockedKeys = new Set(
     blocked
@@ -1236,65 +1386,71 @@ export async function getScheduleState(filters?: {
     5
   ).filter((match) => isAssignableNow(match.teams.playerIds, inPlayPlayerIds)).length;
 
-  const blockedList = await Promise.all(
-    blocked
-      .filter((entry) => {
-        if (entry.matchType === "GROUP" && entry.groupMatchId) return true;
-        if (entry.matchType === "KNOCKOUT" && entry.knockoutMatchId) return true;
-        return false;
+  const blockedGroupIds = blocked
+    .filter((entry) => entry.matchType === "GROUP" && entry.groupMatchId)
+    .map((entry) => entry.groupMatchId as string);
+  const blockedKnockoutIds = blocked
+    .filter((entry) => entry.matchType === "KNOCKOUT" && entry.knockoutMatchId)
+    .map((entry) => entry.knockoutMatchId as string);
+  const blockedGroupMatches = blockedGroupIds.length
+    ? await prisma.match.findMany({
+        where: { id: { in: blockedGroupIds } },
+        include: {
+          group: { include: { category: true } },
+          homeTeam: { include: { members: { include: { player: true } } } },
+          awayTeam: { include: { members: { include: { player: true } } } },
+        },
       })
-      .map(async (entry) => {
-        if (entry.matchType === "GROUP" && entry.groupMatchId) {
-          const match = await prisma.match.findUnique({
-            where: { id: entry.groupMatchId },
-            include: {
-              group: { include: { category: true } },
-              homeTeam: { include: { members: { include: { player: true } } } },
-              awayTeam: { include: { members: { include: { player: true } } } },
-            },
-          });
-          if (!match || !match.group || !match.group.category) return null;
-          return buildMatchItem({
-            matchType: "GROUP",
-            matchId: match.id,
-            categoryCode: match.group.category.code,
-            label: `Group ${match.group.name}`,
-            detail: "Group Match",
-            homeTeam: match.homeTeam,
-            awayTeam: match.awayTeam,
-            restScore: 0,
-          });
-        }
-
-        if (entry.matchType === "KNOCKOUT" && entry.knockoutMatchId) {
-          const match = await prisma.knockoutMatch.findUnique({
-            where: { id: entry.knockoutMatchId },
-            include: {
-              homeTeam: { include: { members: { include: { player: true } } } },
-              awayTeam: { include: { members: { include: { player: true } } } },
-            },
-          });
-          if (!match) return null;
-          return buildMatchItem({
-            matchType: "KNOCKOUT",
-            matchId: match.id,
-            categoryCode: match.categoryCode,
-            label: `Series ${match.series}`,
-            detail: `${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`,
-            round: match.round,
-            matchNo: match.matchNo,
-            homeTeam: match.homeTeam,
-            awayTeam: match.awayTeam,
-            restScore: 0,
-          });
-        }
-        return null;
-      })
-  );
-
-  const upcoming = config.autoScheduleEnabled
-    ? buildUpcoming(eligibleFinal, inPlayPlayerIds, 5)
     : [];
+  const blockedKnockoutMatches = blockedKnockoutIds.length
+    ? await prisma.knockoutMatch.findMany({
+        where: { id: { in: blockedKnockoutIds } },
+        include: {
+          homeTeam: { include: { members: { include: { player: true } } } },
+          awayTeam: { include: { members: { include: { player: true } } } },
+        },
+      })
+    : [];
+  const blockedGroupById = new Map(blockedGroupMatches.map((match) => [match.id, match]));
+  const blockedKnockoutById = new Map(
+    blockedKnockoutMatches.map((match) => [match.id, match])
+  );
+  const blockedList = blocked.map((entry) => {
+    if (entry.matchType === "GROUP" && entry.groupMatchId) {
+      const match = blockedGroupById.get(entry.groupMatchId);
+      if (!match || !match.group || !match.group.category) return null;
+      return buildMatchItem({
+        matchType: "GROUP",
+        matchId: match.id,
+        categoryCode: match.group.category.code,
+        label: `Group ${match.group.name}`,
+        detail: "Group Match",
+        homeTeam: match.homeTeam,
+        awayTeam: match.awayTeam,
+        restScore: 0,
+      });
+    }
+    if (entry.matchType === "KNOCKOUT" && entry.knockoutMatchId) {
+      const match = blockedKnockoutById.get(entry.knockoutMatchId);
+      if (!match) return null;
+      return buildMatchItem({
+        matchType: "KNOCKOUT",
+        matchId: match.id,
+        categoryCode: match.categoryCode,
+        label: `Series ${match.series}`,
+        detail: `${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`,
+        series: match.series,
+        round: match.round,
+        matchNo: match.matchNo,
+        homeTeam: match.homeTeam,
+        awayTeam: match.awayTeam,
+        restScore: 0,
+      });
+    }
+    return null;
+  });
+
+  const upcoming = buildUpcoming(eligibleFinal, inPlayPlayerIds, 5);
 
   if (SCHEDULE_DEBUG) {
     console.log(
@@ -1314,6 +1470,18 @@ export async function getScheduleState(filters?: {
       }))
     );
   }
+
+  const assignedCourtIds = new Set(activeAssignments.map((assignment) => assignment.courtId));
+  const lockedCourtIds = courts
+    .filter((court) => lockByCourt.get(court.id)?.locked)
+    .map((court) => court.id);
+  const freeCourtsCount = courts.filter(
+    (court) => !lockByCourt.get(court.id)?.locked && !assignedCourtIds.has(court.id)
+  ).length;
+  const debugNote =
+    freeCourtsCount === 0
+      ? `locked=${lockedCourtIds.length} assigned=${assignedCourtIds.size}`
+      : undefined;
 
   return {
     stage,
@@ -1338,10 +1506,24 @@ export async function getScheduleState(filters?: {
     inPlayPlayerIds: Array.from(inPlayPlayerIds),
     assignableCount,
     upcomingAssignableCount,
+    debug: {
+      stage,
+      activeCourtsCount: courts.length,
+      lockedCourtsCount: lockedCourtIds.length,
+      assignedCourtsCount: assignedCourtIds.size,
+      freeCourtsCount,
+      lockedCourtIds,
+      assignedCourtIds: Array.from(assignedCourtIds),
+      activeAssignmentIds: activeAssignments.map((assignment) => assignment.id),
+      assignmentMatchKeys: Array.from(assignedMatchKeys),
+      note: debugNote,
+    },
   };
 }
 
 export async function toggleAutoSchedule(stage: ScheduleStage, enabled: boolean) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
@@ -1361,6 +1543,8 @@ export async function toggleAutoSchedule(stage: ScheduleStage, enabled: boolean)
 }
 
 export async function lockCourt(courtId: string, locked: boolean, stage: ScheduleStage) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
@@ -1378,6 +1562,8 @@ export async function lockCourt(courtId: string, locked: boolean, stage: Schedul
 }
 
 export async function backToQueue(courtId: string, stage: ScheduleStage) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
@@ -1403,6 +1589,8 @@ export async function backToQueue(courtId: string, stage: ScheduleStage) {
 }
 
 export async function swapBackToQueue(courtId: string, stage: ScheduleStage) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
@@ -1489,6 +1677,8 @@ export async function blockMatch(
   matchId: string,
   stage: ScheduleStage
 ) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(matchType);
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsed.success) return { error: "Invalid match type." };
@@ -1538,6 +1728,8 @@ export async function unblockMatch(
   matchId: string,
   stage: ScheduleStage
 ) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(matchType);
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsed.success) return { error: "Invalid match type." };
@@ -1558,6 +1750,8 @@ export async function unblockMatch(
 }
 
 export async function markCompleted(courtId: string, stage: ScheduleStage) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
@@ -1614,6 +1808,8 @@ export async function assignNext(params: {
   matchId: string;
   stage: ScheduleStage;
 }) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(params.matchType);
   const parsedStage = scheduleStageSchema.safeParse(params.stage);
   if (!parsed.success) return { error: "Invalid match type." };
@@ -1716,6 +1912,8 @@ export async function forceNext(
   matchId: string,
   stage: ScheduleStage
 ) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(matchType);
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsed.success) return { error: "Invalid match type." };
@@ -1764,6 +1962,8 @@ export async function clearForcedPriority(
   matchId: string,
   stage: ScheduleStage
 ) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(matchType);
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsed.success) return { error: "Invalid match type." };
@@ -1781,6 +1981,8 @@ export async function clearForcedPriority(
 }
 
 export async function resetQueueForcedPriorities(stage: ScheduleStage) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 

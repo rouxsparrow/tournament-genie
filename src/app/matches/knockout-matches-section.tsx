@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useGlobalTransition } from "@/components/use-global-transition";
 import {
   clearMatchesKnockout,
   fetchKnockoutMatches,
@@ -73,7 +74,7 @@ export function KnockoutMatchesSection({
   isDev,
   scoringMode,
 }: KnockoutMatchesSectionProps) {
-  const [pending, startTransition] = useTransition();
+  const [pending, startTransition] = useGlobalTransition();
   const [items, setItems] = useState(matches);
   const [series, setSeries] = useState<"ALL" | "A" | "B">("ALL");
   const [round, setRound] = useState("ALL");

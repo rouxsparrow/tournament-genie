@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth";
 
 const playerSchema = z.object({
   name: z.string().trim().min(1, "Name is required.").max(80, "Name is too long."),
@@ -18,6 +19,7 @@ function parsePlayer(formData: FormData) {
 }
 
 export async function createPlayer(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const result = parsePlayer(formData);
 
   if (!result.success) {
@@ -34,6 +36,7 @@ export async function createPlayer(formData: FormData) {
 }
 
 export async function updatePlayer(id: string, formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const result = parsePlayer(formData);
 
   if (!result.success) {
@@ -51,6 +54,7 @@ export async function updatePlayer(id: string, formData: FormData) {
 }
 
 export async function deletePlayer(id: string) {
+  await requireAdmin({ onFail: "redirect" });
   await prisma.player.delete({
     where: { id },
   });

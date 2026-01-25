@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getScheduleState } from "@/app/schedule/actions";
 import { ScheduleClient } from "@/app/schedule/schedule-client";
 import { Button } from "@/components/ui/button";
+import { getRoleFromRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ export default async function SchedulePage({
   const stageParam =
     typeof resolvedParams.stage === "string" ? resolvedParams.stage.toLowerCase() : "";
   const stage = stageParam === "ko" ? "KNOCKOUT" : "GROUP";
+  const role = await getRoleFromRequest();
   const state = await getScheduleState({ category: "ALL", stage });
   const groupHref = "/schedule?stage=group";
   const koHref = "/schedule?stage=ko";
@@ -38,7 +40,7 @@ export default async function SchedulePage({
       </div>
 
       <div className="mt-6">
-        <ScheduleClient initialState={state} />
+        <ScheduleClient initialState={state} role={role} />
       </div>
     </section>
   );

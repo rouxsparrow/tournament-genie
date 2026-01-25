@@ -14,6 +14,7 @@ export const dynamic = "force-dynamic";
 
 const CATEGORY_ORDER = ["MD", "WD", "XD"] as const;
 const COURT_COUNT = 5;
+const COURT_LABELS = ["P5", "P6", "P7", "P8", "P9"] as const;
 const SLOT_MINUTES = 20;
 const START_MINUTES = 12 * 60 + 30;
 const MAX_SLOTS = 500;
@@ -259,7 +260,10 @@ export default async function ScheduleOverviewPage() {
 
   const hasOverflow = remainingPool.length > 0;
   const slotCount = scheduledSlots.length;
-  const courts = Array.from({ length: COURT_COUNT }, (_, index) => `Court ${index + 1}`);
+  const courts = Array.from(
+    { length: COURT_COUNT },
+    (_value, index) => COURT_LABELS[index] ?? `Court ${index + 1}`
+  );
   const slotPlayers = new Map<number, Set<string>>();
   const slotConsecutive = new Map<number, Set<string>>();
   scheduledSlots.forEach((entries, slotIndex) => {

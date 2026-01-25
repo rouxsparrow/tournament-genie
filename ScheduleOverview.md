@@ -11,7 +11,7 @@ This document defines the static overview schedule generation for
 ## Slot Model
 - 20-minute slots
 - Start time: 12:30 PM
-- 5 courts per slot
+- 5 courts per slot (P5–P9)
 - Generate slots until all matches are placed or a safety cap is reached
 
 ## Hard Constraint
@@ -35,7 +35,7 @@ Rank candidates by:
 
 ## Per-Slot Selection
 For each slot:
-- Fill courts 1..5 sequentially
+- Fill courts P5..P9 sequentially
 - Skip any match that overlaps slot players
 - Skip any match that would exceed consecutive 2
 - Leave a court empty if no match fits

@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { loadGlobalGroupRanking, nextPowerOfTwo } from "@/app/knockout/logic";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
 import { BracketError, generateKnockoutBracketInternal } from "@/app/knockout/bracket-service";
+import { requireAdmin } from "@/lib/auth";
 
 const categorySchema = z.enum(["MD", "WD", "XD"]);
 
@@ -26,6 +27,7 @@ async function assertGroupStageLocked(categoryCode: "MD" | "WD" | "XD") {
 }
 
 export async function computeSeriesQualifiers(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     redirect(`/knockout?error=${encodeURIComponent("Invalid category.")}`);
@@ -92,6 +94,7 @@ export async function computeSeriesQualifiers(formData: FormData) {
 }
 
 export async function generateKnockoutBracket(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const categoryParsed = categorySchema.safeParse(formData.get("category"));
   const seriesParsed = seriesSchema.safeParse(formData.get("series"));
 
@@ -118,6 +121,7 @@ export async function generateKnockoutBracket(formData: FormData) {
 }
 
 export async function applySecondChanceDrop(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     redirect(`/knockout?error=${encodeURIComponent("Invalid category.")}`);
@@ -210,6 +214,7 @@ export async function applySecondChanceDrop(formData: FormData) {
 }
 
 export async function toggleSecondChanceEnabled(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     redirect(`/knockout?error=${encodeURIComponent("Invalid category.")}`);

@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
+import { requireAdmin } from "@/lib/auth";
 
 const categorySchema = z.enum(["MD", "WD", "XD"]);
 
@@ -411,6 +412,7 @@ async function clearSecondChanceDrop(
 }
 
 export async function generateGroupStageMatches(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     redirect(`/matches?error=${encodeURIComponent("Invalid category.")}`);
@@ -505,6 +507,7 @@ export async function generateGroupStageMatches(formData: FormData) {
 }
 
 export async function clearGroupStageMatches(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     redirect(`/matches?error=${encodeURIComponent("Invalid category.")}`);
@@ -538,6 +541,7 @@ function teamSearchText(team: TeamSearchTarget | null) {
 }
 
 export async function randomizeFilteredGroupMatchResults(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   // DEV ONLY -- do not enable in production
   if (process.env.NODE_ENV === "production") {
     redirect(`/matches?error=${encodeURIComponent("Not available in production.")}`);
@@ -629,6 +633,7 @@ export async function randomizeFilteredGroupMatchResults(formData: FormData) {
 }
 
 export async function upsertMatchScore(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const redirectOptions = readMatchFilterRedirectOptions(formData);
   const parsedCategory = categorySchema.safeParse(formData.get("category"));
 
@@ -817,6 +822,7 @@ export async function upsertMatchScore(formData: FormData) {
 }
 
 export async function undoMatchResult(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const matchId = String(formData.get("matchId") ?? "");
   if (!matchId) {
     const redirectOptions = readMatchFilterRedirectOptions(formData);
@@ -862,6 +868,7 @@ export async function undoMatchResult(formData: FormData) {
 }
 
 export async function lockGroupStage(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     redirect(`/matches?error=${encodeURIComponent("Invalid category.")}`);
@@ -878,6 +885,7 @@ export async function lockGroupStage(formData: FormData) {
 }
 
 export async function unlockGroupStage(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     redirect(`/matches?error=${encodeURIComponent("Invalid category.")}`);
@@ -894,6 +902,7 @@ export async function unlockGroupStage(formData: FormData) {
 }
 
 export async function generateMatchesKnockout(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     return { error: "Invalid category." };
@@ -927,6 +936,7 @@ export async function generateMatchesKnockout(formData: FormData) {
 }
 
 export async function upsertKnockoutMatchScore(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = scoreSchema.safeParse({
     matchId: formData.get("matchId"),
     winnerTeamId: formData.get("winnerTeamId")?.toString() || undefined,
@@ -1069,6 +1079,7 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
 }
 
 export async function undoKnockoutMatchResult(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const matchId = String(formData.get("matchId") ?? "");
   if (!matchId) {
     return { error: "Match is required." };
@@ -1104,6 +1115,7 @@ export async function undoKnockoutMatchResult(formData: FormData) {
 }
 
 export async function clearMatchesKnockout(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     return { error: "Invalid category." };
@@ -1124,6 +1136,7 @@ export async function clearMatchesKnockout(formData: FormData) {
 }
 
 export async function randomizeAllKnockoutResultsDev(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   // DEV ONLY -- do not enable in production
   if (process.env.NODE_ENV === "production") {
     return { error: "Not available in production." };

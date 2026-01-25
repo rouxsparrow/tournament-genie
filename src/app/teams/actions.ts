@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth";
 
 const teamSchema = z.object({
   category: z.enum(["MD", "WD", "XD"]),
@@ -101,6 +102,7 @@ async function validateTeamInputs(params: {
 }
 
 export async function createTeam(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const result = parseTeam(formData);
 
   if (!result.success) {
@@ -150,6 +152,7 @@ export async function createTeam(formData: FormData) {
 }
 
 export async function updateTeam(teamId: string, formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const result = parseTeam(formData);
 
   if (!result.success) {
@@ -207,6 +210,7 @@ export async function updateTeam(teamId: string, formData: FormData) {
 }
 
 export async function deleteTeam(teamId: string) {
+  await requireAdmin({ onFail: "redirect" });
   await prisma.team.delete({
     where: { id: teamId },
   });
@@ -215,6 +219,7 @@ export async function deleteTeam(teamId: string) {
 }
 
 export async function toggleKnockOutSeed(teamId: string, formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const isKnockOutSeed = formData.get("isKnockOutSeed") === "on";
 
   await prisma.teamFlags.upsert({

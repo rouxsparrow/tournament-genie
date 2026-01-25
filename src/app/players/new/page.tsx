@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createPlayer } from "@/app/players/actions";
 import { Button } from "@/components/ui/button";
+import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 type PlayersNewPageProps = {
   searchParams?: Promise<{ error?: string; success?: string }>;
@@ -26,6 +27,7 @@ export default async function PlayersNewPage({
         </Button>
       </div>
       <form action={createPlayer} className="mt-6 space-y-4">
+        <GlobalFormPendingBridge />
         {errorMessage ? (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {errorMessage}
@@ -80,4 +82,3 @@ export default async function PlayersNewPage({
     </section>
   );
 }
-
