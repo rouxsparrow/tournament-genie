@@ -16,6 +16,7 @@ type ScheduleMatchItem = {
   categoryCode: "MD" | "WD" | "XD";
   label: string;
   detail: string;
+  series?: "A" | "B";
   round?: number;
   matchNo?: number;
   teams: {
@@ -219,6 +220,7 @@ function buildMatchItem(params: {
   categoryCode: "MD" | "WD" | "XD";
   label: string;
   detail: string;
+  series?: "A" | "B";
   round?: number;
   matchNo?: number;
   homeTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
@@ -240,6 +242,7 @@ function buildMatchItem(params: {
     categoryCode: params.categoryCode,
     label: params.label,
     detail: params.detail,
+    series: params.series,
     round: params.round,
     matchNo: params.matchNo,
     teams: {
@@ -403,9 +406,16 @@ function sortEligible(matches: ScheduleMatchItem[]) {
     const bType = b.matchType === "GROUP" ? 0 : 1;
     if (aType !== bType) return aType - bType;
     if (a.restScore !== b.restScore) return b.restScore - a.restScore;
-    if (a.categoryCode !== b.categoryCode) return a.categoryCode.localeCompare(b.categoryCode);
     // KO tie-break: earlier rounds first (progression-first).
-    if (a.round !== b.round) return (a.round ?? 0) - (b.round ?? 0);
+    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.round !== b.round) {
+      return (a.round ?? 0) - (b.round ?? 0);
+    }
+    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.series !== b.series) {
+      const seriesRank: Record<string, number> = { B: 0, A: 1 };
+      const aSeries = a.series ? seriesRank[a.series] ?? 2 : 2;
+      const bSeries = b.series ? seriesRank[b.series] ?? 2 : 2;
+      if (aSeries !== bSeries) return aSeries - bSeries;
+    }
     if (a.matchNo !== b.matchNo) return (a.matchNo ?? 0) - (b.matchNo ?? 0);
     return a.matchId.localeCompare(b.matchId);
   });
@@ -727,6 +737,7 @@ async function buildListEligibleMatches(params: {
           categoryCode: match.categoryCode,
           label: `Series ${match.series}`,
           detail: `${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`,
+          series: match.series,
           round: match.round,
           matchNo: match.matchNo,
           homeTeam: match.homeTeam,
