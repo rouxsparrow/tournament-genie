@@ -309,3 +309,19 @@ Pair the play-in teams using:
 - UI highlights players in consecutive runs across slots, with per-player colors
 - Shows a "Consecutive Ranking" table summarizing streak totals per player
 - Analytics-only: overview ignores match completion status (uses all group matches)
+
+---
+
+## Auth & Permissions
+- Roles:
+  - **Admin** (username: `admin`, password from `ADMIN_PASSWORD` env; defaults to `Starhub` locally)
+  - **Viewer** (public, read-only)
+- Admin login route: `/login`
+- Session is stored in an **HttpOnly** cookie signed with `AUTH_SECRET`
+- Viewer access:
+  - Can view Standings, Brackets, and Schedule (Live Courts only)
+  - All server-side mutations require Admin
+
+### Required Environment Variables
+- `AUTH_SECRET` (required for signing session cookies)
+- `ADMIN_PASSWORD` (recommended; defaults to `Starhub` for local dev)

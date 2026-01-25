@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { buildRandomizedGroups } from "@/lib/group-randomizer";
+import { requireAdmin } from "@/lib/auth";
 
 const categorySchema = z.enum(["MD", "WD", "XD"]);
 
@@ -43,6 +44,7 @@ function categoryName(code: "MD" | "WD" | "XD") {
 }
 
 export async function createGroupsManual(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = createGroupsSchema.safeParse({
     category: formData.get("category"),
     groupCount: formData.get("groupCount"),
@@ -92,6 +94,7 @@ export async function createGroupsManual(formData: FormData) {
 }
 
 export async function deleteGroup(groupId: string) {
+  await requireAdmin({ onFail: "redirect" });
   const group = await prisma.group.findUnique({
     where: { id: groupId },
     include: { category: true },
@@ -110,6 +113,7 @@ export async function deleteGroup(groupId: string) {
 }
 
 export async function assignTeamToGroup(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = assignSchema.safeParse({
     teamId: formData.get("teamId"),
     groupId: formData.get("groupId"),
@@ -167,6 +171,7 @@ export async function assignTeamToGroup(formData: FormData) {
 }
 
 export async function unassignTeam(teamId: string) {
+  await requireAdmin({ onFail: "redirect" });
   const groupTeam = await prisma.groupTeam.findUnique({
     where: { teamId },
     include: { group: { include: { category: true } } },
@@ -186,6 +191,7 @@ export async function unassignTeam(teamId: string) {
 }
 
 export async function randomizeGroups(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
 
   if (!parsed.success) {
@@ -251,6 +257,7 @@ export async function randomizeGroups(formData: FormData) {
 }
 
 export async function lockGroupAssignment(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     redirect(`/groups?error=${encodeURIComponent("Invalid category.")}`);
@@ -267,6 +274,7 @@ export async function lockGroupAssignment(formData: FormData) {
 }
 
 export async function unlockGroupAssignment(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
   const parsed = categorySchema.safeParse(formData.get("category"));
   if (!parsed.success) {
     redirect(`/groups?error=${encodeURIComponent("Invalid category.")}`);

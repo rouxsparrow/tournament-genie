@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth";
 
 type CategoryFilter = "ALL" | "MD" | "WD" | "XD";
 type MatchType = "GROUP" | "KNOCKOUT";
@@ -1005,6 +1006,7 @@ async function applyAutoSchedule(params: {
             categoryCode: match.categoryCode,
             label: `Series ${match.series}`,
             detail: `${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`,
+            series: match.series,
             round: match.round,
             matchNo: match.matchNo,
             homeTeam: match.homeTeam,
@@ -1437,6 +1439,7 @@ export async function getScheduleState(filters?: {
         categoryCode: match.categoryCode,
         label: `Series ${match.series}`,
         detail: `${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`,
+        series: match.series,
         round: match.round,
         matchNo: match.matchNo,
         homeTeam: match.homeTeam,
@@ -1519,6 +1522,8 @@ export async function getScheduleState(filters?: {
 }
 
 export async function toggleAutoSchedule(stage: ScheduleStage, enabled: boolean) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
@@ -1538,6 +1543,8 @@ export async function toggleAutoSchedule(stage: ScheduleStage, enabled: boolean)
 }
 
 export async function lockCourt(courtId: string, locked: boolean, stage: ScheduleStage) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
@@ -1555,6 +1562,8 @@ export async function lockCourt(courtId: string, locked: boolean, stage: Schedul
 }
 
 export async function backToQueue(courtId: string, stage: ScheduleStage) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
@@ -1580,6 +1589,8 @@ export async function backToQueue(courtId: string, stage: ScheduleStage) {
 }
 
 export async function swapBackToQueue(courtId: string, stage: ScheduleStage) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
@@ -1666,6 +1677,8 @@ export async function blockMatch(
   matchId: string,
   stage: ScheduleStage
 ) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(matchType);
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsed.success) return { error: "Invalid match type." };
@@ -1715,6 +1728,8 @@ export async function unblockMatch(
   matchId: string,
   stage: ScheduleStage
 ) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(matchType);
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsed.success) return { error: "Invalid match type." };
@@ -1735,6 +1750,8 @@ export async function unblockMatch(
 }
 
 export async function markCompleted(courtId: string, stage: ScheduleStage) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
@@ -1791,6 +1808,8 @@ export async function assignNext(params: {
   matchId: string;
   stage: ScheduleStage;
 }) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(params.matchType);
   const parsedStage = scheduleStageSchema.safeParse(params.stage);
   if (!parsed.success) return { error: "Invalid match type." };
@@ -1893,6 +1912,8 @@ export async function forceNext(
   matchId: string,
   stage: ScheduleStage
 ) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(matchType);
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsed.success) return { error: "Invalid match type." };
@@ -1941,6 +1962,8 @@ export async function clearForcedPriority(
   matchId: string,
   stage: ScheduleStage
 ) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(matchType);
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsed.success) return { error: "Invalid match type." };
@@ -1958,6 +1981,8 @@ export async function clearForcedPriority(
 }
 
 export async function resetQueueForcedPriorities(stage: ScheduleStage) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 

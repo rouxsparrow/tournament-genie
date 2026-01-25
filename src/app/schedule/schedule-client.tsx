@@ -20,6 +20,7 @@ import {
 } from "@/app/schedule/actions";
 
 type ScheduleState = Awaited<ReturnType<typeof getScheduleState>>;
+type UserRole = "admin" | "viewer";
 type CategoryFilter = "ALL" | "MD" | "WD" | "XD";
 type QueueStatus = "ELIGIBLE" | "BLOCKED";
 type MatchType = "GROUP" | "KNOCKOUT";
@@ -93,10 +94,18 @@ function hasInPlayConflict(
   return playerIds.some((playerId) => inPlayPlayerIds.has(playerId));
 }
 
-export function ScheduleClient({ initialState }: { initialState: ScheduleState }) {
+export function ScheduleClient({
+  initialState,
+  role,
+}: {
+  initialState: ScheduleState;
+  role: UserRole;
+}) {
+  const isAdmin = role === "admin";
   const router = useRouter();
   const stage = initialState.stage as ScheduleStage;
   const [view, setView] = useState<"courts" | "queue">("courts");
+  const effectiveView = isAdmin ? view : "courts";
   const [category, setCategory] = useState<CategoryFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<QueueStatus>("ELIGIBLE");
   const [search, setSearch] = useState("");
@@ -213,28 +222,32 @@ export function ScheduleClient({ initialState }: { initialState: ScheduleState }
               >
                 Live Courts
               </Button>
+              {isAdmin ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={view === "queue" ? "default" : "outline"}
+                  onClick={() => setView("queue")}
+                >
+                  Queue
+                </Button>
+              ) : null}
+            </div>
+
+            {isAdmin ? (
               <Button
                 type="button"
                 size="sm"
-                variant={view === "queue" ? "default" : "outline"}
-                onClick={() => setView("queue")}
+                variant={autoSchedule ? "default" : "outline"}
+                onClick={() => {
+                  const next = !autoSchedule;
+                  setAutoSchedule(next);
+                  handleAction(() => toggleAutoSchedule(stage, next));
+                }}
               >
-                Queue
+                Auto Schedule {autoSchedule ? "ON" : "OFF"}
               </Button>
-            </div>
-
-            <Button
-              type="button"
-              size="sm"
-              variant={autoSchedule ? "default" : "outline"}
-              onClick={() => {
-                const next = !autoSchedule;
-                setAutoSchedule(next);
-                handleAction(() => toggleAutoSchedule(stage, next));
-              }}
-            >
-              Auto Schedule {autoSchedule ? "ON" : "OFF"}
-            </Button>
+            ) : null}
           </div>
 
           <div className="flex items-center gap-2">
@@ -263,7 +276,7 @@ export function ScheduleClient({ initialState }: { initialState: ScheduleState }
         </div>
       ) : null}
 
-      {view === "courts" ? (
+      {effectiveView === "courts" ? (
         <div className="space-y-6">
           <section className="rounded-xl border border-border bg-card p-4">
             <div className="flex items-center justify-between">
@@ -292,18 +305,20 @@ export function ScheduleClient({ initialState }: { initialState: ScheduleState }
                           {court.isLocked ? "Locked" : "Unlocked"}
                         </div>
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={court.isLocked ? "outline" : "default"}
-                        onClick={() =>
-                          handleAction(() =>
-                            lockCourt(court.id, !court.isLocked, stage)
-                          )
-                        }
-                      >
-                        {court.isLocked ? "Unlock" : "Lock"}
-                      </Button>
+                      {isAdmin ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={court.isLocked ? "outline" : "default"}
+                          onClick={() =>
+                            handleAction(() =>
+                              lockCourt(court.id, !court.isLocked, stage)
+                            )
+                          }
+                        >
+                          {court.isLocked ? "Unlock" : "Lock"}
+                        </Button>
+                      ) : null}
                     </div>
 
                     <div className="mt-4 rounded-lg border border-border bg-muted/40 p-3 text-sm">
@@ -335,52 +350,54 @@ export function ScheduleClient({ initialState }: { initialState: ScheduleState }
                       </div>
                     ) : null}
 
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleAction(() => backToQueue(court.id, stage))}
-                        disabled={!playing}
-                      >
-                        Back to Queue
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          if (!playing) return;
-                          const matchId = playing.matchKey.split(":")[1] ?? "";
-                          if (!matchId) return;
-                          handleAction(() =>
-                            blockMatch(playing.matchType, matchId, stage)
-                          );
-                        }}
-                        disabled={!playing}
-                      >
-                        Block
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleAction(() => markCompleted(court.id, stage))}
-                        disabled={!playing}
-                      >
-                        Completed
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedMatchKey(eligibleForModal[0]?.key ?? "");
-                          setModal({ type: "assign", courtId: court.id });
-                        }}
-                      >
-                        Assign Next
-                      </Button>
-                    </div>
+                    {isAdmin ? (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleAction(() => backToQueue(court.id, stage))}
+                          disabled={!playing}
+                        >
+                          Back to Queue
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            if (!playing) return;
+                            const matchId = playing.matchKey.split(":")[1] ?? "";
+                            if (!matchId) return;
+                            handleAction(() =>
+                              blockMatch(playing.matchType, matchId, stage)
+                            );
+                          }}
+                          disabled={!playing}
+                        >
+                          Block
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleAction(() => markCompleted(court.id, stage))}
+                          disabled={!playing}
+                        >
+                          Completed
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedMatchKey(eligibleForModal[0]?.key ?? "");
+                            setModal({ type: "assign", courtId: court.id });
+                          }}
+                        >
+                          Assign Next
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
@@ -390,9 +407,11 @@ export function ScheduleClient({ initialState }: { initialState: ScheduleState }
           <section className="rounded-xl border border-border bg-card p-4">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-foreground">Upcoming</h2>
-              <div className="text-xs text-muted-foreground">
-                {autoSchedule ? "Auto Schedule ON" : "Auto Schedule OFF"}
-              </div>
+              {isAdmin ? (
+                <div className="text-xs text-muted-foreground">
+                  {autoSchedule ? "Auto Schedule ON" : "Auto Schedule OFF"}
+                </div>
+              ) : null}
             </div>
             <div className="mt-4 space-y-3">
               {upcomingFiltered.length === 0 ? (
@@ -611,7 +630,7 @@ export function ScheduleClient({ initialState }: { initialState: ScheduleState }
         </div>
       )}
 
-      {modal ? (
+      {modal && isAdmin ? (
         <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg">
             <div className="flex items-center justify-between">
