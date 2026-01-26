@@ -322,6 +322,13 @@ Pair the play-in teams using:
   - Can view Standings, Brackets, and Schedule (Live Courts only)
   - All server-side mutations require Admin
 
+### Favourite Player (Viewer)
+- Viewer can set a favourite player on `/` (stored in `tg_fav_player_id` cookie)
+- Favourite player is used to auto-configure:
+  - Standings: category + group
+  - Brackets: category + series
+  - Schedule: highlight name only
+
 ### Required Environment Variables
 - `AUTH_SECRET` (required for signing session cookies)
 - `ADMIN_PASSWORD` (recommended; defaults to `Starhub` for local dev)

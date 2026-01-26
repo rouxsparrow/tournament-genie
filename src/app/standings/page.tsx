@@ -3,11 +3,13 @@ import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { computeStandings } from "@/app/standings/actions";
 import { StandingsClient } from "@/app/standings/standings-client";
+import { getRoleFromRequest } from "@/lib/auth";
+import { getFavouritePlayerCategoryMap, getFavouritePlayerContext } from "@/lib/favourite-player";
 
 export const dynamic = "force-dynamic";
 
 type StandingsPageProps = {
-  searchParams?: Promise<{ category?: string; error?: string }>;
+  searchParams?: Promise<{ category?: string; error?: string; fromNav?: string; groupId?: string }>;
 };
 
 const categories = ["MD", "WD", "XD"] as const;
@@ -22,12 +24,23 @@ function teamLabel(team: {
 }
 
 export default async function StandingsPage({ searchParams }: StandingsPageProps) {
+  const role = await getRoleFromRequest();
+  const favourite = await getFavouritePlayerContext();
+  const favouriteMap = await getFavouritePlayerCategoryMap();
+  const isViewer = role === "viewer";
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
-  const selectedCategory = categories.includes(
-    resolvedSearchParams?.category as (typeof categories)[number]
-  )
-    ? (resolvedSearchParams?.category as (typeof categories)[number])
-    : "MD";
+  const fromNav = resolvedSearchParams?.fromNav === "1";
+  const requestedGroupId = resolvedSearchParams?.groupId ?? "";
+  const selectedCategory =
+    isViewer &&
+    fromNav &&
+    favourite?.categoryCode &&
+    categories.includes(favourite.categoryCode)
+      ? favourite.categoryCode
+      : categories.includes(resolvedSearchParams?.category as (typeof categories)[number])
+        ? (resolvedSearchParams?.category as (typeof categories)[number])
+        : "MD";
+  const favouriteGroupForCategory = favouriteMap.get(selectedCategory)?.groupId ?? "";
   const errorMessage = resolvedSearchParams?.error
     ? decodeURIComponent(resolvedSearchParams.error)
     : null;
@@ -64,7 +77,13 @@ export default async function StandingsPage({ searchParams }: StandingsPageProps
               variant={categoryCode === selectedCategory ? "default" : "outline"}
               size="sm"
             >
-              <Link href={`/standings?category=${categoryCode}`}>
+              <Link
+                href={`/standings?category=${categoryCode}${
+                  isViewer && favouriteMap.get(categoryCode)?.groupId
+                    ? `&groupId=${favouriteMap.get(categoryCode)?.groupId}`
+                    : ""
+                }`}
+              >
                 {categoryCode}
               </Link>
             </Button>
@@ -80,6 +99,8 @@ export default async function StandingsPage({ searchParams }: StandingsPageProps
 
       <StandingsClient
         categoryCode={selectedCategory}
+        favouritePlayerName={favourite?.playerName ?? null}
+        initialGroupId={fromNav && isViewer ? favouriteGroupForCategory : requestedGroupId}
         groups={groups.map((group) => ({ id: group.id, name: group.name }))}
         groupData={groupData.map((entry) => ({
           group: {

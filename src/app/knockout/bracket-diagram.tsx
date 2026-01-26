@@ -19,6 +19,7 @@ type BracketMatch = {
 type BracketDiagramProps = {
   matches: BracketMatch[];
   showPlayIns: boolean;
+  favouritePlayerName?: string | null;
 };
 
 const MATCH_H = 120;
@@ -78,12 +79,39 @@ function placeholderLabel(match: BracketMatch, slot: "home" | "away") {
   return "TBD";
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function highlightName(label: string, favouriteName?: string | null) {
+  if (!favouriteName) return label;
+  const pattern = new RegExp(escapeRegExp(favouriteName), "gi");
+  const parts = label.split(pattern);
+  if (parts.length === 1) return label;
+  const matches = label.match(pattern) ?? [];
+  return (
+    <>
+      {parts.map((part, index) => {
+        const match = matches[index];
+        return (
+          <span key={`${part}-${index}`}>
+            {part}
+            {match ? <span className="text-[greenyellow]">{match}</span> : null}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 function MatchBox({
   match,
   label,
+  favouritePlayerName,
 }: {
   match: BracketMatch;
   label: string;
+  favouritePlayerName?: string | null;
 }) {
   const homeWins = match.winnerTeamId === match.homeTeam.id;
   const awayWins = match.winnerTeamId === match.awayTeam.id;
@@ -134,11 +162,15 @@ function MatchBox({
       <div className="divide-y divide-border text-sm">
         <div className={`flex items-center gap-2 px-2 py-3 ${rowClass(homeWins, isFinalized)}`}>
           {seedBadge(match.homeTeam.seed)}
-          <span className="truncate">{homeLabel}</span>
+          <span className="truncate">
+            {highlightName(homeLabel, favouritePlayerName)}
+          </span>
         </div>
         <div className={`flex items-center gap-2 px-2 py-3 ${rowClass(awayWins, isFinalized)}`}>
           {seedBadge(match.awayTeam.seed)}
-          <span className="truncate">{awayLabel}</span>
+          <span className="truncate">
+            {highlightName(awayLabel, favouritePlayerName)}
+          </span>
         </div>
       </div>
     </div>
@@ -149,7 +181,11 @@ function columnTop(index: number, baseOffset: number, step: number) {
   return baseOffset + index * step;
 }
 
-export function BracketDiagram({ matches, showPlayIns }: BracketDiagramProps) {
+export function BracketDiagram({
+  matches,
+  showPlayIns,
+  favouritePlayerName,
+}: BracketDiagramProps) {
   const byRound = new Map<number, BracketMatch[]>();
   for (const match of matches) {
     const list = byRound.get(match.round) ?? [];
@@ -210,7 +246,11 @@ export function BracketDiagram({ matches, showPlayIns }: BracketDiagramProps) {
           <div className="mt-3 flex flex-wrap gap-4">
             {playIn.matches.map((match, index) => (
               <div key={match.id} className="w-[280px]">
-                <MatchBox match={match} label={`Play-in ${index + 1}`} />
+                <MatchBox
+                  match={match}
+                  label={`Play-in ${index + 1}`}
+                  favouritePlayerName={favouritePlayerName}
+                />
               </div>
             ))}
           </div>
@@ -236,7 +276,11 @@ export function BracketDiagram({ matches, showPlayIns }: BracketDiagramProps) {
                   width: "100%",
                 }}
               >
-                <MatchBox match={match} label={`QF${index + 1}`} />
+                <MatchBox
+                  match={match}
+                  label={`QF${index + 1}`}
+                  favouritePlayerName={favouritePlayerName}
+                />
               </div>
             ))}
           </div>
@@ -258,7 +302,11 @@ export function BracketDiagram({ matches, showPlayIns }: BracketDiagramProps) {
                 width: "100%",
               }}
             >
-              <MatchBox match={match} label={`SF${index + 1}`} />
+              <MatchBox
+                match={match}
+                label={`SF${index + 1}`}
+                favouritePlayerName={favouritePlayerName}
+              />
             </div>
           ))}
         </div>
@@ -279,7 +327,11 @@ export function BracketDiagram({ matches, showPlayIns }: BracketDiagramProps) {
                 width: "100%",
               }}
             >
-              <MatchBox match={match} label={finalRound ? roundLabel(finalRound.round) : "Final"} />
+              <MatchBox
+                match={match}
+                label={finalRound ? roundLabel(finalRound.round) : "Final"}
+                favouritePlayerName={favouritePlayerName}
+              />
             </div>
           ))}
         </div>
