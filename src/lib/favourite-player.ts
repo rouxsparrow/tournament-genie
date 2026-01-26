@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
+import { getRoleFromRequest } from "@/lib/auth";
 
 const COOKIE_NAME = "tg_fav_player_id";
 
@@ -27,6 +28,8 @@ function compareNullable(a?: string, b?: string) {
 }
 
 export async function getFavouritePlayerId(): Promise<string | null> {
+  const role = await getRoleFromRequest();
+  if (role !== "viewer") return null;
   const store = await cookies();
   const value = store.get(COOKIE_NAME)?.value ?? "";
   return value || null;

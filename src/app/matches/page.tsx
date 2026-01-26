@@ -282,6 +282,7 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
             matchNo: match.matchNo,
             status: match.status,
             winnerTeamId: match.winnerTeamId,
+            isBestOf3: match.isBestOf3,
             games: match.games.map((game) => ({
               gameNumber: game.gameNumber,
               homePoints: game.homePoints,
