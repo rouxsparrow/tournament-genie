@@ -23,6 +23,11 @@ const scoreSchema = z.object({
   game3Away: z.number().int().nonnegative().optional(),
 });
 
+const finalBestOf3Schema = z.object({
+  matchId: z.string().min(1, "Match is required."),
+  isBestOf3: z.boolean(),
+});
+
 function parseNumber(value: FormDataEntryValue | null) {
   if (value === null || value === "") return undefined;
   const parsed = Number.parseInt(String(value), 10);
@@ -965,6 +970,8 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
   }
 
   const scoringMode = await getScoringMode();
+  const matchScoringMode =
+    match.round === 4 && match.isBestOf3 ? "BEST_OF_3_21" : scoringMode;
 
   const game1Home = parsed.data.game1Home;
   const game1Away = parsed.data.game1Away;
@@ -1007,7 +1014,7 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
 
   let winnerTeamId: string | null = null;
 
-  if (scoringMode === "SINGLE_GAME_21") {
+  if (matchScoringMode === "SINGLE_GAME_21") {
     winnerTeamId = game1Home > game1Away ? match.homeTeamId : match.awayTeamId;
   } else {
     const game2Home = parsed.data.game2Home;
@@ -1201,8 +1208,10 @@ export async function randomizeAllKnockoutResultsDev(formData: FormData) {
       const winnerTeamId =
         winner === "home" ? match.homeTeamId : match.awayTeamId;
 
+      const matchScoringMode =
+        match.round === 4 && match.isBestOf3 ? "BEST_OF_3_21" : scoringMode;
       const games =
-        scoringMode === "SINGLE_GAME_21"
+        matchScoringMode === "SINGLE_GAME_21"
           ? [buildSingleGameScore(winner)]
           : buildBestOfThreeScores(winner);
 
@@ -1248,6 +1257,7 @@ export async function fetchKnockoutMatches(params: { categoryCode: "MD" | "WD" |
     matchNo: match.matchNo,
     status: match.status,
     winnerTeamId: match.winnerTeamId,
+    isBestOf3: match.isBestOf3,
     games: match.games.map((game) => ({
       gameNumber: game.gameNumber,
       homePoints: game.homePoints,
@@ -1272,4 +1282,37 @@ export async function fetchKnockoutMatches(params: { categoryCode: "MD" | "WD" |
         }
       : null,
   }));
+}
+
+export async function setFinalBestOf3(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
+  const parsed = finalBestOf3Schema.safeParse({
+    matchId: formData.get("matchId"),
+    isBestOf3: String(formData.get("isBestOf3")) === "true",
+  });
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid request." };
+  }
+
+  const match = await prisma.knockoutMatch.findUnique({
+    where: { id: parsed.data.matchId },
+  });
+
+  if (!match) {
+    return { error: "Match not found." };
+  }
+
+  if (match.round !== 4) {
+    return { error: "Final best-of-3 is only available for Finals." };
+  }
+
+  await prisma.knockoutMatch.update({
+    where: { id: match.id },
+    data: { isBestOf3: parsed.data.isBestOf3 },
+  });
+
+  revalidatePath("/matches");
+  revalidatePath("/knockout");
+  return { ok: true };
 }

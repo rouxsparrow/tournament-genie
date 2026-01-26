@@ -65,10 +65,13 @@ export default async function RootLayout({
                     </Link>
                   </>
                 ) : null}
-                <Link className="hover:text-foreground" href="/standings">
+                <Link className="hover:text-foreground" href="/standings?fromNav=1">
                   Standings
                 </Link>
-                <Link className="hover:text-foreground" href="/schedule">
+                <Link
+                  className="hover:text-foreground"
+                  href={isAdmin ? "/schedule" : "/schedule?fromNav=1"}
+                >
                   Schedule
                 </Link>
                 {isAdmin ? (
@@ -84,7 +87,7 @@ export default async function RootLayout({
                     Knockout
                   </Link>
                 ) : null}
-                <Link className="hover:text-foreground" href="/brackets">
+                <Link className="hover:text-foreground" href="/brackets?fromNav=1">
                   Brackets
                 </Link>
               </nav>
@@ -98,14 +101,7 @@ export default async function RootLayout({
                       Logout
                     </button>
                   </form>
-                ) : (
-                  <Link
-                    className="text-sm font-medium text-muted-foreground hover:text-foreground"
-                    href="/login"
-                  >
-                    Admin Login
-                  </Link>
-                )}
+                ) : null}
                 <ThemeToggle />
               </div>
             </div>

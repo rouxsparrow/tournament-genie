@@ -8,6 +8,7 @@ import {
   fetchKnockoutMatches,
   generateMatchesKnockout,
   randomizeAllKnockoutResultsDev,
+  setFinalBestOf3,
   undoKnockoutMatchResult,
   upsertKnockoutMatchScore,
 } from "@/app/matches/actions";
@@ -35,6 +36,7 @@ type KnockoutMatchItem = {
   matchNo: number;
   status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
   winnerTeamId: string | null;
+  isBestOf3: boolean;
   games: MatchGame[];
   homeTeam: Team | null;
   awayTeam: Team | null;
@@ -284,6 +286,8 @@ export function KnockoutMatchesSection({
       ) : (
         <div className="mt-4 space-y-3">
           {filteredMatches.map((match) => {
+            const matchScoringMode =
+              match.round === 4 && match.isBestOf3 ? "BEST_OF_3_21" : scoringMode;
             const scoreSummary = match.games
               .slice()
               .sort((a, b) => a.gameNumber - b.gameNumber)
@@ -325,6 +329,52 @@ export function KnockoutMatchesSection({
                   </div>
                 </div>
               </div>
+              {match.round === 4 ? (
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const formData = new FormData(event.currentTarget);
+                    startTransition(async () => {
+                      const result = await setFinalBestOf3(formData);
+                      if (result?.error) {
+                        setError(result.error);
+                        return;
+                      }
+                      const refreshed = await fetchKnockoutMatches({ categoryCode });
+                      setItems(refreshed);
+                      setError(null);
+                    });
+                  }}
+                  className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+                >
+                  <input type="hidden" name="matchId" value={match.id} />
+                  <input
+                    id={`final-best-of-3-${match.id}`}
+                    name="isBestOf3"
+                    type="checkbox"
+                    className="h-4 w-4 rounded border border-input"
+                    checked={match.isBestOf3}
+                    onChange={(event) => {
+                      const formData = new FormData();
+                      formData.set("matchId", match.id);
+                      formData.set("isBestOf3", String(event.target.checked));
+                      startTransition(async () => {
+                        const result = await setFinalBestOf3(formData);
+                        if (result?.error) {
+                          setError(result.error);
+                          return;
+                        }
+                        const refreshed = await fetchKnockoutMatches({ categoryCode });
+                        setItems(refreshed);
+                        setError(null);
+                      });
+                    }}
+                  />
+                  <label htmlFor={`final-best-of-3-${match.id}`}>
+                    Final is Best-of-3
+                  </label>
+                </form>
+              ) : null}
               <form
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -343,7 +393,7 @@ export function KnockoutMatchesSection({
                 className="mt-4 grid gap-2"
               >
                 <input type="hidden" name="matchId" value={match.id} />
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-2">
                   <div className="space-y-1 text-xs">
                     <div className="text-muted-foreground">Game 1</div>
                     <div className="grid grid-cols-2 items-center gap-2">
@@ -367,7 +417,7 @@ export function KnockoutMatchesSection({
                     />
                     </div>
                   </div>
-                  {scoringMode === "BEST_OF_3_21" ? (
+                  {matchScoringMode === "BEST_OF_3_21" ? (
                     <div className="space-y-1 text-xs">
                       <div className="text-muted-foreground">Game 2</div>
                       <div className="grid grid-cols-2 items-center gap-2">
@@ -392,7 +442,7 @@ export function KnockoutMatchesSection({
                       </div>
                     </div>
                   ) : null}
-                  {scoringMode === "BEST_OF_3_21" ? (
+                  {matchScoringMode === "BEST_OF_3_21" ? (
                     <div className="space-y-1 text-xs">
                       <div className="text-muted-foreground">Game 3</div>
                       <div className="grid grid-cols-2 items-center gap-2">

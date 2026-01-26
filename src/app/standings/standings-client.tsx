@@ -50,6 +50,8 @@ type GroupData = {
 
 type StandingsClientProps = {
   categoryCode: "MD" | "WD" | "XD";
+  favouritePlayerName: string | null;
+  initialGroupId: string;
   groups: { id: string; name: string }[];
   groupData: GroupData[];
 };
@@ -61,27 +63,58 @@ function teamLabel(team: Team | null) {
   return names.length === 2 ? `${names[0]} / ${names[1]}` : "Unnamed team";
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function highlightName(label: string, favouriteName: string | null) {
+  if (!favouriteName) return label;
+  const pattern = new RegExp(escapeRegExp(favouriteName), "gi");
+  const parts = label.split(pattern);
+  if (parts.length === 1) return label;
+  const matches = label.match(pattern) ?? [];
+  return (
+    <>
+      {parts.map((part, index) => {
+        const match = matches[index];
+        return (
+          <span key={`${part}-${index}`}>
+            {part}
+            {match ? <span className="text-[greenyellow]">{match}</span> : null}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 export function StandingsClient({
   categoryCode,
   groups,
   groupData,
+  favouritePlayerName,
+  initialGroupId,
 }: StandingsClientProps) {
   const storageKey = `standings:filters:${categoryCode}`;
   const [groupId, setGroupId] = useState("");
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(storageKey);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored) as { groupId?: string };
-        if (typeof parsed.groupId === "string") setGroupId(parsed.groupId);
-      } catch {
-        // Ignore invalid stored filters.
+    if (initialGroupId) {
+      setGroupId(initialGroupId);
+    } else {
+      const stored = window.localStorage.getItem(storageKey);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as { groupId?: string };
+          if (typeof parsed.groupId === "string") setGroupId(parsed.groupId);
+        } catch {
+          // Ignore invalid stored filters.
+        }
       }
     }
     setMounted(true);
-  }, [storageKey]);
+  }, [initialGroupId, storageKey]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -161,7 +194,9 @@ export function StandingsClient({
                         const label = team ? teamLabel(team) : row.teamName || "Unknown team";
                         return (
                           <tr key={row.teamId} className="border-b border-border/60">
-                            <td className="py-2 pr-2 text-foreground">{label}</td>
+                            <td className="py-2 pr-2 text-foreground">
+                              {highlightName(label, favouritePlayerName)}
+                            </td>
                             <td className="py-2 pr-2">{row.wins}</td>
                             <td className="py-2 pr-2">{row.losses}</td>
                             <td className="py-2 pr-2">{row.pointsFor}</td>
@@ -216,11 +251,19 @@ export function StandingsClient({
                               className="rounded-md border border-border p-3"
                             >
                               <p className="text-sm font-medium text-foreground">
-                                {homeTeam ? teamLabel(homeTeam) : "TBD"} vs{" "}
-                                {awayTeam ? teamLabel(awayTeam) : "TBD"}
+                                {highlightName(
+                                  homeTeam ? teamLabel(homeTeam) : "TBD",
+                                  favouritePlayerName
+                                )}{" "}
+                                vs{" "}
+                                {highlightName(
+                                  awayTeam ? teamLabel(awayTeam) : "TBD",
+                                  favouritePlayerName
+                                )}
                               </p>
                               <p className="mt-1 text-xs text-muted-foreground">
-                                Score: {scoreSummary} · Winner: {winnerLabel}
+                                Score: {scoreSummary} · Winner:{" "}
+                                {highlightName(winnerLabel, favouritePlayerName)}
                               </p>
                             </div>
                           );

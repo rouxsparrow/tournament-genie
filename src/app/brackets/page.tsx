@@ -2,11 +2,13 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { BracketDiagram } from "@/app/knockout/bracket-diagram";
+import { getRoleFromRequest } from "@/lib/auth";
+import { getFavouritePlayerCategoryMap, getFavouritePlayerContext } from "@/lib/favourite-player";
 
 export const dynamic = "force-dynamic";
 
 type BracketsPageProps = {
-  searchParams?: Promise<{ category?: string; series?: "A" | "B" }>;
+  searchParams?: Promise<{ category?: string; series?: "A" | "B"; fromNav?: string }>;
 };
 
 const categories = ["MD", "WD", "XD"] as const;
@@ -22,17 +24,31 @@ function teamLabel(team: {
 }
 
 export default async function BracketsPage({ searchParams }: BracketsPageProps) {
+  const role = await getRoleFromRequest();
+  const favourite = await getFavouritePlayerContext();
+  const favouriteMap = await getFavouritePlayerCategoryMap();
+  const isViewer = role === "viewer";
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
-  const selectedCategory = categories.includes(
-    resolvedSearchParams?.category as (typeof categories)[number]
-  )
-    ? (resolvedSearchParams?.category as (typeof categories)[number])
-    : "MD";
-  const requestedSeries = seriesOptions.includes(
-    resolvedSearchParams?.series as (typeof seriesOptions)[number]
-  )
-    ? (resolvedSearchParams?.series as (typeof seriesOptions)[number])
-    : "A";
+  const fromNav = resolvedSearchParams?.fromNav === "1";
+  const selectedCategory =
+    isViewer &&
+    fromNav &&
+    favourite?.categoryCode &&
+    categories.includes(favourite.categoryCode)
+      ? favourite.categoryCode
+      : categories.includes(resolvedSearchParams?.category as (typeof categories)[number])
+        ? (resolvedSearchParams?.category as (typeof categories)[number])
+        : "MD";
+  const preferredSeries =
+    isViewer && fromNav
+      ? favouriteMap.get(selectedCategory)?.preferredSeries ?? null
+      : null;
+  const requestedSeries =
+    preferredSeries && seriesOptions.includes(preferredSeries)
+      ? preferredSeries
+      : seriesOptions.includes(resolvedSearchParams?.series as (typeof seriesOptions)[number])
+        ? (resolvedSearchParams?.series as (typeof seriesOptions)[number])
+        : "A";
   const isWD = selectedCategory === "WD";
   const selectedSeries = isWD && requestedSeries === "B" ? "A" : requestedSeries;
 
@@ -59,9 +75,11 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Brackets</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Enter results in Matches -&gt; bracket updates automatically.
-          </p>
+          {!isViewer ? (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Enter results in Matches -&gt; bracket updates automatically.
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           {categories.map((categoryCode) => (
@@ -71,7 +89,13 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
               variant={categoryCode === selectedCategory ? "default" : "outline"}
               size="sm"
             >
-              <Link href={`/brackets?category=${categoryCode}&series=${selectedSeries}`}>
+              <Link
+                href={`/brackets?category=${categoryCode}&series=${
+                  isViewer
+                    ? favouriteMap.get(categoryCode)?.preferredSeries ?? selectedSeries
+                    : selectedSeries
+                }`}
+              >
                 {categoryCode}
               </Link>
             </Button>
@@ -140,6 +164,7 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
               },
             }))}
             showPlayIns={showPlayIns}
+            favouritePlayerName={favourite?.playerName ?? null}
           />
         </div>
       )}

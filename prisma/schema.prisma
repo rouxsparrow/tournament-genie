@@ -228,6 +228,7 @@ model KnockoutMatch {
   winnerTeamId String?
   status       MatchStatus @default(SCHEDULED)
   isPublished  Boolean     @default(false)
+  isBestOf3    Boolean     @default(false)
   completedAt  DateTime?
   nextMatchId  String?
   nextSlot     Int?
