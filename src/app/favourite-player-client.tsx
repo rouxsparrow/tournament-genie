@@ -31,7 +31,7 @@ export function FavouritePlayerClient({
     return players.filter((player) => player.name.toLowerCase().includes(term));
   }, [players, search]);
 
-  async function setFavourite(playerId: string) {
+  async function setFavourite(playerId: string | null) {
     setError(null);
     try {
       await fetch("/api/favourite", {
@@ -87,9 +87,9 @@ export function FavouritePlayerClient({
               <Button
                 size="sm"
                 variant={isFavourite ? "outline" : "default"}
-                onClick={() => setFavourite(player.id)}
+                onClick={() => setFavourite(isFavourite ? null : player.id)}
               >
-                {isFavourite ? "Selected" : "Set Favourite"}
+                {isFavourite ? "Unfavourite" : "Favourite"}
               </Button>
             </div>
           );
