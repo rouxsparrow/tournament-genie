@@ -1,6 +1,13 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type CategoryCode = "MD" | "WD" | "XD";
 
@@ -116,22 +123,29 @@ export function MatchContextBar({
           </div>
         )}
 
-        <div className="md:col-span-2">
+        <div className="md:col-span-2 min-w-0">
           <label className="text-xs font-medium text-muted-foreground">Match</label>
-          <select
-            value={selectedMatchId}
-            onChange={(event) => onMatchChange(event.target.value)}
-            className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
-          >
-            <option value="">
-              {hasMatches ? "Select match" : "No scheduled matches"}
-            </option>
-            {matches.map((match) => (
-              <option key={match.id} value={match.id}>
-                {match.label}
-              </option>
-            ))}
-          </select>
+          <div className="mt-1">
+            <Select
+              value={selectedMatchId}
+              onValueChange={onMatchChange}
+              disabled={!hasMatches}
+            >
+              <SelectTrigger className="w-full min-w-0">
+                <SelectValue
+                  placeholder={hasMatches ? "Select match" : "No scheduled matches"}
+                  className="truncate"
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {matches.map((match) => (
+                  <SelectItem key={match.id} value={match.id}>
+                    {match.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
     </div>
