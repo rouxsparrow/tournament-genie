@@ -290,7 +290,7 @@ export function RefereeScoreboard({ matches, groups }: RefereeScoreboardProps) {
         </div>
 
         {/* Layout contract: keep 3-column grid; team columns are centered vertical stacks. */}
-        <div className="mt-8 grid grid-cols-[1fr_auto_1fr] grid-rows-[auto_auto_auto_auto] items-center gap-x-6 gap-y-3">
+        <div className="mt-8 grid w-fit grid-cols-[auto_auto_auto] grid-rows-[auto_auto_auto_auto] items-center gap-x-6 gap-y-3 mx-auto">
           <Button
             type="button"
             variant="outline"
