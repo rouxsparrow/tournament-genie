@@ -269,9 +269,9 @@ export function RefereeScoreboard({ matches, groups }: RefereeScoreboardProps) {
 
       <div className="rounded-2xl border border-border bg-card p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <p className="text-sm text-muted-foreground">Current Match</p>
-            <p className="text-lg font-semibold text-foreground">
+            <p className="text-lg font-semibold text-foreground break-words">
               {selectedMatch
                 ? `${teamLabel(selectedMatch.homeTeam)} vs ${teamLabel(
                     selectedMatch.awayTeam
