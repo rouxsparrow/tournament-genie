@@ -6,6 +6,7 @@ const PUBLIC_PATHS = new Set([
   "/standings",
   "/brackets",
   "/schedule",
+  "/referee",
   "/login",
 ]);
 const PUBLIC_PREFIXES = ["/_next", "/favicon.ico", "/assets", "/images"];
