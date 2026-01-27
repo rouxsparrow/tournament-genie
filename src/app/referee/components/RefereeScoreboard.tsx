@@ -23,7 +23,7 @@ type Team = {
 type GroupMatchItem = {
   id: string;
   stage: "GROUP";
-  status: "SCHEDULED";
+  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
   categoryCode: CategoryCode;
   groupId: string;
   groupName: string;
@@ -34,7 +34,7 @@ type GroupMatchItem = {
 type KnockoutMatchItem = {
   id: string;
   stage: "KNOCKOUT";
-  status: "SCHEDULED";
+  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
   categoryCode: CategoryCode;
   series: "A" | "B";
   round: number;
