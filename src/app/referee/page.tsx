@@ -26,6 +26,7 @@ export default async function RefereePage() {
     categoryCode: match.categoryCode,
     series: match.series,
     round: match.round,
+    matchNo: match.matchNo,
     homeTeam: match.homeTeam,
     awayTeam: match.awayTeam,
   }));

@@ -115,7 +115,10 @@ Use the following deterministic order:
   - Round 1 = Play-ins (Series B only, when Second Chance + play-ins needed)
   - Round 2 = Quarterfinals (Series A starts here)
   - Round 3 = Semifinals
-  - Round 4 = Final
+  - Round 4 = Finals block
+    - matchNo 1 = Final
+    - matchNo 2 = Bronze Medal Match (losers of SF1/SF2)
+  - Final-only behavior (e.g., best-of-3) applies only to Round 4 matchNo 1
 
 ---
 

@@ -236,6 +236,93 @@ async function applyWinnerToNextMatch(
   }
 }
 
+async function applyLoserToBronzeMatch(
+  tx: Prisma.TransactionClient,
+  match: {
+    id: string;
+    categoryCode: "MD" | "WD" | "XD";
+    series: "A" | "B";
+    round: number;
+    matchNo: number;
+    homeTeamId: string | null;
+    awayTeamId: string | null;
+  },
+  winnerTeamId: string
+) {
+  if (match.round !== 3) return;
+  if (!match.homeTeamId || !match.awayTeamId) return;
+  if (match.matchNo !== 1 && match.matchNo !== 2) return;
+
+  const loserTeamId =
+    winnerTeamId === match.homeTeamId ? match.awayTeamId : match.homeTeamId;
+  const bronzeMatch = await tx.knockoutMatch.findFirst({
+    where: {
+      categoryCode: match.categoryCode,
+      series: match.series,
+      round: 4,
+      matchNo: 2,
+    },
+  });
+  if (!bronzeMatch) return;
+
+  const slotField = match.matchNo === 1 ? "homeTeamId" : "awayTeamId";
+  const currentSlot = bronzeMatch[slotField];
+  if (currentSlot === loserTeamId) return;
+
+  await tx.knockoutGameScore.deleteMany({
+    where: { knockoutMatchId: bronzeMatch.id },
+  });
+  await tx.knockoutMatch.update({
+    where: { id: bronzeMatch.id },
+    data: {
+      [slotField]: loserTeamId,
+      winnerTeamId: null,
+      status: "SCHEDULED",
+      completedAt: null,
+    },
+  });
+}
+
+async function clearLoserFromBronzeMatch(
+  tx: Prisma.TransactionClient,
+  match: {
+    id: string;
+    categoryCode: "MD" | "WD" | "XD";
+    series: "A" | "B";
+    round: number;
+    matchNo: number;
+  }
+) {
+  if (match.round !== 3) return;
+  if (match.matchNo !== 1 && match.matchNo !== 2) return;
+
+  const bronzeMatch = await tx.knockoutMatch.findFirst({
+    where: {
+      categoryCode: match.categoryCode,
+      series: match.series,
+      round: 4,
+      matchNo: 2,
+    },
+  });
+  if (!bronzeMatch) return;
+
+  const slotField = match.matchNo === 1 ? "homeTeamId" : "awayTeamId";
+  if (!bronzeMatch[slotField]) return;
+
+  await tx.knockoutGameScore.deleteMany({
+    where: { knockoutMatchId: bronzeMatch.id },
+  });
+  await tx.knockoutMatch.update({
+    where: { id: bronzeMatch.id },
+    data: {
+      [slotField]: null,
+      winnerTeamId: null,
+      status: "SCHEDULED",
+      completedAt: null,
+    },
+  });
+}
+
 async function applySecondChanceDrop(
   tx: Prisma.TransactionClient,
   match: {
@@ -971,7 +1058,9 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
 
   const scoringMode = await getScoringMode();
   const matchScoringMode =
-    match.round === 4 && match.isBestOf3 ? "BEST_OF_3_21" : scoringMode;
+    match.round === 4 && match.matchNo === 1 && match.isBestOf3
+      ? "BEST_OF_3_21"
+      : scoringMode;
 
   const game1Home = parsed.data.game1Home;
   const game1Away = parsed.data.game1Away;
@@ -984,6 +1073,7 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
         await clearDownstreamSlot(tx, match.id, match.winnerTeamId);
       }
       await clearSecondChanceDrop(tx, match);
+      await clearLoserFromBronzeMatch(tx, match);
       await tx.knockoutGameScore.deleteMany({
         where: { knockoutMatchId: match.id },
       });
@@ -1077,6 +1167,7 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
     if (winnerTeamId) {
       await applyWinnerToNextMatch(tx, match.id, winnerTeamId);
       await applySecondChanceDrop(tx, match, winnerTeamId);
+      await applyLoserToBronzeMatch(tx, match, winnerTeamId);
     }
   });
 
@@ -1105,6 +1196,7 @@ export async function undoKnockoutMatchResult(formData: FormData) {
       await clearDownstreamSlot(tx, match.id, match.winnerTeamId);
     }
     await clearSecondChanceDrop(tx, match);
+    await clearLoserFromBronzeMatch(tx, match);
     await tx.knockoutGameScore.deleteMany({ where: { knockoutMatchId: match.id } });
     await tx.knockoutMatch.update({
       where: { id: match.id },
@@ -1209,7 +1301,9 @@ export async function randomizeAllKnockoutResultsDev(formData: FormData) {
         winner === "home" ? match.homeTeamId : match.awayTeamId;
 
       const matchScoringMode =
-        match.round === 4 && match.isBestOf3 ? "BEST_OF_3_21" : scoringMode;
+        match.round === 4 && match.matchNo === 1 && match.isBestOf3
+          ? "BEST_OF_3_21"
+          : scoringMode;
       const games =
         matchScoringMode === "SINGLE_GAME_21"
           ? [buildSingleGameScore(winner)]
@@ -1304,6 +1398,10 @@ export async function setFinalBestOf3(formData: FormData) {
   }
 
   if (match.round !== 4) {
+    return { error: "Final best-of-3 is only available for Finals." };
+  }
+
+  if (match.matchNo !== 1) {
     return { error: "Final best-of-3 is only available for Finals." };
   }
 

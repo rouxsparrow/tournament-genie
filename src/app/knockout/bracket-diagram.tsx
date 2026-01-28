@@ -35,7 +35,7 @@ function roundLabel(round: number) {
   if (round === 1) return "Play-ins";
   if (round === 2) return "Quarterfinals";
   if (round === 3) return "Semifinals";
-  if (round === 4) return "Final";
+  if (round === 4) return "Finals";
   return `Round ${round}`;
 }
 
@@ -64,6 +64,9 @@ function scoreSummary(games: BracketMatch["games"]) {
 }
 
 function placeholderLabel(match: BracketMatch, slot: "home" | "away") {
+  if (match.round === 4 && match.matchNo === 2) {
+    return slot === "home" ? "Loser of SF1" : "Loser of SF2";
+  }
   const incoming = match.previousMatches.find(
     (prev) => prev.nextSlot === (slot === "home" ? 1 : 2)
   );
@@ -74,7 +77,7 @@ function placeholderLabel(match: BracketMatch, slot: "home" | "away") {
     const label = roundLabel(incoming.round);
     if (label === "Quarterfinals") return `Winner of QF${incoming.matchNo}`;
     if (label === "Semifinals") return `Winner of SF${incoming.matchNo}`;
-    if (label === "Final") return "Winner of Final";
+    if (label === "Finals") return "Winner of Final";
   }
   return "TBD";
 }
@@ -217,10 +220,13 @@ export function BracketDiagram({
   const qfTop = HEADER_H;
   const sfTop = HEADER_H + SF_OFFSET;
   const finalTop = HEADER_H + FINAL_OFFSET;
+  const bronzeTop = finalTop + MATCH_H + 24;
 
   const qfMatches = qfRound?.matches ?? [];
   const sfMatches = sfRound?.matches ?? [];
   const finalMatches = finalRound?.matches ?? [];
+  const finalMatch = finalMatches.find((match) => match.matchNo === 1) ?? null;
+  const bronzeMatch = finalMatches.find((match) => match.matchNo === 2) ?? null;
 
   const showQuarterfinals = Boolean(qfRound);
   const qfX = playInWidth;
@@ -316,11 +322,10 @@ export function BracketDiagram({
           style={{ left: `${finalX}px`, height: `${height}px` }}
         >
           <p className="text-xs font-semibold text-muted-foreground">
-            {finalRound ? roundLabel(finalRound.round) : "Final"}
+            {finalRound ? roundLabel(finalRound.round) : "Finals"}
           </p>
-          {finalMatches.map((match) => (
+          {finalMatch ? (
             <div
-              key={match.id}
               style={{
                 position: "absolute",
                 top: `${finalTop}px`,
@@ -328,12 +333,27 @@ export function BracketDiagram({
               }}
             >
               <MatchBox
-                match={match}
-                label={finalRound ? roundLabel(finalRound.round) : "Final"}
+                match={finalMatch}
+                label="Final"
                 favouritePlayerName={favouritePlayerName}
               />
             </div>
-          ))}
+          ) : null}
+          {bronzeMatch ? (
+            <div
+              style={{
+                position: "absolute",
+                top: `${bronzeTop}px`,
+                width: "100%",
+              }}
+            >
+              <MatchBox
+                match={bronzeMatch}
+                label="Bronze"
+                favouritePlayerName={favouritePlayerName}
+              />
+            </div>
+          ) : null}
         </div>
 
         <svg

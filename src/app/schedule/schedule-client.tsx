@@ -55,7 +55,8 @@ function roundLabel(match: ScheduleState["eligibleMatches"][number]) {
   if (match.round === 1) return "PI";
   if (match.round === 2) return "QF";
   if (match.round === 3) return "SF";
-  if (match.round === 4) return "F";
+  if (match.round === 4 && match.matchNo === 2) return "Bronze";
+  if (match.round === 4) return "Final";
   return match.round ? `R${match.round}` : "Round";
 }
 
