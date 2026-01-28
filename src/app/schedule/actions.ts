@@ -263,10 +263,11 @@ function buildMatchItem(params: {
   };
 }
 
-function formatKoRoundLabel(round?: number | null) {
+function formatKoRoundLabel(round?: number | null, matchNo?: number | null) {
   if (round === 1) return "Play-ins";
   if (round === 2) return "Quarterfinals";
   if (round === 3) return "Semifinals";
+  if (round === 4 && matchNo === 2) return "Bronze";
   if (round === 4) return "Final";
   return round ? `Round ${round}` : "Round";
 }
@@ -737,7 +738,7 @@ async function buildListEligibleMatches(params: {
           matchId: match.id,
           categoryCode: match.categoryCode,
           label: `Series ${match.series}`,
-          detail: `${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`,
+          detail: `${formatKoRoundLabel(match.round, match.matchNo)} • Match ${match.matchNo}`,
           series: match.series,
           round: match.round,
           matchNo: match.matchNo,
@@ -1005,7 +1006,7 @@ async function applyAutoSchedule(params: {
             matchId: match.id,
             categoryCode: match.categoryCode,
             label: `Series ${match.series}`,
-            detail: `${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`,
+            detail: `${formatKoRoundLabel(match.round, match.matchNo)} • Match ${match.matchNo}`,
             series: match.series,
             round: match.round,
             matchNo: match.matchNo,
@@ -1334,7 +1335,7 @@ export async function getScheduleState(filters?: {
       const match = assignment.knockoutMatch;
       if (!match || !assignment.knockoutMatchId) return entries;
       const matchKey = buildMatchKey("KNOCKOUT", assignment.knockoutMatchId);
-      const detail = `Series ${match.series} • ${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`;
+      const detail = `Series ${match.series} • ${formatKoRoundLabel(match.round, match.matchNo)} • Match ${match.matchNo}`;
       const homeTeam = match.homeTeam
         ? {
             name: match.homeTeam.name,
@@ -1438,7 +1439,7 @@ export async function getScheduleState(filters?: {
         matchId: match.id,
         categoryCode: match.categoryCode,
         label: `Series ${match.series}`,
-        detail: `${formatKoRoundLabel(match.round)} • Match ${match.matchNo}`,
+        detail: `${formatKoRoundLabel(match.round, match.matchNo)} • Match ${match.matchNo}`,
         series: match.series,
         round: match.round,
         matchNo: match.matchNo,

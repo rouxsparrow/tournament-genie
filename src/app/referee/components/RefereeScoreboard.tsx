@@ -38,6 +38,7 @@ type KnockoutMatchItem = {
   categoryCode: CategoryCode;
   series: "A" | "B";
   round: number;
+  matchNo: number;
   homeTeam: Team | null;
   awayTeam: Team | null;
 };
@@ -165,7 +166,10 @@ export function RefereeScoreboard({ matches, groups }: RefereeScoreboardProps) {
   }, [selectedMatch]);
 
   const matchState = selectedMatch ? matchStates[selectedMatch.id] : null;
-  const isFinal = selectedMatch?.stage === "KNOCKOUT" && selectedMatch.round === 4;
+  const isFinal =
+    selectedMatch?.stage === "KNOCKOUT" &&
+    selectedMatch.round === 4 &&
+    selectedMatch.matchNo === 1;
   const bestOf3Enabled = matchState?.bestOf3Enabled ?? false;
   const activeGame = isFinal && bestOf3Enabled ? matchState?.currentGame ?? 1 : 1;
   const activeScore = matchState?.gameScores[activeGame] ?? { home: 0, away: 0 };

@@ -66,8 +66,14 @@ function roundLabel(round: number) {
   if (round === 1) return "Play-ins";
   if (round === 2) return "Quarterfinals";
   if (round === 3) return "Semifinals";
-  if (round === 4) return "Final";
+  if (round === 4) return "Finals";
   return `Round ${round}`;
+}
+
+function matchRoundLabel(round: number, matchNo: number) {
+  if (round === 4 && matchNo === 1) return "Final";
+  if (round === 4 && matchNo === 2) return "Bronze Medal Match";
+  return roundLabel(round);
 }
 
 export function KnockoutMatchesSection({
@@ -287,12 +293,15 @@ export function KnockoutMatchesSection({
         <div className="mt-4 space-y-3">
           {filteredMatches.map((match) => {
             const matchScoringMode =
-              match.round === 4 && match.isBestOf3 ? "BEST_OF_3_21" : scoringMode;
+              match.round === 4 && match.matchNo === 1 && match.isBestOf3
+                ? "BEST_OF_3_21"
+                : scoringMode;
             const scoreSummary = match.games
               .slice()
               .sort((a, b) => a.gameNumber - b.gameNumber)
               .map((game) => `${game.homePoints}-${game.awayPoints}`)
               .join(", ");
+            const isFinal = match.round === 4 && match.matchNo === 1;
             return (
               <div key={match.id} className="rounded-lg border border-border p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -303,7 +312,7 @@ export function KnockoutMatchesSection({
                     {teamLabel(match.awayTeam)}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {roundLabel(match.round)}{" "}
+                    {matchRoundLabel(match.round, match.matchNo)}{" "}
                     · Series {match.series} · Match {match.matchNo}
                   </p>
                 </div>
@@ -329,7 +338,7 @@ export function KnockoutMatchesSection({
                   </div>
                 </div>
               </div>
-              {match.round === 4 ? (
+              {isFinal ? (
                 <form
                   onSubmit={(event) => {
                     event.preventDefault();

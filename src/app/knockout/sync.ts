@@ -61,6 +61,16 @@ function maxRoundForSeries(matches: KnockoutMatchSnapshot[], series: "A" | "B") 
     .reduce((max, match) => Math.max(max, match.round), 0);
 }
 
+function getLoserTeamId(
+  match: KnockoutMatchSnapshot,
+  scoringMode: "SINGLE_GAME_21" | "BEST_OF_3_21"
+) {
+  if (!match.homeTeamId || !match.awayTeamId) return null;
+  const winner = match.winnerTeamId ?? deriveWinnerFromGames(match, scoringMode);
+  if (!winner) return null;
+  return winner === match.homeTeamId ? match.awayTeamId : match.homeTeamId;
+}
+
 export async function syncKnockoutPropagation(categoryCode: CategoryCode) {
   let updated = 0;
   const scoringMode = await getScoringMode();
@@ -243,6 +253,62 @@ export async function syncKnockoutPropagation(categoryCode: CategoryCode) {
               bqfHomeById.set(target.id, loserTeamId);
               changed += 1;
             }
+          }
+        }
+      }
+
+      for (const series of ["A", "B"] as const) {
+        const sfMatches = (matches as KnockoutMatchSnapshot[])
+          .filter((match) => match.series === series && match.round === 3)
+          .sort((a, b) => a.matchNo - b.matchNo);
+        const bronzeMatch = (matches as KnockoutMatchSnapshot[]).find(
+          (match) => match.series === series && match.round === 4 && match.matchNo === 2
+        );
+
+        if (!bronzeMatch) continue;
+
+        for (const sfMatch of sfMatches) {
+          if (sfMatch.matchNo !== 1 && sfMatch.matchNo !== 2) continue;
+          const slotField = sfMatch.matchNo === 1 ? "homeTeamId" : "awayTeamId";
+          const loserTeamId = getLoserTeamId(sfMatch, scoringMode);
+          const currentSlot = bronzeMatch[slotField];
+
+          if (loserTeamId) {
+            if (currentSlot === loserTeamId) continue;
+            await tx.knockoutGameScore.deleteMany({
+              where: { knockoutMatchId: bronzeMatch.id },
+            });
+            await tx.knockoutMatch.update({
+              where: { id: bronzeMatch.id },
+              data: {
+                [slotField]: loserTeamId,
+                winnerTeamId: null,
+                status: "SCHEDULED",
+              },
+            });
+            bronzeMatch[slotField] = loserTeamId;
+            bronzeMatch.winnerTeamId = null;
+            bronzeMatch.status = "SCHEDULED";
+            changed += 1;
+            continue;
+          }
+
+          if (currentSlot) {
+            await tx.knockoutGameScore.deleteMany({
+              where: { knockoutMatchId: bronzeMatch.id },
+            });
+            await tx.knockoutMatch.update({
+              where: { id: bronzeMatch.id },
+              data: {
+                [slotField]: null,
+                winnerTeamId: null,
+                status: "SCHEDULED",
+              },
+            });
+            bronzeMatch[slotField] = null;
+            bronzeMatch.winnerTeamId = null;
+            bronzeMatch.status = "SCHEDULED";
+            changed += 1;
           }
         }
       }

@@ -156,7 +156,7 @@ After group stage is locked:
 - Round 1 = Play-ins
 - Round 2 = Quarterfinals (QF)
 - Round 3 = Semifinals (SF)
-- Round 4 = Final
+- Round 4 = Finals block (matchNo 1 = Final, matchNo 2 = Bronze Medal Match)
 - Series A starts at Round 2 (no Round 1 matches)
 - If knockout matches were previously generated, clear/regenerate to apply the new round model.
 

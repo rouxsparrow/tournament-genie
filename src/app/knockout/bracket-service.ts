@@ -71,6 +71,24 @@ function wireSeriesBPlayInMatches(params: {
   return updates;
 }
 
+function ensureBronzeMatch(
+  matches: {
+    round: number;
+    matchNo: number;
+    homeTeamId: string | null;
+    awayTeamId: string | null;
+  }[]
+) {
+  const hasFinal = matches.some((match) => match.round === 4 && match.matchNo === 1);
+  if (!hasFinal) return matches;
+  const hasBronze = matches.some((match) => match.round === 4 && match.matchNo === 2);
+  if (hasBronze) return matches;
+  return [
+    ...matches,
+    { round: 4, matchNo: 2, homeTeamId: null, awayTeamId: null },
+  ];
+}
+
 async function chooseOpponentWithDraw(params: {
   categoryCode: CategoryCode;
   series: SeriesCode;
@@ -444,6 +462,8 @@ export async function generateKnockoutBracketInternal(params: {
       "Series A Play-in match creation is invalid. Clear and regenerate brackets."
     );
   }
+
+  baseMatches = ensureBronzeMatch(baseMatches);
 
   await prisma.$transaction(async (tx) => {
     await tx.knockoutMatch.deleteMany({
