@@ -169,6 +169,9 @@ model Match {
 
   @@index([stage, status])
   @@index([groupId])
+  @@index([homeTeamId])
+  @@index([awayTeamId])
+  @@index([winnerTeamId])
   @@unique([groupId, homeTeamId, awayTeamId])
 }
 
@@ -215,6 +218,7 @@ model SeriesQualifier {
   @@unique([categoryCode, series, teamId])
   @@index([categoryCode, series])
   @@index([groupId])
+  @@index([teamId])
 }
 
 model KnockoutMatch {
@@ -245,6 +249,10 @@ model KnockoutMatch {
 
   @@unique([categoryCode, series, round, matchNo])
   @@index([categoryCode, series])
+  @@index([homeTeamId])
+  @@index([awayTeamId])
+  @@index([winnerTeamId])
+  @@index([nextMatchId])
 }
 
 model KnockoutGameScore {
@@ -272,6 +280,7 @@ model KnockoutSeed {
   @@unique([categoryCode, series, teamId])
   @@unique([categoryCode, series, seedNo])
   @@index([categoryCode, series])
+  @@index([teamId])
 }
 
 model KnockoutRandomDraw {
@@ -376,6 +385,8 @@ model CourtAssignment {
   knockoutMatch KnockoutMatch? @relation(fields: [knockoutMatchId], references: [id], onDelete: SetNull)
 
   @@index([courtId, status, stage])
+  @@index([groupMatchId])
+  @@index([knockoutMatchId])
 }
 
 model BlockedMatch {
