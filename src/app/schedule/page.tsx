@@ -24,27 +24,8 @@ export default async function SchedulePage({
     redirect("/presenting");
   }
   const favourite = await getFavouritePlayerContext();
-  const isViewer = role === "viewer";
-  let state = await getScheduleState({ category: "ALL", stage });
-  let resolvedStage = stage;
-
-  if (isViewer && fromNav) {
-    const groupState =
-      stage === "GROUP" ? state : await getScheduleState({ category: "ALL", stage: "GROUP" });
-    const favouriteId = favourite?.playerId ?? null;
-    const hasAssigned = groupState.courts.some((court) => Boolean(court.playing));
-    const hasUpcomingFavourite =
-      favouriteId &&
-      groupState.upcomingMatches.some((match) => match.teams.playerIds.includes(favouriteId));
-
-    if (!hasAssigned && !hasUpcomingFavourite) {
-      resolvedStage = "KNOCKOUT";
-      state = await getScheduleState({ category: "ALL", stage: "KNOCKOUT" });
-    } else {
-      state = groupState;
-      resolvedStage = "GROUP";
-    }
-  }
+  const resolvedStage = stage;
+  const state = await getScheduleState({ category: "ALL", stage: resolvedStage });
   const groupHref = "/schedule?stage=group";
   const koHref = "/schedule?stage=ko";
 
