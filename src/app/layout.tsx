@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Image from "next/image";
 import Link from "next/link";
 import "./globals.css";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -7,6 +8,7 @@ import { GlobalLoadingProvider } from "@/components/global-loading-provider";
 import { GlobalLoadingIndicator } from "@/components/loading-indicator";
 import { clearSession, getRoleFromRequest } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import logo from "./logo.png";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -45,51 +47,44 @@ export default async function RootLayout({
           <GlobalLoadingIndicator />
           <header className="border-b border-border bg-card">
             <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4">
-              <Link href="/" className="text-lg font-semibold text-foreground">
-                Tournament Genie
+              <Link
+                href="/"
+                className="flex items-center gap-2 text-lg font-semibold text-foreground"
+              >
+                <span className="hidden md:inline">Tournament Genie</span>
+                <span className="md:hidden">
+                  <Image
+                    src={logo}
+                    alt="Tournament Genie"
+                    width={28}
+                    height={28}
+                    className="h-7 w-7"
+                  />
+                </span>
               </Link>
               <nav className="flex flex-wrap gap-3 text-sm font-medium text-muted-foreground">
                 {isAdmin ? (
-                  <>
-                    <Link className="hover:text-foreground" href="/players">
-                      Players
-                    </Link>
-                    <Link className="hover:text-foreground" href="/teams">
-                      Teams
-                    </Link>
-                    <Link className="hover:text-foreground" href="/groups">
-                      Groups
-                    </Link>
-                    <Link className="hover:text-foreground" href="/matches">
-                      Matches
-                    </Link>
-                  </>
+                  <Link className="hover:text-foreground" href="/matches">
+                    Matches
+                  </Link>
                 ) : null}
                 <Link className="hover:text-foreground" href="/standings?fromNav=1">
                   Standings
                 </Link>
                 <Link
                   className="hover:text-foreground"
-                  href={isAdmin ? "/schedule" : "/schedule?fromNav=1"}
+                  href={isAdmin ? "/schedule" : "/presenting?fromNav=1"}
                 >
                   Schedule
                 </Link>
-                {isAdmin ? (
-                  <Link
-                    className="hover:text-foreground"
-                    href="/schedule-overview"
-                  >
-                    Schedule Overview
-                  </Link>
-                ) : null}
-                {isAdmin ? (
-                  <Link className="hover:text-foreground" href="/knockout">
-                    Knockout
-                  </Link>
-                ) : null}
                 <Link className="hover:text-foreground" href="/brackets?fromNav=1">
                   Brackets
                 </Link>
+                {isAdmin ? (
+                  <Link className="hover:text-foreground" href="/admin">
+                    Admin
+                  </Link>
+                ) : null}
               </nav>
               <div className="flex items-center gap-3">
                 {isAdmin ? (

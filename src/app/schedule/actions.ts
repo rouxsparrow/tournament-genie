@@ -263,6 +263,45 @@ function buildMatchItem(params: {
   };
 }
 
+function buildMatchItemLite(params: {
+  matchType: MatchType;
+  matchId: string;
+  categoryCode: "MD" | "WD" | "XD";
+  label: string;
+  detail: string;
+  series?: "A" | "B";
+  round?: number;
+  matchNo?: number | null;
+  homeTeam: { name: string; members: { playerId: string }[] } | null;
+  awayTeam: { name: string; members: { playerId: string }[] } | null;
+  restScore: number;
+}) {
+  const homeIds = params.homeTeam?.members.map((member) => member.playerId) ?? [];
+  const awayIds = params.awayTeam?.members.map((member) => member.playerId) ?? [];
+  return {
+    key: buildMatchKey(params.matchType, params.matchId),
+    matchId: params.matchId,
+    matchType: params.matchType,
+    categoryCode: params.categoryCode,
+    label: params.label,
+    detail: params.detail,
+    series: params.series,
+    round: params.round,
+    matchNo: params.matchNo ?? undefined,
+    teams: {
+      homeName: params.homeTeam?.name ?? "TBD",
+      awayName: params.awayTeam?.name ?? "TBD",
+      homePlayers: [],
+      awayPlayers: [],
+      playerNames: [],
+      playerIds: [...homeIds, ...awayIds],
+    },
+    restScore: params.restScore,
+    forcedRank: undefined,
+    isForced: false,
+  } satisfies ScheduleMatchItem;
+}
+
 function formatKoRoundLabel(round?: number | null, matchNo?: number | null) {
   if (round === 1) return "Play-ins";
   if (round === 2) return "Quarterfinals";
@@ -1130,10 +1169,13 @@ async function applyAutoSchedule(params: {
   }
 }
 
-export async function getScheduleState(filters?: {
-  category?: CategoryFilter;
-  stage?: ScheduleStage;
-}) {
+export async function getScheduleState(
+  filters?: {
+    category?: CategoryFilter;
+    stage?: ScheduleStage;
+  },
+  options?: { mode?: "full" | "presenting" }
+) {
   const category =
     filters?.category && categoryFilterSchema.safeParse(filters.category).success
       ? filters.category
@@ -1230,7 +1272,8 @@ export async function getScheduleState(filters?: {
   );
 
   const inPlayPlayerIds = await getInPlayPlayerIds(stage);
-  const lastBatch = await getLastBatchFromAssignments(stage);
+  const includeLastBatch = options?.mode !== "presenting";
+  const lastBatch = includeLastBatch ? await getLastBatchFromAssignments(stage) : null;
   const recentlyPlayedSet = await getRecentCompletedPlayerIds(stage);
   const eligibleSorted = await buildListEligibleMatches({
     stage,
@@ -1378,78 +1421,88 @@ export async function getScheduleState(filters?: {
       .filter((key): key is string => Boolean(key))
   );
   const eligibleFinal = eligibleSorted.filter((match) => !assignedAfterAuto.has(match.key));
-  const assignableCount = eligibleFinal.filter((match) =>
-    isAssignableNow(match.teams.playerIds, inPlayPlayerIds)
-  ).length;
-  const upcomingAssignableCount = buildUpcoming(
-    eligibleFinal,
-    inPlayPlayerIds,
-    5
-  ).filter((match) => isAssignableNow(match.teams.playerIds, inPlayPlayerIds)).length;
+  const includeCounts = options?.mode !== "presenting";
+  const assignableCount = includeCounts
+    ? eligibleFinal.filter((match) =>
+        isAssignableNow(match.teams.playerIds, inPlayPlayerIds)
+      ).length
+    : 0;
+  const upcomingAssignableCount = includeCounts
+    ? buildUpcoming(eligibleFinal, inPlayPlayerIds, 5).filter((match) =>
+        isAssignableNow(match.teams.playerIds, inPlayPlayerIds)
+      ).length
+    : 0;
 
-  const blockedGroupIds = blocked
-    .filter((entry) => entry.matchType === "GROUP" && entry.groupMatchId)
-    .map((entry) => entry.groupMatchId as string);
-  const blockedKnockoutIds = blocked
-    .filter((entry) => entry.matchType === "KNOCKOUT" && entry.knockoutMatchId)
-    .map((entry) => entry.knockoutMatchId as string);
-  const blockedGroupMatches = blockedGroupIds.length
-    ? await prisma.match.findMany({
-        where: { id: { in: blockedGroupIds } },
-        include: {
-          group: { include: { category: true } },
-          homeTeam: { include: { members: { include: { player: true } } } },
-          awayTeam: { include: { members: { include: { player: true } } } },
-        },
-      })
+  const includeBlockedDetails = options?.mode !== "presenting";
+  const blockedList = includeBlockedDetails
+    ? await (async () => {
+        const blockedGroupIds = blocked
+          .filter((entry) => entry.matchType === "GROUP" && entry.groupMatchId)
+          .map((entry) => entry.groupMatchId as string);
+        const blockedKnockoutIds = blocked
+          .filter((entry) => entry.matchType === "KNOCKOUT" && entry.knockoutMatchId)
+          .map((entry) => entry.knockoutMatchId as string);
+        const blockedGroupMatches = blockedGroupIds.length
+          ? await prisma.match.findMany({
+              where: { id: { in: blockedGroupIds } },
+              include: {
+                group: { include: { category: true } },
+                homeTeam: { include: { members: { include: { player: true } } } },
+                awayTeam: { include: { members: { include: { player: true } } } },
+              },
+            })
+          : [];
+        const blockedKnockoutMatches = blockedKnockoutIds.length
+          ? await prisma.knockoutMatch.findMany({
+              where: { id: { in: blockedKnockoutIds } },
+              include: {
+                homeTeam: { include: { members: { include: { player: true } } } },
+                awayTeam: { include: { members: { include: { player: true } } } },
+              },
+            })
+          : [];
+        const blockedGroupById = new Map(
+          blockedGroupMatches.map((match) => [match.id, match])
+        );
+        const blockedKnockoutById = new Map(
+          blockedKnockoutMatches.map((match) => [match.id, match])
+        );
+        return blocked.map((entry) => {
+          if (entry.matchType === "GROUP" && entry.groupMatchId) {
+            const match = blockedGroupById.get(entry.groupMatchId);
+            if (!match || !match.group || !match.group.category) return null;
+            return buildMatchItem({
+              matchType: "GROUP",
+              matchId: match.id,
+              categoryCode: match.group.category.code,
+              label: `Group ${match.group.name}`,
+              detail: "Group Match",
+              homeTeam: match.homeTeam,
+              awayTeam: match.awayTeam,
+              restScore: 0,
+            });
+          }
+          if (entry.matchType === "KNOCKOUT" && entry.knockoutMatchId) {
+            const match = blockedKnockoutById.get(entry.knockoutMatchId);
+            if (!match) return null;
+            return buildMatchItem({
+              matchType: "KNOCKOUT",
+              matchId: match.id,
+              categoryCode: match.categoryCode,
+              label: `Series ${match.series}`,
+              detail: `${formatKoRoundLabel(match.round, match.matchNo)} • Match ${match.matchNo}`,
+              series: match.series,
+              round: match.round,
+              matchNo: match.matchNo,
+              homeTeam: match.homeTeam,
+              awayTeam: match.awayTeam,
+              restScore: 0,
+            });
+          }
+          return null;
+        });
+      })()
     : [];
-  const blockedKnockoutMatches = blockedKnockoutIds.length
-    ? await prisma.knockoutMatch.findMany({
-        where: { id: { in: blockedKnockoutIds } },
-        include: {
-          homeTeam: { include: { members: { include: { player: true } } } },
-          awayTeam: { include: { members: { include: { player: true } } } },
-        },
-      })
-    : [];
-  const blockedGroupById = new Map(blockedGroupMatches.map((match) => [match.id, match]));
-  const blockedKnockoutById = new Map(
-    blockedKnockoutMatches.map((match) => [match.id, match])
-  );
-  const blockedList = blocked.map((entry) => {
-    if (entry.matchType === "GROUP" && entry.groupMatchId) {
-      const match = blockedGroupById.get(entry.groupMatchId);
-      if (!match || !match.group || !match.group.category) return null;
-      return buildMatchItem({
-        matchType: "GROUP",
-        matchId: match.id,
-        categoryCode: match.group.category.code,
-        label: `Group ${match.group.name}`,
-        detail: "Group Match",
-        homeTeam: match.homeTeam,
-        awayTeam: match.awayTeam,
-        restScore: 0,
-      });
-    }
-    if (entry.matchType === "KNOCKOUT" && entry.knockoutMatchId) {
-      const match = blockedKnockoutById.get(entry.knockoutMatchId);
-      if (!match) return null;
-      return buildMatchItem({
-        matchType: "KNOCKOUT",
-        matchId: match.id,
-        categoryCode: match.categoryCode,
-        label: `Series ${match.series}`,
-        detail: `${formatKoRoundLabel(match.round, match.matchNo)} • Match ${match.matchNo}`,
-        series: match.series,
-        round: match.round,
-        matchNo: match.matchNo,
-        homeTeam: match.homeTeam,
-        awayTeam: match.awayTeam,
-        restScore: 0,
-      });
-    }
-    return null;
-  });
 
   const upcoming = buildUpcoming(eligibleFinal, inPlayPlayerIds, 5);
 
@@ -1490,7 +1543,7 @@ export async function getScheduleState(filters?: {
     config: {
       id: config.id,
       autoScheduleEnabled: config.autoScheduleEnabled,
-      lastBatch,
+      lastBatch: lastBatch ?? { matchKeys: [], playerIds: [], updatedAt: "" },
     },
     courts: courts.map((court) => {
       const lock = lockByCourt.get(court.id);
@@ -1507,17 +1560,320 @@ export async function getScheduleState(filters?: {
     inPlayPlayerIds: Array.from(inPlayPlayerIds),
     assignableCount,
     upcomingAssignableCount,
+    debug:
+      options?.mode === "presenting"
+        ? {
+            stage,
+            activeCourtsCount: 0,
+            lockedCourtsCount: 0,
+            assignedCourtsCount: 0,
+            freeCourtsCount: 0,
+            lockedCourtIds: [],
+            assignedCourtIds: [],
+            activeAssignmentIds: [],
+            assignmentMatchKeys: [],
+            note: undefined,
+          }
+        : {
+            stage,
+            activeCourtsCount: courts.length,
+            lockedCourtsCount: lockedCourtIds.length,
+            assignedCourtsCount: assignedCourtIds.size,
+            freeCourtsCount,
+            lockedCourtIds,
+            assignedCourtIds: Array.from(assignedCourtIds),
+            activeAssignmentIds: activeAssignments.map((assignment) => assignment.id),
+            assignmentMatchKeys: Array.from(assignedMatchKeys),
+            note: debugNote,
+          },
+  };
+}
+
+export async function getPresentingState(filters?: {
+  category?: CategoryFilter;
+  stage?: ScheduleStage;
+}) {
+  const category =
+    filters?.category && categoryFilterSchema.safeParse(filters.category).success
+      ? filters.category
+      : "ALL";
+  const stage =
+    filters?.stage && scheduleStageSchema.safeParse(filters.stage).success
+      ? filters.stage
+      : "GROUP";
+
+  const stageMatchType = stage === "GROUP" ? "GROUP" : "KNOCKOUT";
+
+  const [courts, assignments, blocked, matchPoolCount] = await Promise.all([
+    prisma.court.findMany({ orderBy: { id: "asc" } }),
+    prisma.courtAssignment.findMany({
+      where: { status: "ACTIVE", stage },
+      include: {
+        groupMatch: {
+          include: {
+            group: { include: { category: true } },
+            homeTeam: {
+              select: { name: true, members: { select: { playerId: true } } },
+            },
+            awayTeam: {
+              select: { name: true, members: { select: { playerId: true } } },
+            },
+          },
+        },
+        knockoutMatch: {
+          include: {
+            homeTeam: {
+              select: { name: true, members: { select: { playerId: true } } },
+            },
+            awayTeam: {
+              select: { name: true, members: { select: { playerId: true } } },
+            },
+          },
+        },
+      },
+    }),
+    prisma.blockedMatch.findMany({ where: { matchType: stageMatchType } }),
+    stage === "GROUP"
+      ? prisma.match.count({
+          where: {
+            stage: "GROUP",
+            ...(category !== "ALL" ? { group: { category: { code: category } } } : {}),
+          },
+        })
+      : prisma.knockoutMatch.count({
+          where: {
+            isPublished: true,
+            ...(category !== "ALL" ? { categoryCode: category } : {}),
+          },
+        }),
+  ]);
+
+  const blockedKeys = new Set(
+    blocked
+      .map((entry) => {
+        const matchId =
+          entry.matchType === "GROUP" ? entry.groupMatchId : entry.knockoutMatchId;
+        if (!matchId) return null;
+        return buildMatchKey(entry.matchType, matchId);
+      })
+      .filter((key): key is string => Boolean(key))
+  );
+
+  const assignedMatchKeys = new Set(
+    assignments
+      .map((assignment) =>
+        assignment.matchType === "GROUP"
+          ? assignment.groupMatchId
+            ? buildMatchKey("GROUP", assignment.groupMatchId)
+            : null
+          : assignment.knockoutMatchId
+            ? buildMatchKey("KNOCKOUT", assignment.knockoutMatchId)
+            : null
+      )
+      .filter((key): key is string => Boolean(key))
+  );
+
+  const playingByCourtEntries = assignments.reduce<
+    Array<
+      readonly [
+        string,
+        {
+          matchKey: string;
+          matchType: MatchType;
+          categoryCode: string;
+          detail: string;
+          homeTeam: { name: string; players: string[] } | null;
+          awayTeam: { name: string; players: string[] } | null;
+        }
+      ]
+    >
+  >((entries, assignment) => {
+    if (assignment.matchType === "GROUP") {
+      const match = assignment.groupMatch;
+      if (!match || !assignment.groupMatchId) return entries;
+      const matchKey = buildMatchKey("GROUP", assignment.groupMatchId);
+      const detail = match.group ? `Group ${match.group.name}` : "Group Match";
+      const homeTeam = match.homeTeam
+        ? {
+            name: match.homeTeam.name,
+            players: match.homeTeam.members.map((member) => member.playerId),
+          }
+        : null;
+      const awayTeam = match.awayTeam
+        ? {
+            name: match.awayTeam.name,
+            players: match.awayTeam.members.map((member) => member.playerId),
+          }
+        : null;
+      entries.push([
+        assignment.courtId,
+        {
+          matchKey,
+          matchType: assignment.matchType,
+          categoryCode: match.group?.category.code ?? "MD",
+          detail,
+          homeTeam,
+          awayTeam,
+        },
+      ] as const);
+      return entries;
+    }
+
+    const match = assignment.knockoutMatch;
+    if (!match || !assignment.knockoutMatchId) return entries;
+    const matchKey = buildMatchKey("KNOCKOUT", assignment.knockoutMatchId);
+    const detail = `Series ${match.series} • ${formatKoRoundLabel(
+      match.round,
+      match.matchNo
+    )} • Match ${match.matchNo}`;
+    const homeTeam = match.homeTeam
+      ? {
+          name: match.homeTeam.name,
+          players: match.homeTeam.members.map((member) => member.playerId),
+        }
+      : null;
+    const awayTeam = match.awayTeam
+      ? {
+          name: match.awayTeam.name,
+          players: match.awayTeam.members.map((member) => member.playerId),
+        }
+      : null;
+    entries.push([
+      assignment.courtId,
+      {
+        matchKey,
+        matchType: assignment.matchType,
+        categoryCode: match.categoryCode,
+        detail,
+        homeTeam,
+        awayTeam,
+      },
+    ] as const);
+    return entries;
+  }, []);
+
+  const playingByCourt = new Map(playingByCourtEntries);
+  const inPlayPlayerIds = new Set<string>();
+  playingByCourtEntries.forEach(([, playing]) => {
+    playing.homeTeam?.players.forEach((id) => inPlayPlayerIds.add(id));
+    playing.awayTeam?.players.forEach((id) => inPlayPlayerIds.add(id));
+  });
+
+  const recentlyPlayedSet = await getRecentCompletedPlayerIds(stage);
+
+  const getLitePlayerIds = (team: { members: { playerId: string }[] } | null) =>
+    team?.members.map((member) => member.playerId) ?? [];
+
+  let eligible: ScheduleMatchItem[] = [];
+  if (stage === "GROUP") {
+    const groupMatches = await prisma.match.findMany({
+      where: {
+        stage: "GROUP",
+        ...(category !== "ALL" ? { group: { category: { code: category } } } : {}),
+      },
+      include: {
+        group: { include: { category: true } },
+        homeTeam: { select: { name: true, members: { select: { playerId: true } } } },
+        awayTeam: { select: { name: true, members: { select: { playerId: true } } } },
+      },
+      orderBy: [{ group: { name: "asc" } }, { createdAt: "asc" }],
+    });
+
+    eligible = groupMatches.flatMap((match) => {
+      if (!match.group || !match.group.category) return [];
+      if (!isListEligibleGroupMatch(match)) return [];
+      const matchKey = buildMatchKey("GROUP", match.id);
+      if (assignedMatchKeys.has(matchKey) || blockedKeys.has(matchKey)) return [];
+      const playerIds = [
+        ...getLitePlayerIds(match.homeTeam),
+        ...getLitePlayerIds(match.awayTeam),
+      ];
+      return [
+        buildMatchItemLite({
+          matchType: "GROUP",
+          matchId: match.id,
+          categoryCode: match.group.category.code,
+          label: `Group ${match.group.name}`,
+          detail: "Group Match",
+          homeTeam: match.homeTeam,
+          awayTeam: match.awayTeam,
+          restScore: computeRestScore(playerIds, inPlayPlayerIds, recentlyPlayedSet),
+        }),
+      ];
+    });
+  } else {
+    const knockoutMatches = await prisma.knockoutMatch.findMany({
+      where: {
+        isPublished: true,
+        ...(category !== "ALL" ? { categoryCode: category } : {}),
+      },
+      include: {
+        homeTeam: { select: { name: true, members: { select: { playerId: true } } } },
+        awayTeam: { select: { name: true, members: { select: { playerId: true } } } },
+      },
+      orderBy: [{ series: "asc" }, { round: "asc" }, { matchNo: "asc" }],
+    });
+
+    eligible = knockoutMatches.flatMap((match) => {
+      if (!isListEligibleKnockoutMatch(match)) return [];
+      const matchKey = buildMatchKey("KNOCKOUT", match.id);
+      if (assignedMatchKeys.has(matchKey) || blockedKeys.has(matchKey)) return [];
+      const playerIds = [
+        ...getLitePlayerIds(match.homeTeam),
+        ...getLitePlayerIds(match.awayTeam),
+      ];
+      return [
+        buildMatchItemLite({
+          matchType: "KNOCKOUT",
+          matchId: match.id,
+          categoryCode: match.categoryCode,
+          label: `Series ${match.series}`,
+          detail: `${formatKoRoundLabel(match.round, match.matchNo)} • Match ${match.matchNo}`,
+          series: match.series,
+          round: match.round,
+          matchNo: match.matchNo,
+          homeTeam: match.homeTeam,
+          awayTeam: match.awayTeam,
+          restScore: computeRestScore(playerIds, inPlayPlayerIds, recentlyPlayedSet),
+        }),
+      ];
+    });
+  }
+
+  const eligibleSorted = sortEligible(eligible);
+  const upcoming = buildUpcoming(eligibleSorted, inPlayPlayerIds, 5);
+
+  return {
+    stage,
+    matchPoolCount,
+    config: {
+      id: "",
+      autoScheduleEnabled: false,
+      lastBatch: { matchKeys: [], playerIds: [], updatedAt: "" },
+    },
+    courts: courts.map((court) => ({
+      id: court.id,
+      isLocked: false,
+      lockReason: null,
+      playing: playingByCourt.get(court.id) ?? null,
+    })),
+    eligibleMatches: [],
+    upcomingMatches: upcoming,
+    blockedMatches: [],
+    inPlayPlayerIds: Array.from(inPlayPlayerIds),
+    assignableCount: 0,
+    upcomingAssignableCount: 0,
     debug: {
       stage,
-      activeCourtsCount: courts.length,
-      lockedCourtsCount: lockedCourtIds.length,
-      assignedCourtsCount: assignedCourtIds.size,
-      freeCourtsCount,
-      lockedCourtIds,
-      assignedCourtIds: Array.from(assignedCourtIds),
-      activeAssignmentIds: activeAssignments.map((assignment) => assignment.id),
-      assignmentMatchKeys: Array.from(assignedMatchKeys),
-      note: debugNote,
+      activeCourtsCount: 0,
+      lockedCourtsCount: 0,
+      assignedCourtsCount: 0,
+      freeCourtsCount: 0,
+      lockedCourtIds: [],
+      assignedCourtIds: [],
+      activeAssignmentIds: [],
+      assignmentMatchKeys: [],
+      note: undefined,
     },
   };
 }

@@ -1,15 +1,13 @@
 import Link from "next/link";
-import { getScheduleState } from "@/app/schedule/actions";
-import { ScheduleClient } from "@/app/schedule/schedule-client";
+import { getPresentingState } from "@/app/schedule/actions";
+import { PresentingClient } from "@/app/presenting/presenting-client";
 import { Button } from "@/components/ui/button";
-import { GlobalLoadingProvider } from "@/components/global-loading-provider";
 import { getRoleFromRequest } from "@/lib/auth";
 import { getFavouritePlayerContext } from "@/lib/favourite-player";
-import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-export default async function SchedulePage({
+export default async function PresentingPage({
   searchParams,
 }: {
   searchParams?: Promise<{ stage?: string | string[]; fromNav?: string }>;
@@ -20,25 +18,40 @@ export default async function SchedulePage({
   const stage = stageParam === "ko" ? "KNOCKOUT" : "GROUP";
   const fromNav = resolvedParams.fromNav === "1";
   const role = await getRoleFromRequest();
-  if (role === "viewer") {
-    redirect("/presenting");
-  }
   const favourite = await getFavouritePlayerContext();
-  const resolvedStage = stage;
-  const state = await getScheduleState({ category: "ALL", stage: resolvedStage });
-  const groupHref = "/schedule?stage=group";
-  const koHref = "/schedule?stage=ko";
+  let state = await getPresentingState({ category: "ALL", stage });
+  let resolvedStage = stage;
+
+  if (role === "viewer" && fromNav) {
+    const groupState =
+      stage === "GROUP"
+        ? state
+        : await getPresentingState({ category: "ALL", stage: "GROUP" });
+    const favouriteId = favourite?.playerId ?? null;
+    const hasAssigned = groupState.courts.some((court) => Boolean(court.playing));
+    const hasUpcomingFavourite =
+      favouriteId &&
+      groupState.upcomingMatches.some((match) => match.teams.playerIds.includes(favouriteId));
+
+    if (!hasAssigned && !hasUpcomingFavourite) {
+      resolvedStage = "KNOCKOUT";
+      state = await getPresentingState({ category: "ALL", stage: "KNOCKOUT" });
+    } else {
+      state = groupState;
+      resolvedStage = "GROUP";
+    }
+  }
+  const groupHref = "/presenting?stage=group";
+  const koHref = "/presenting?stage=ko";
 
   return (
     <section className="rounded-2xl border border-border bg-card p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">Schedule</h1>
-          {role === "admin" ? (
-            <p className="mt-1 text-sm text-muted-foreground">
-              Live court assignments and real-time scheduling controls.
-            </p>
-          ) : null}
+          <h1 className="text-2xl font-semibold text-foreground">Presenting</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Presentation mode for live Playing and Upcoming matches.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -59,13 +72,10 @@ export default async function SchedulePage({
       </div>
 
       <div className="mt-6">
-        <GlobalLoadingProvider>
-          <ScheduleClient
-            initialState={state}
-            role={role}
-            favouritePlayerName={favourite?.playerName ?? null}
-          />
-        </GlobalLoadingProvider>
+        <PresentingClient
+          state={state}
+          favouritePlayerName={favourite?.playerName ?? null}
+        />
       </div>
     </section>
   );

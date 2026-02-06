@@ -6,6 +6,7 @@ const PUBLIC_PATHS = new Set([
   "/standings",
   "/brackets",
   "/schedule",
+  "/presenting",
   "/referee",
   "/login",
 ]);
