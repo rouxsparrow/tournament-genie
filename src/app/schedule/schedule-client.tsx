@@ -367,14 +367,6 @@ export function ScheduleClient({
                               favouritePlayerName
                             )}
                           </div>
-                          <div className="text-xs text-muted-foreground">
-                            {highlightName(
-                              (playing.homeTeam?.players ?? [])
-                                .concat(playing.awayTeam?.players ?? [])
-                                .join(" • "),
-                              favouritePlayerName
-                            )}
-                          </div>
                         </div>
                       ) : (
                         <div className="text-xs text-muted-foreground">No match assigned.</div>
@@ -490,12 +482,6 @@ export function ScheduleClient({
                         {highlightName(match.teams.homeName, favouritePlayerName)} vs{" "}
                         {highlightName(match.teams.awayName, favouritePlayerName)}
                       </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {highlightName(
-                          match.teams.playerNames.join(" • "),
-                          favouritePlayerName
-                        )}
-                      </div>
                       {match.isForced ? (
                         <div className="mt-2">
                           <Badge variant="outline" className="border-red-600 text-red-600">
@@ -577,9 +563,6 @@ export function ScheduleClient({
                     <div className="mt-2 text-sm text-foreground">
                       {match.teams.homeName} vs {match.teams.awayName}
                     </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {match.teams.playerNames.join(" • ")}
-                    </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button
                         type="button"
@@ -648,9 +631,6 @@ export function ScheduleClient({
                   </div>
                   <div className="mt-2 text-sm text-foreground">
                     {match.teams.homeName} vs {match.teams.awayName}
-                  </div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {match.teams.playerNames.join(" • ")}
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button

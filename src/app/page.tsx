@@ -31,6 +31,16 @@ export default async function Home() {
             <span className="text-[yellowgreen]">
               {players.find((player) => player.id === favouriteId)?.name ?? "TBD"}
             </span>
+            .
+            <br />
+            <br />
+            Track their:
+            <br />
+            Group Stage performance on <b>Standings</b>
+            <br />
+            Knockout Stage performance on <b>Brackets</b>
+            <br />
+            Upcoming matches on <b>Schedule</b>
           </p>
         ) : null}
       </div>
