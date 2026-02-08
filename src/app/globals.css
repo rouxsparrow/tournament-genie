@@ -129,3 +129,53 @@
     color: var(--foreground);
   }
 }
+:root {
+  /* Light mode: extremely subtle */
+  --presenting-neon: 0 0 26px rgba(24, 148, 170, 0.08),
+    0 0 60px rgba(24, 148, 170, 0.08);
+  --presenting-neon-corner: rgba(30, 160, 186, 0.10);
+}
+
+.dark {
+  /* Dark mode: visible but still not competing with favourite highlight */
+  --presenting-neon: 0 0 30px rgba(56, 186, 204, 0.16),
+    0 0 80px rgba(56, 186, 204, 0.14);
+  --presenting-neon-corner: rgba(74, 206, 224, 0.24);
+}
+
+.presenting-neon {
+  box-shadow: var(--presenting-neon);
+  position: relative;
+  isolation: isolate;
+}
+
+.presenting-neon::before {
+  content: "";
+  position: absolute;
+  inset: -10%;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(
+      circle at top left,
+      var(--presenting-neon-corner),
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at top right,
+      var(--presenting-neon-corner),
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at bottom left,
+      var(--presenting-neon-corner),
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at bottom right,
+      var(--presenting-neon-corner),
+      transparent 55%
+    );
+  filter: blur(18px);
+}

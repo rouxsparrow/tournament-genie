@@ -16,7 +16,7 @@ const COURT_LABELS: Record<string, string> = {
 };
 
 function courtLabel(courtId: string) {
-  return COURT_LABELS[courtId] ?? courtId;
+  return `Court ${COURT_LABELS[courtId] ?? courtId}`;
 }
 
 function escapeRegExp(value: string) {
@@ -95,7 +95,7 @@ export function PresentingClient({
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-12">
-        <section className="rounded-xl border border-border bg-card p-4 lg:col-span-8">
+        <section className="presenting-neon rounded-xl border border-border bg-card p-4 lg:col-span-8">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold text-foreground">Playing</h2>
           </div>
@@ -105,29 +105,30 @@ export function PresentingClient({
               return (
                 <div
                   key={court.id}
-                  className="rounded-xl border border-border bg-card p-4 shadow-sm"
+                  className="rounded-xl border border-border bg-card p-4 shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <h3 className="text-lg font-semibold text-foreground">
-                        {courtLabel(court.id)}
-                      </h3>
-                    </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <h3 className="text-lg font-semibold text-foreground">
+                      {courtLabel(court.id)}
+                    </h3>
+                    {playing ? (
+                      <div className="text-xs font-medium text-muted-foreground">
+                        {formatPlayingMeta(playing)}
+                      </div>
+                    ) : null}
                   </div>
 
-                  <div className="mt-4 rounded-lg border border-border bg-muted/40 p-3 text-sm">
+                  <div className="mt-4 rounded-lg border border-border bg-muted/40 p-3 text-sm shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
                     {playing ? (
                       <div className="space-y-2">
-                        <div className="text-xs text-muted-foreground">
-                          {formatPlayingMeta(playing)}
-                        </div>
-                        <div className="text-sm text-foreground">
+                        <div className="text-base font-semibold text-foreground">
                           {highlightName(
                             playing.homeTeam?.name ?? "TBD",
                             favouritePlayerName
-                          )}{" "}
-                          Vs.
-                          <br />
+                          )}
+                          <span className="block text-sm font-medium text-foreground/60">
+                            Vs.
+                          </span>
                           {highlightName(
                             playing.awayTeam?.name ?? "TBD",
                             favouritePlayerName
@@ -155,7 +156,7 @@ export function PresentingClient({
             {upcoming.map((match) => (
               <div
                 key={match.key}
-                className="rounded-lg border border-border bg-muted/40 p-3"
+                className="rounded-lg border border-border bg-muted/40 p-3 shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
@@ -169,9 +170,11 @@ export function PresentingClient({
                     </Badge>
                   ) : null}
                 </div>
-                <div className="mt-2 text-sm text-foreground">
-                  {highlightName(match.teams.homeName, favouritePlayerName)} Vs.
-                  <br />
+                <div className="mt-2 text-sm font-semibold text-foreground">
+                  {highlightName(match.teams.homeName, favouritePlayerName)}
+                  <span className="block text-xs font-medium text-foreground/60">
+                    Vs.
+                  </span>
                   {highlightName(match.teams.awayName, favouritePlayerName)}
                 </div>
               </div>

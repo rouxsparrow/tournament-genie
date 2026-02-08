@@ -12,6 +12,7 @@ const ADMIN_LINKS = [
   { href: "/knockout", label: "Knockout" },
   { href: "/schedule", label: "Schedule" },
   { href: "/schedule-overview", label: "Schedule Overview" },
+  { href: "/presenting", label: "Live Matches" },
 ];
 
 export default async function AdminPage() {
