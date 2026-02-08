@@ -48,10 +48,8 @@ export default async function PresentingPage({
     <section className="rounded-2xl border border-border bg-card p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">Presenting</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Presentation mode for live Playing and Upcoming matches.
-          </p>
+          <h1 className="text-2xl font-semibold text-foreground">Live Matches</h1>
+          
         </div>
         <div className="flex items-center gap-2">
           <Button
