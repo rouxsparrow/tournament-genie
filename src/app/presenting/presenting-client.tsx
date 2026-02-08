@@ -108,17 +108,17 @@ export function PresentingClient({
                   className="rounded-xl border border-border bg-card p-4 shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
                 >
                   <div className="flex items-baseline justify-between gap-3">
-                    <h3 className="text-lg font-semibold text-foreground">
+                    <h3 className="text-base font-semibold text-foreground md:text-lg whitespace-nowrap">
                       {courtLabel(court.id)}
                     </h3>
                     {playing ? (
-                      <div className="text-xs font-medium text-muted-foreground">
+                      <div className="text-xs font-medium text-muted-foreground text-right">
                         {formatPlayingMeta(playing)}
                       </div>
                     ) : null}
                   </div>
 
-                  <div className="mt-4 rounded-lg border border-border bg-muted/40 p-3 text-sm shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
+                  <div className="mt-4 presenting-neon rounded-lg border border-border bg-muted/40 p-3 text-sm shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
                     {playing ? (
                       <div className="space-y-2">
                         <div className="text-base font-semibold text-foreground">
