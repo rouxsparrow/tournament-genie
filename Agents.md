@@ -332,3 +332,93 @@ Pair the play-in teams using:
 ### Required Environment Variables
 - `AUTH_SECRET` (required for signing session cookies)
 - `ADMIN_PASSWORD` (recommended; defaults to `Starhub` for local dev)
+
+
+-------------------------
+## Codex Response template
+-------------------------
+# Codex Change Report
+
+## 1) Outcome (1–3 lines)
+- Goal:
+- Result:
+- Risk level: Low / Medium / High (why in 1 line)
+
+## 2) What Changed (structured)
+### A) Behavior / Logic Changes
+- [Change] → [Why] → [Impact]
+- …
+
+### B) Non-behavior Changes (refactor / formatting / comments)
+- [Change] → [Why]
+- …
+
+### C) Breaking / Compatibility Notes (if any)
+- [What breaks] → [Who impacted] → [Mitigation]
+- If none: None
+
+## 3) Files Touched (always complete list)
+> One line per file. No duplicates. No bare filenames.
+- `path/to/file.ext` — reason (what changed + why)
+- …
+
+## 4) Data / Schema / Config Impact
+### Database migrations
+- Migration(s): [name(s)]
+- Command(s): `npx prisma migrate ...` / `supabase db ...`
+- If none: **No migrations required**
+
+### Secrets / Env vars
+- Added:
+- Changed:
+- Required locally:
+- Required in prod:
+- If none: None
+
+### External setup required (mandatory callout)
+- Supabase dashboard steps / Vercel env updates / new buckets / RLS policies
+- If none: None
+
+## 5) Validation Evidence (must be reproducible)
+### Automated
+- Tests run:
+  - `npm test` → PASS/FAIL (+ counts if available)
+  - `npm run lint` → PASS/FAIL
+- If not run: Explicit reason + what to run
+
+### Manual
+- Steps executed:
+  1.
+  2.
+- Observed results (paste key outputs / status codes):
+  - …
+- If not done: Explicit reason + steps to validate
+
+## 6) Acceptance Criteria (pass/fail)
+- AC1: [observable condition] — PASS/FAIL — evidence: [link/log/output]
+- AC2: …
+- If any FAIL: list follow-ups
+
+## 7) Edge Cases Checked
+- Case:
+- Result:
+- If none: Explicitly state “Not checked” + why
+
+## 8) Next Actions / Follow-ups
+- [Owner: Codex/User] [Priority: P0/P1/P2] [Due: optional] — action
+- …
+
+---
+
+# Mandatory Summary (always at the end)
+## Files changed (with brief reasons)
+- …
+
+## Database migrations
+- **No migrations required** / [list + commands]
+
+## Documentation updates
+- `Agents.md` updated: Yes/No — reason
+- `[OtherDoc].md` updated: Yes/No — reason
+- If none: “No documentation updates (behavior unchanged)”
+

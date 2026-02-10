@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
-import { computeStandings } from "@/app/standings/actions";
 import { StandingsClient } from "@/app/standings/standings-client";
+import { computeStandings } from "@/app/standings/actions";
 import { getRoleFromRequest } from "@/lib/auth";
 import { getFavouritePlayerCategoryMap, getFavouritePlayerContext } from "@/lib/favourite-player";
 
@@ -13,15 +13,6 @@ type StandingsPageProps = {
 };
 
 const categories = ["MD", "WD", "XD"] as const;
-
-function teamLabel(team: {
-  name: string;
-  members: { player: { name: string } }[];
-}) {
-  if (team.name) return team.name;
-  const names = team.members.map((member) => member.player.name);
-  return names.length === 2 ? `${names[0]} / ${names[1]}` : "Unnamed team";
-}
 
 export default async function StandingsPage({ searchParams }: StandingsPageProps) {
   const role = await getRoleFromRequest();
@@ -98,6 +89,7 @@ export default async function StandingsPage({ searchParams }: StandingsPageProps
       ) : null}
 
       <StandingsClient
+        key={`${selectedCategory}:${fromNav && isViewer ? favouriteGroupForCategory : requestedGroupId}`}
         categoryCode={selectedCategory}
         favouritePlayerName={favourite?.playerName ?? null}
         initialGroupId={fromNav && isViewer ? favouriteGroupForCategory : requestedGroupId}
