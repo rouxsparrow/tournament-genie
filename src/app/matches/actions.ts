@@ -724,8 +724,16 @@ export async function randomizeFilteredGroupMatchResults(formData: FormData) {
   redirect(buildMatchesRedirect(categoryCode, redirectOptions));
 }
 
-export async function upsertMatchScore(formData: FormData) {
-  await requireAdmin({ onFail: "redirect" });
+type ScoreUpsertResult =
+  | { ok: true; categoryCode: "MD" | "WD" | "XD"; matchId: string }
+  | { error: string; categoryCode?: "MD" | "WD" | "XD" };
+
+async function upsertMatchScoreInternal(formData: FormData): Promise<ScoreUpsertResult | void> {
+  const noRedirect = String(formData.get("noRedirect") ?? "") === "true";
+  const auth = await requireAdmin({ onFail: noRedirect ? "return" : "redirect" });
+  if (auth?.error) {
+    return { error: auth.error };
+  }
   const redirectOptions = readMatchFilterRedirectOptions(formData);
   const parsedCategory = categorySchema.safeParse(formData.get("category"));
 
@@ -741,19 +749,22 @@ export async function upsertMatchScore(formData: FormData) {
   });
 
   if (!parsed.success) {
+    const error = parsed.error.issues[0]?.message ?? "Invalid score data.";
+    if (noRedirect) {
+      return {
+        error,
+        ...(parsedCategory.success ? { categoryCode: parsedCategory.data } : {}),
+      };
+    }
     if (parsedCategory.success) {
       redirect(
         buildMatchesRedirect(parsedCategory.data, {
           ...redirectOptions,
-          error: parsed.error.issues[0]?.message ?? "Invalid score data.",
+          error,
         })
       );
     }
-    redirect(
-      `/matches?error=${encodeURIComponent(
-        parsed.error.issues[0]?.message ?? "Invalid score data."
-      )}`
-    );
+    redirect(`/matches?error=${encodeURIComponent(error)}`);
   }
 
   const match = await prisma.match.findUnique({
@@ -764,6 +775,9 @@ export async function upsertMatchScore(formData: FormData) {
   });
 
   if (!match || match.stage !== "GROUP" || !match.group) {
+    if (noRedirect) {
+      return { error: "Match not found." };
+    }
     redirect(`/matches?error=${encodeURIComponent("Match not found.")}`);
   }
 
@@ -772,9 +786,27 @@ export async function upsertMatchScore(formData: FormData) {
     redirectOptions
   );
 
-  await assertGroupStageUnlocked(match.group.category.code);
+  if (noRedirect) {
+    const lock = await prisma.groupStageLock.findUnique({
+      where: { categoryCode: match.group.category.code },
+    });
+    if (lock?.locked) {
+      return {
+        error: "Group stage is locked for this category.",
+        categoryCode: match.group.category.code,
+      };
+    }
+  } else {
+    await assertGroupStageUnlocked(match.group.category.code);
+  }
 
   if (!match.homeTeamId || !match.awayTeamId) {
+    if (noRedirect) {
+      return {
+        error: "Match teams are not set.",
+        categoryCode: match.group.category.code,
+      };
+    }
     redirect(
       buildMatchesRedirect(match.group.category.code, {
         ...redirectOptions,
@@ -788,6 +820,12 @@ export async function upsertMatchScore(formData: FormData) {
   const game1Home = parsed.data.game1Home;
   const game1Away = parsed.data.game1Away;
   if (game1Home === undefined || game1Away === undefined) {
+    if (noRedirect) {
+      return {
+        error: "Game 1 scores are required.",
+        categoryCode: match.group.category.code,
+      };
+    }
     redirect(
       buildMatchesRedirect(match.group.category.code, {
         ...redirectOptions,
@@ -805,9 +843,22 @@ export async function upsertMatchScore(formData: FormData) {
     ]);
     revalidatePath("/matches");
     revalidatePath("/standings");
+    if (noRedirect) {
+      return {
+        ok: true,
+        categoryCode: match.group.category.code,
+        matchId: match.id,
+      };
+    }
     redirect(successRedirect);
   }
   if (game1Home === game1Away) {
+    if (noRedirect) {
+      return {
+        error: "Game 1 cannot be tied.",
+        categoryCode: match.group.category.code,
+      };
+    }
     redirect(
       buildMatchesRedirect(match.group.category.code, {
         ...redirectOptions,
@@ -833,6 +884,12 @@ export async function upsertMatchScore(formData: FormData) {
     const game2Home = parsed.data.game2Home;
     const game2Away = parsed.data.game2Away;
     if (game2Home === undefined || game2Away === undefined) {
+      if (noRedirect) {
+        return {
+          error: "Game 2 scores are required.",
+          categoryCode: match.group.category.code,
+        };
+      }
       redirect(
         buildMatchesRedirect(match.group.category.code, {
           ...redirectOptions,
@@ -841,6 +898,12 @@ export async function upsertMatchScore(formData: FormData) {
       );
     }
     if (game2Home === game2Away) {
+      if (noRedirect) {
+        return {
+          error: "Game 2 cannot be tied.",
+          categoryCode: match.group.category.code,
+        };
+      }
       redirect(
         buildMatchesRedirect(match.group.category.code, {
           ...redirectOptions,
@@ -870,6 +933,12 @@ export async function upsertMatchScore(formData: FormData) {
       const game3Home = parsed.data.game3Home;
       const game3Away = parsed.data.game3Away;
       if (game3Home === undefined || game3Away === undefined) {
+        if (noRedirect) {
+          return {
+            error: "Game 3 scores are required.",
+            categoryCode: match.group.category.code,
+          };
+        }
         redirect(
           buildMatchesRedirect(match.group.category.code, {
             ...redirectOptions,
@@ -878,6 +947,12 @@ export async function upsertMatchScore(formData: FormData) {
         );
       }
       if (game3Home === game3Away) {
+        if (noRedirect) {
+          return {
+            error: "Game 3 cannot be tied.",
+            categoryCode: match.group.category.code,
+          };
+        }
         redirect(
           buildMatchesRedirect(match.group.category.code, {
             ...redirectOptions,
@@ -910,7 +985,34 @@ export async function upsertMatchScore(formData: FormData) {
   ]);
 
   revalidatePath("/matches");
+  revalidatePath("/standings");
+  if (noRedirect) {
+    return {
+      ok: true,
+      categoryCode: match.group.category.code,
+      matchId: match.id,
+    };
+  }
   redirect(successRedirect);
+}
+
+export async function upsertMatchScore(formData: FormData): Promise<void> {
+  await upsertMatchScoreInternal(formData);
+}
+
+export async function upsertMatchScoreNoRedirect(
+  formData: FormData
+): Promise<ScoreUpsertResult> {
+  const working = new FormData();
+  formData.forEach((value, key) => {
+    working.append(key, value);
+  });
+  working.set("noRedirect", "true");
+  const result = await upsertMatchScoreInternal(working);
+  if (result && ("ok" in result || "error" in result)) {
+    return result;
+  }
+  return { error: "Invalid score submission." };
 }
 
 export async function undoMatchResult(formData: FormData) {

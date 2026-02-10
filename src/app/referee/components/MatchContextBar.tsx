@@ -35,6 +35,8 @@ type MatchContextBarProps = {
   onGroupChange: (value: string) => void;
   selectedSeries: "A" | "B";
   onSeriesChange: (value: "A" | "B") => void;
+  selectedCourt: "P5" | "P6" | "P7" | "P8" | "P9" | "";
+  onCourtChange: (value: "P5" | "P6" | "P7" | "P8" | "P9" | "") => void;
   matches: MatchOption[];
   selectedMatchId: string;
   onMatchChange: (value: string) => void;
@@ -51,6 +53,8 @@ export function MatchContextBar({
   onGroupChange,
   selectedSeries,
   onSeriesChange,
+  selectedCourt,
+  onCourtChange,
   matches,
   selectedMatchId,
   onMatchChange,
@@ -63,7 +67,7 @@ export function MatchContextBar({
         <div>
           <h1 className="text-xl font-semibold text-foreground">Referee Scoresheet</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Select a match and update the live score locally.
+            Select a match, lock the sheet, and submit official score updates.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -122,6 +126,26 @@ export function MatchContextBar({
             </select>
           </div>
         )}
+
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">Court</label>
+          <select
+            value={selectedCourt}
+            onChange={(event) =>
+              onCourtChange(
+                event.target.value as "P5" | "P6" | "P7" | "P8" | "P9" | ""
+              )
+            }
+            className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
+          >
+            <option value="">All courts</option>
+            <option value="P5">P5</option>
+            <option value="P6">P6</option>
+            <option value="P7">P7</option>
+            <option value="P8">P8</option>
+            <option value="P9">P9</option>
+          </select>
+        </div>
 
         <div className="md:col-span-2 min-w-0">
           <label className="text-xs font-medium text-muted-foreground">Match</label>

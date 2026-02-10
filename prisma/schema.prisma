@@ -166,6 +166,7 @@ model Match {
   updatedAt  DateTime    @updatedAt
   games      GameScore[]
   courtAssignments CourtAssignment[]
+  refereeSubmissions RefereeSubmission[]
 
   @@index([stage, status])
   @@index([groupId])
@@ -246,6 +247,7 @@ model KnockoutMatch {
   previousMatches KnockoutMatch[] @relation("KONext")
   games        KnockoutGameScore[]
   courtAssignments CourtAssignment[]
+  refereeSubmissions RefereeSubmission[]
 
   @@unique([categoryCode, series, round, matchNo])
   @@index([categoryCode, series])
@@ -415,4 +417,30 @@ model ForcedMatchPriority {
 
   @@unique([matchType, matchId])
   @@index([createdAt])
+}
+
+model RefereeSubmission {
+  id              String      @id @default(cuid())
+  matchType       MatchType
+  categoryCode    CategoryCode
+  lockState       Boolean     @default(false)
+  submittedBy     String
+  scores          Json
+  notes           String?
+  groupMatchId    String?
+  knockoutMatchId String?
+  series          Series?
+  round           Int?
+  matchNo         Int?
+  isBestOf3       Boolean?
+  submittedAt     DateTime    @default(now())
+  createdAt       DateTime    @default(now())
+
+  groupMatch    Match?         @relation(fields: [groupMatchId], references: [id], onDelete: SetNull)
+  knockoutMatch KnockoutMatch? @relation(fields: [knockoutMatchId], references: [id], onDelete: SetNull)
+
+  @@index([groupMatchId])
+  @@index([knockoutMatchId])
+  @@index([submittedAt])
+  @@index([matchType, submittedAt])
 }

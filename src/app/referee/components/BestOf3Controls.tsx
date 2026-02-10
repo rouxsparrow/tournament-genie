@@ -3,6 +3,7 @@
 type BestOf3ControlsProps = {
   enabled: boolean;
   onToggle: () => void;
+  toggleDisabled?: boolean;
   game: 1 | 2 | 3;
   onGameChange: (game: 1 | 2 | 3) => void;
 };
@@ -10,6 +11,7 @@ type BestOf3ControlsProps = {
 export function BestOf3Controls({
   enabled,
   onToggle,
+  toggleDisabled = false,
   game,
   onGameChange,
 }: BestOf3ControlsProps) {
@@ -18,11 +20,12 @@ export function BestOf3Controls({
       <button
         type="button"
         onClick={onToggle}
+        disabled={toggleDisabled}
         className={`inline-flex items-center rounded-full border px-4 py-1.5 text-sm font-semibold transition-colors ${
           enabled
             ? "border-foreground bg-foreground text-background"
             : "border-border bg-muted text-muted-foreground"
-        }`}
+        } ${toggleDisabled ? "opacity-60" : ""}`}
       >
         Best of 3
       </button>
