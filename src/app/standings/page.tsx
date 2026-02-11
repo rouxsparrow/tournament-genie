@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { StandingsClient } from "@/app/standings/standings-client";
-import { computeStandings } from "@/app/standings/actions";
+import { computeStandingsForCategory } from "@/app/standings/actions";
 import { getRoleFromRequest } from "@/lib/auth";
 import { getFavouritePlayerCategoryMap, getFavouritePlayerContext } from "@/lib/favourite-player";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Standings" };
 
 type StandingsPageProps = {
   searchParams?: Promise<{ category?: string; error?: string; fromNav?: string; groupId?: string }>;
@@ -36,20 +36,11 @@ export default async function StandingsPage({ searchParams }: StandingsPageProps
     ? decodeURIComponent(resolvedSearchParams.error)
     : null;
 
-  const category = await prisma.category.findUnique({
-    where: { code: selectedCategory },
-  });
-
-  const groups = category
-    ? await prisma.group.findMany({
-        where: { categoryId: category.id },
-        orderBy: { name: "asc" },
-      })
-    : [];
-
-  const groupData = (
-    await Promise.all(groups.map((group) => computeStandings(group.id)))
-  ).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+  const groupData = await computeStandingsForCategory(selectedCategory);
+  const groups = groupData.map((entry) => ({
+    id: entry.group.id,
+    name: entry.group.name,
+  }));
 
   return (
     <section className="rounded-2xl border border-border bg-card p-8">
@@ -93,7 +84,7 @@ export default async function StandingsPage({ searchParams }: StandingsPageProps
         categoryCode={selectedCategory}
         favouritePlayerName={favourite?.playerName ?? null}
         initialGroupId={fromNav && isViewer ? favouriteGroupForCategory : requestedGroupId}
-        groups={groups.map((group) => ({ id: group.id, name: group.name }))}
+        groups={groups}
         groupData={groupData.map((entry) => ({
           group: {
             id: entry.group.id,

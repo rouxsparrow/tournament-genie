@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { TeamForm } from "@/app/teams/new/team-form";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Add Team" };
 
 type TeamsNewPageProps = {
   searchParams?: Promise<{ error?: string; success?: string }>;

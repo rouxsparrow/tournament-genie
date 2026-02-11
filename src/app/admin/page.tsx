@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getRoleFromRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Admin" };
 
 const ADMIN_LINKS = [
   { href: "/players", label: "Players" },

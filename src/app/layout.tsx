@@ -21,7 +21,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Tournament Genie",
+  title: {
+    default: "Tournament Genie",
+    template: "Tournament Genie - %s",
+  },
   description: "Admin-first tournament management for badminton doubles.",
 };
 

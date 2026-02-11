@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useGlobalTransition } from "@/components/use-global-transition";
@@ -9,12 +10,15 @@ import {
   assignNext,
   backToQueue,
   blockMatch,
+  clearRefereeNotifications,
   clearForcedPriority,
   forceNext,
+  getRefereeNotifications,
   getScheduleState,
   lockCourt,
   markCompleted,
   resetQueueForcedPriorities,
+  toggleRefereeNotificationRead,
   toggleAutoSchedule,
   unblockMatch,
 } from "@/app/schedule/actions";
@@ -25,6 +29,9 @@ type CategoryFilter = "ALL" | "MD" | "WD" | "XD";
 type QueueStatus = "ELIGIBLE" | "BLOCKED";
 type MatchType = "GROUP" | "KNOCKOUT";
 type ScheduleStage = "GROUP" | "KNOCKOUT";
+type RefereeNotificationItem = NonNullable<
+  Awaited<ReturnType<typeof getScheduleState>>
+>["refereeNotifications"][number];
 
 type ModalState =
   | null
@@ -120,6 +127,12 @@ function hasInPlayConflict(
   return playerIds.some((playerId) => inPlayPlayerIds.has(playerId));
 }
 
+function formatNotificationTime(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 export function ScheduleClient({
   initialState,
   role,
@@ -142,6 +155,9 @@ export function ScheduleClient({
   );
   const [modal, setModal] = useState<ModalState>(null);
   const [selectedMatchKey, setSelectedMatchKey] = useState("");
+  const [refereeNotifications, setRefereeNotifications] = useState<RefereeNotificationItem[]>(
+    initialState.refereeNotifications ?? []
+  );
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useGlobalTransition();
   const inPlayPlayerIds = useMemo(
@@ -169,8 +185,24 @@ export function ScheduleClient({
   }
 
   useEffect(() => {
-    setAutoSchedule(initialState.config.autoScheduleEnabled);
-  }, [initialState.config.autoScheduleEnabled]);
+    if (!isAdmin) return;
+
+    let isMounted = true;
+    const refreshNotifications = async () => {
+      const result = await getRefereeNotifications(stage);
+      if (!isMounted || !result || "error" in result) return;
+      setRefereeNotifications(result.notifications);
+    };
+
+    const interval = setInterval(() => {
+      void refreshNotifications();
+    }, 10000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [isAdmin, stage]);
 
   const handleAction = async <T,>(action: () => Promise<T>) => {
     setError(null);
@@ -432,24 +464,25 @@ export function ScheduleClient({
             </div>
           </section>
 
-          <section className="rounded-xl border border-border bg-card p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-foreground">Upcoming</h2>
-              {isAdmin ? (
-                <div className="text-xs text-muted-foreground">
-                  {autoSchedule ? "Auto Schedule ON" : "Auto Schedule OFF"}
-                </div>
-              ) : null}
-            </div>
-            <div className="mt-4 space-y-3">
-              {upcomingFiltered.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No upcoming matches.</div>
-              ) : null}
-              {upcomingFiltered.map((match) => (
-                <div
-                  key={match.key}
-                  className="rounded-lg border border-border bg-muted/40 p-3"
-                >
+          <div className="grid gap-4 xl:grid-cols-3">
+            <section className="rounded-xl border border-border bg-card p-4 xl:col-span-2">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-semibold text-foreground">Upcoming</h2>
+                {isAdmin ? (
+                  <div className="text-xs text-muted-foreground">
+                    {autoSchedule ? "Auto Schedule ON" : "Auto Schedule OFF"}
+                  </div>
+                ) : null}
+              </div>
+              <div className="mt-4 space-y-3">
+                {upcomingFiltered.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No upcoming matches.</div>
+                ) : null}
+                {upcomingFiltered.map((match) => (
+                  <div
+                    key={match.key}
+                    className="rounded-lg border border-border bg-muted/40 p-3"
+                  >
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
                           <div className="text-xs text-muted-foreground">
@@ -494,10 +527,97 @@ export function ScheduleClient({
                           Waiting (players currently playing)
                         </div>
                       ) : null}
+                  </div>
+                ))}
+              </div>
+            </section>
+            {isAdmin ? (
+              <section className="rounded-xl border border-border bg-card p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h2 className="text-base font-semibold text-foreground">Notifications</h2>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Referee submissions
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={isPending || refereeNotifications.length === 0}
+                    onClick={() =>
+                      handleAction(async () => {
+                        const result = await clearRefereeNotifications(stage);
+                        if (!result || "error" in result) return result;
+                        setRefereeNotifications([]);
+                        return result;
+                      })
+                    }
+                  >
+                    Clear all
+                  </Button>
                 </div>
-              ))}
-            </div>
-          </section>
+                <div className="mt-4 max-h-[26rem] space-y-2 overflow-y-auto pr-1">
+                  {refereeNotifications.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">
+                      No referee notifications yet.
+                    </div>
+                  ) : (
+                    refereeNotifications.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`rounded-lg border p-3 ${
+                          item.isRead
+                            ? "border-border bg-muted/30"
+                            : "border-amber-500/50 bg-amber-500/10"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="text-xs text-foreground">{item.message}</div>
+                          <button
+                            type="button"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground"
+                            onClick={() =>
+                              handleAction(async () => {
+                                const nextIsRead = !item.isRead;
+                                const result = await toggleRefereeNotificationRead(
+                                  stage,
+                                  item.id,
+                                  nextIsRead
+                                );
+                                if (!result || "error" in result) return result;
+                                setRefereeNotifications((prev) => {
+                                  const updated = prev.map((entry) =>
+                                    entry.id === item.id
+                                      ? { ...entry, isRead: nextIsRead }
+                                      : entry
+                                  );
+                                  const unread = updated.filter((entry) => !entry.isRead);
+                                  const read = updated.filter((entry) => entry.isRead);
+                                  return [...unread, ...read];
+                                });
+                                return result;
+                              })
+                            }
+                            aria-label={item.isRead ? "Mark as unread" : "Mark as read"}
+                          >
+                            {item.isRead ? (
+                              <EyeOff className="h-3.5 w-3.5" />
+                            ) : (
+                              <Eye className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          {formatNotificationTime(item.createdAt)}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+            ) : null}
+          </div>
         </div>
       ) : (
         <div className="rounded-xl border border-border bg-card p-4">

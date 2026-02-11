@@ -6,6 +6,7 @@ import { getRoleFromRequest } from "@/lib/auth";
 import { getFavouritePlayerCategoryMap, getFavouritePlayerContext } from "@/lib/favourite-player";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Brackets" };
 
 type BracketsPageProps = {
   searchParams?: Promise<{ category?: string; series?: "A" | "B"; fromNav?: string }>;
@@ -104,34 +105,23 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {seriesOptions.map((series) =>
-          isWD && series === "B" ? (
-            <Button key={series} size="sm" variant="outline" disabled>
-              Series B (WD n/a)
-            </Button>
-          ) : (
-            <Button
-              key={series}
-              asChild
-              size="sm"
-              variant={series === selectedSeries ? "default" : "outline"}
-            >
-              <Link href={`/brackets?category=${selectedCategory}&series=${series}`}>
-                Series {series}
-              </Link>
-            </Button>
-          )
-        )}
+        {(isWD ? (["A"] as const) : seriesOptions).map((series) => (
+          <Button
+            key={series}
+            asChild
+            size="sm"
+            variant={series === selectedSeries ? "default" : "outline"}
+          >
+            <Link href={`/brackets?category=${selectedCategory}&series=${series}`}>
+              Series {series}
+            </Link>
+          </Button>
+        ))}
       </div>
-      {isWD ? (
-        <p className="mt-3 text-xs text-muted-foreground">
-          Women&apos;s Doubles uses Series A only.
-        </p>
-      ) : null}
 
       {matches.length === 0 ? (
         <p className="mt-6 text-sm text-muted-foreground">
-          Generate the Series {selectedSeries} bracket to view matches.
+          Knockout Stage has not begun.
         </p>
       ) : (
         <div className="mt-6">

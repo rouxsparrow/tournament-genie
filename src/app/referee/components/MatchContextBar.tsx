@@ -33,8 +33,8 @@ type MatchContextBarProps = {
   groups: GroupOption[];
   selectedGroupId: string;
   onGroupChange: (value: string) => void;
-  selectedSeries: "A" | "B";
-  onSeriesChange: (value: "A" | "B") => void;
+  selectedSeries: "ALL" | "A" | "B";
+  onSeriesChange: (value: "ALL" | "A" | "B") => void;
   selectedCourt: "P5" | "P6" | "P7" | "P8" | "P9" | "";
   onCourtChange: (value: "P5" | "P6" | "P7" | "P8" | "P9" | "") => void;
   matches: MatchOption[];
@@ -138,9 +138,12 @@ export function MatchContextBar({
             <label className="text-xs font-medium text-muted-foreground">Series</label>
             <select
               value={selectedSeries}
-              onChange={(event) => onSeriesChange(event.target.value as "A" | "B")}
+              onChange={(event) =>
+                onSeriesChange(event.target.value as "ALL" | "A" | "B")
+              }
               className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
             >
+              <option value="ALL">All Series</option>
               <option value="A">Series A</option>
               <option value="B">Series B</option>
             </select>

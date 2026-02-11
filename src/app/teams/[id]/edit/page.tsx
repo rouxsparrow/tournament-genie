@@ -7,6 +7,7 @@ import { PlayerSelect } from "@/app/teams/player-select";
 import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Edit Team" };
 
 type TeamsEditPageProps = {
   params: Promise<{ id: string }>;

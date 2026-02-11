@@ -173,6 +173,7 @@ model Match {
   @@index([homeTeamId])
   @@index([awayTeamId])
   @@index([winnerTeamId])
+  @@index([stage, status, completedAt])
   @@unique([groupId, homeTeamId, awayTeamId])
 }
 
@@ -255,6 +256,8 @@ model KnockoutMatch {
   @@index([awayTeamId])
   @@index([winnerTeamId])
   @@index([nextMatchId])
+  @@index([status, completedAt])
+  @@index([isPublished, categoryCode, series, round, matchNo])
 }
 
 model KnockoutGameScore {
@@ -387,6 +390,8 @@ model CourtAssignment {
   knockoutMatch KnockoutMatch? @relation(fields: [knockoutMatchId], references: [id], onDelete: SetNull)
 
   @@index([courtId, status, stage])
+  @@index([stage, status])
+  @@index([stage, status, assignedAt])
   @@index([groupMatchId])
   @@index([knockoutMatchId])
 }
@@ -407,6 +412,8 @@ model ScheduleActionLog {
   action    String
   payload   Json
   createdAt DateTime @default(now())
+
+  @@index([action, createdAt])
 }
 
 model ForcedMatchPriority {
@@ -417,6 +424,7 @@ model ForcedMatchPriority {
 
   @@unique([matchType, matchId])
   @@index([createdAt])
+  @@index([matchType, createdAt])
 }
 
 model RefereeSubmission {

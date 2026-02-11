@@ -123,7 +123,7 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
   const [selectedCategory, setSelectedCategory] = useState<CategoryCode>("MD");
   const [stage, setStage] = useState<Stage>("GROUP");
   const [selectedGroupId, setSelectedGroupId] = useState("");
-  const [selectedSeries, setSelectedSeries] = useState<"A" | "B">("A");
+  const [selectedSeries, setSelectedSeries] = useState<"ALL" | "A" | "B">("ALL");
   const [selectedCourt, setSelectedCourt] = useState<CourtLabel | "">("");
   const [selectedMatchId, setSelectedMatchId] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -157,8 +157,9 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
       );
     }
     if (stage === "KNOCKOUT") {
-      filtered = filtered.filter(
-        (match) => match.stage === "KNOCKOUT" && match.series === selectedSeries
+      filtered = filtered.filter((match) =>
+        match.stage === "KNOCKOUT" &&
+        (selectedSeries === "ALL" ? true : match.series === selectedSeries)
       );
     }
     if (selectedCourt) {
@@ -246,7 +247,7 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
     clearSelection();
   };
 
-  const handleSeriesChange = (value: "A" | "B") => {
+  const handleSeriesChange = (value: "ALL" | "A" | "B") => {
     setSelectedSeries(value);
     clearSelection();
   };

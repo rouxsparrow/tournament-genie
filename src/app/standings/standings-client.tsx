@@ -207,8 +207,12 @@ export function StandingsClient({
                             <td className="py-2 pr-2 font-semibold text-foreground">
                               {highlightName(label, favouritePlayerName)}
                             </td>
-                            <td className="py-2 pr-2 text-right tabular-nums">{row.wins}</td>
-                            <td className="py-2 pr-2 text-right tabular-nums">{row.losses}</td>
+                            <td className="py-2 pr-2 text-right tabular-nums text-emerald-300">
+                              {row.wins}
+                            </td>
+                            <td className="py-2 pr-2 text-right tabular-nums text-rose-300">
+                              {row.losses}
+                            </td>
                             <td className="py-2 pr-2 text-right tabular-nums">{row.pointsFor}</td>
                             <td className="py-2 pr-2 text-right tabular-nums">{row.pointsAgainst}</td>
                             <td className="py-2 pr-2 text-right tabular-nums">
@@ -235,8 +239,10 @@ export function StandingsClient({
                           <span className="font-semibold">{highlightName(label, favouritePlayerName)}</span>
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground tabular-nums">
-                          W <span className="font-semibold text-foreground">{row.wins}</span> · L{" "}
-                          <span className="font-semibold text-foreground">{row.losses}</span> · PF{" "}
+                          <span className="text-emerald-300">W</span>{" "}
+                          <span className="font-semibold text-emerald-300">{row.wins}</span> ·{" "}
+                          <span className="text-rose-300">L</span>{" "}
+                          <span className="font-semibold text-rose-300">{row.losses}</span> · PF{" "}
                           <span className="font-semibold text-foreground">{row.pointsFor}</span> · PA{" "}
                           <span className="font-semibold text-foreground">{row.pointsAgainst}</span> · PD{" "}
                           <span className="font-semibold text-foreground">

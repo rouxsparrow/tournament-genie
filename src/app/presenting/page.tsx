@@ -6,6 +6,7 @@ import { getRoleFromRequest } from "@/lib/auth";
 import { getFavouritePlayerContext } from "@/lib/favourite-player";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Live Schedule" };
 
 export default async function PresentingPage({
   searchParams,
@@ -28,14 +29,38 @@ export default async function PresentingPage({
         ? state
         : await getPresentingState({ category: "ALL", stage: "GROUP" });
     const favouriteId = favourite?.playerId ?? null;
+    const knockoutState =
+      favouriteId && stage !== "KNOCKOUT"
+        ? await getPresentingState({ category: "ALL", stage: "KNOCKOUT" })
+        : stage === "KNOCKOUT"
+          ? state
+          : null;
     const hasAssigned = groupState.courts.some((court) => Boolean(court.playing));
-    const hasUpcomingFavourite =
-      favouriteId &&
-      groupState.upcomingMatches.some((match) => match.teams.playerIds.includes(favouriteId));
+    const hasUpcomingFavouriteInGroup = favouriteId
+      ? groupState.upcomingMatches.some((match) =>
+          match.teams.playerIds.includes(favouriteId)
+        )
+      : false;
+    const hasFavouriteInGroupQueue = favouriteId
+      ? groupState.eligibleMatches.some((match) =>
+          match.teams.playerIds.includes(favouriteId)
+        )
+      : false;
+    const hasFavouriteInKnockoutUpcoming =
+      favouriteId && knockoutState
+        ? knockoutState.upcomingMatches.some((match) =>
+            match.teams.playerIds.includes(favouriteId)
+          )
+        : false;
 
-    if (!hasAssigned && !hasUpcomingFavourite) {
+    if (
+      !hasAssigned &&
+      !hasUpcomingFavouriteInGroup &&
+      !hasFavouriteInGroupQueue &&
+      !hasFavouriteInKnockoutUpcoming
+    ) {
       resolvedStage = "KNOCKOUT";
-      state = await getPresentingState({ category: "ALL", stage: "KNOCKOUT" });
+      state = knockoutState ?? await getPresentingState({ category: "ALL", stage: "KNOCKOUT" });
     } else {
       state = groupState;
       resolvedStage = "GROUP";
@@ -49,7 +74,6 @@ export default async function PresentingPage({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Live Matches</h1>
-          
         </div>
         <div className="flex items-center gap-2">
           <Button

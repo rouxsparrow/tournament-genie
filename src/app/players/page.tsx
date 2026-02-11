@@ -5,6 +5,7 @@ import { PlayersTable } from "@/app/players/players-table";
 import { ImportSection } from "@/components/import-section";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Players" };
 
 export default async function PlayersPage() {
   const players = await prisma.player.findMany({

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { revalidatePath } from "next/cache";
+import { clearKnockoutBracketArtifacts } from "@/lib/match-management";
 
 const categorySchema = z.enum(["MD", "WD", "XD"]);
 const seriesSchema = z.enum(["A", "B"]);
@@ -28,27 +29,15 @@ export async function DELETE(request: Request) {
     );
   }
 
-  const seriesList: ("A" | "B")[] = seriesParsed?.success
-    ? [seriesParsed.data]
-    : category === "WD"
-      ? ["A"]
-      : ["A", "B"];
+  if (seriesParsed?.success) {
+    await clearKnockoutBracketArtifacts(category, [seriesParsed.data]);
+  } else {
+    await clearKnockoutBracketArtifacts(category);
+  }
 
-  await prisma.$transaction([
-    prisma.knockoutMatch.deleteMany({
-      where: { categoryCode: category, series: { in: seriesList } },
-    }),
-    prisma.knockoutSeed.deleteMany({
-      where: { categoryCode: category, series: { in: seriesList } },
-    }),
-    prisma.knockoutRandomDraw.deleteMany({
-      where: {
-        categoryCode: category,
-        series: { in: seriesList },
-        NOT: { drawKey: { startsWith: "global:" } },
-      },
-    }),
-  ]);
+  revalidatePath("/knockout");
+  revalidatePath("/matches");
+  revalidatePath("/schedule");
 
   return NextResponse.json({ ok: true });
 }

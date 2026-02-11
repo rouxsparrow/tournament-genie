@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  lockGroupStage,
   randomizeFilteredGroupMatchResults,
+  unlockGroupStage,
   undoMatchResult,
   upsertMatchScore,
 } from "@/app/matches/actions";
@@ -27,6 +29,7 @@ type MatchGame = {
 
 type MatchItem = {
   id: string;
+  categoryCode: "MD" | "WD" | "XD";
   status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
   winnerTeamId: string | null;
   group: { id: string; name: string };
@@ -36,12 +39,12 @@ type MatchItem = {
 };
 
 type MatchesListClientProps = {
-  categoryCode: "MD" | "WD" | "XD";
+  categoryCode: "ALL" | "MD" | "WD" | "XD";
   groups: { id: string; name: string }[];
   matches: MatchItem[];
   initialFilters?: { search?: string; groupId?: string };
   scoringMode: "SINGLE_GAME_21" | "BEST_OF_3_21";
-  isStageLocked: boolean;
+  stageLockByCategory: { MD: boolean; WD: boolean; XD: boolean };
   isDev: boolean;
 };
 
@@ -73,18 +76,25 @@ export function MatchesListClient({
   matches,
   initialFilters,
   scoringMode,
-  isStageLocked,
+  stageLockByCategory,
   isDev,
 }: MatchesListClientProps) {
   const storageKey = `matches:filters:${categoryCode}`;
+  const [categoryFilter, setCategoryFilter] = useState<"ALL" | "MD" | "WD" | "XD">(
+    categoryCode
+  );
   const [search, setSearch] = useState(initialFilters?.search ?? "");
   const [groupId, setGroupId] = useState(initialFilters?.groupId ?? "");
+  const [status, setStatus] = useState<"ALL" | "COMPLETED" | "SCHEDULED">("ALL");
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setCategoryFilter(categoryCode);
+  }, [categoryCode]);
+
+  useEffect(() => {
     const stored = window.localStorage.getItem(storageKey);
-    const shouldHydrateFromStorage =
-      !initialFilters?.search && !initialFilters?.groupId;
+    const shouldHydrateFromStorage = initialFilters === undefined;
     if (stored && shouldHydrateFromStorage) {
       try {
         const parsed = JSON.parse(stored) as { search?: string; groupId?: string };
@@ -105,8 +115,55 @@ export function MatchesListClient({
     );
   }, [groupId, mounted, search, storageKey]);
 
+  const isAllCategories = categoryFilter === "ALL";
+
+  useEffect(() => {
+    if (!isAllCategories) return;
+    if (groupId !== "") {
+      setGroupId("");
+    }
+  }, [groupId, isAllCategories]);
+
+  const availableGroups = useMemo(() => {
+    if (isAllCategories) return [];
+
+    const items = matches.filter((match) => match.categoryCode === categoryFilter);
+
+    const deduped = new Map<string, string>();
+    for (const match of items) {
+      deduped.set(match.group.id, match.group.name);
+    }
+
+    return [...deduped.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        })
+      );
+  }, [categoryFilter, isAllCategories, matches]);
+
+  useEffect(() => {
+    if (!groupId) return;
+    const isStillValid = availableGroups.some((group) => group.id === groupId);
+    if (!isStillValid) {
+      setGroupId("");
+    }
+  }, [availableGroups, groupId]);
+
   const filteredMatches = useMemo(() => {
     let filtered = matches;
+    if (categoryFilter !== "ALL") {
+      filtered = filtered.filter((match) => match.categoryCode === categoryFilter);
+    }
+    if (status !== "ALL") {
+      filtered = filtered.filter((match) =>
+        status === "COMPLETED"
+          ? match.status === "COMPLETED" || match.status === "WALKOVER"
+          : match.status === "SCHEDULED"
+      );
+    }
     if (groupId) {
       filtered = filtered.filter((match) => match.group.id === groupId);
     }
@@ -117,19 +174,31 @@ export function MatchesListClient({
       const away = teamSearchText(match.awayTeam);
       return home.includes(query) || away.includes(query);
     });
-  }, [groupId, matches, search]);
+  }, [categoryFilter, groupId, matches, search, status]);
+
+  const selectedCategoryLockState =
+    categoryFilter === "ALL" ? false : stageLockByCategory[categoryFilter];
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-[1fr,auto] lg:items-end">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">Matches</h2>
-          <p className="text-sm text-muted-foreground">
-            {filteredMatches.length} match
-            {filteredMatches.length === 1 ? "" : "es"}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-end gap-3 lg:justify-end">
+      <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[180px]">
+            <label className="text-xs font-medium text-muted-foreground">
+              Categories
+            </label>
+            <select
+              value={categoryFilter}
+              onChange={(event) =>
+                setCategoryFilter(event.target.value as "ALL" | "MD" | "WD" | "XD")
+              }
+              className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
+            >
+              <option value="ALL">All categories</option>
+              <option value="MD">MD</option>
+              <option value="WD">WD</option>
+              <option value="XD">XD</option>
+            </select>
+          </div>
           <div className="min-w-[200px]">
             <label className="text-xs font-medium text-muted-foreground">
               Filter group
@@ -137,14 +206,31 @@ export function MatchesListClient({
             <select
               value={groupId}
               onChange={(event) => setGroupId(event.target.value)}
+              disabled={isAllCategories}
               className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
             >
               <option value="">All groups</option>
-              {groups.map((group) => (
+              {availableGroups.map((group) => (
                 <option key={group.id} value={group.id}>
                   Group {group.name}
                 </option>
               ))}
+            </select>
+          </div>
+          <div className="min-w-[260px]">
+            <label className="text-xs font-medium text-muted-foreground">
+              Status
+            </label>
+            <select
+              value={status}
+              onChange={(event) =>
+                setStatus(event.target.value as "ALL" | "COMPLETED" | "SCHEDULED")
+              }
+              className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
+            >
+              <option value="ALL">All</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="SCHEDULED">Scheduled</option>
             </select>
           </div>
           <div className="min-w-[260px]">
@@ -159,19 +245,56 @@ export function MatchesListClient({
               className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none"
             />
           </div>
-          {isDev ? (
-            <form action={randomizeFilteredGroupMatchResults}>
+          <div className="flex min-w-[240px] items-end gap-2">
+            <form action={lockGroupStage}>
               <GlobalFormPendingBridge />
-              <input type="hidden" name="category" value={categoryCode} />
+              <input type="hidden" name="category" value={categoryFilter} />
+              <input type="hidden" name="pageCategory" value={categoryCode} />
               <input type="hidden" name="filterGroupId" value={groupId} />
               <input type="hidden" name="filterSearch" value={search} />
               <input type="hidden" name="filterView" value="group" />
-              <Button type="submit" variant="destructive" size="sm">
+              <Button
+                size="sm"
+                type="submit"
+                disabled={categoryFilter === "ALL" || selectedCategoryLockState}
+              >
+                Lock group stage
+              </Button>
+            </form>
+            <form action={unlockGroupStage}>
+              <GlobalFormPendingBridge />
+              <input type="hidden" name="category" value={categoryFilter} />
+              <input type="hidden" name="pageCategory" value={categoryCode} />
+              <input type="hidden" name="filterGroupId" value={groupId} />
+              <input type="hidden" name="filterSearch" value={search} />
+              <input type="hidden" name="filterView" value="group" />
+              <Button
+                size="sm"
+                type="submit"
+                variant="outline"
+                disabled={categoryFilter === "ALL" || !selectedCategoryLockState}
+              >
+                Unlock
+              </Button>
+            </form>
+          </div>
+          {isDev ? (
+            <form action={randomizeFilteredGroupMatchResults}>
+              <GlobalFormPendingBridge />
+              <input type="hidden" name="category" value={categoryFilter} />
+              <input type="hidden" name="filterGroupId" value={groupId} />
+              <input type="hidden" name="filterSearch" value={search} />
+              <input type="hidden" name="filterView" value="group" />
+              <Button
+                type="submit"
+                variant="destructive"
+                size="sm"
+                disabled={categoryFilter === "ALL"}
+              >
                 ⚠️ Randomize match results (DEV)
               </Button>
             </form>
           ) : null}
-        </div>
       </div>
 
       {filteredMatches.length === 0 ? (
@@ -184,6 +307,7 @@ export function MatchesListClient({
             const games = [...match.games].sort(
               (a, b) => a.gameNumber - b.gameNumber
             );
+            const isMatchLocked = stageLockByCategory[match.categoryCode];
             const statusText =
               match.status === "COMPLETED" || match.status === "WALKOVER"
                 ? "Completed"
@@ -209,7 +333,7 @@ export function MatchesListClient({
                       {teamLabel(match.awayTeam)}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Group {match.group.name}
+                      {match.categoryCode} - Group {match.group.name}
                     </p>
                   </div>
                   <div className="text-right">
@@ -238,7 +362,7 @@ export function MatchesListClient({
                 <form action={upsertMatchScore} className="mt-4 grid gap-2">
                   <GlobalFormPendingBridge />
                   <input type="hidden" name="matchId" value={match.id} />
-                  <input type="hidden" name="category" value={categoryCode} />
+                  <input type="hidden" name="category" value={match.categoryCode} />
                   <input type="hidden" name="filterGroupId" value={groupId} />
                   <input type="hidden" name="filterSearch" value={search} />
                   <input type="hidden" name="filterView" value="group" />
@@ -254,7 +378,7 @@ export function MatchesListClient({
                         className="w-full rounded-md border border-input bg-card px-2 py-1 text-xs text-foreground focus:border-ring focus:outline-none"
                         placeholder="Home"
                         defaultValue={games[0]?.homePoints ?? ""}
-                        disabled={isStageLocked}
+                        disabled={isMatchLocked}
                         required
                       />
                       <input
@@ -264,7 +388,7 @@ export function MatchesListClient({
                         className="w-full rounded-md border border-input bg-card px-2 py-1 text-xs text-foreground focus:border-ring focus:outline-none"
                         placeholder="Away"
                         defaultValue={games[0]?.awayPoints ?? ""}
-                        disabled={isStageLocked}
+                        disabled={isMatchLocked}
                         required
                       />
                       </div>
@@ -280,7 +404,7 @@ export function MatchesListClient({
                           className="w-full rounded-md border border-input bg-card px-2 py-1 text-xs text-foreground focus:border-ring focus:outline-none"
                           placeholder="Home"
                           defaultValue={games[1]?.homePoints ?? ""}
-                          disabled={isStageLocked}
+                          disabled={isMatchLocked}
                           required
                         />
                         <input
@@ -290,7 +414,7 @@ export function MatchesListClient({
                           className="w-full rounded-md border border-input bg-card px-2 py-1 text-xs text-foreground focus:border-ring focus:outline-none"
                           placeholder="Away"
                           defaultValue={games[1]?.awayPoints ?? ""}
-                          disabled={isStageLocked}
+                          disabled={isMatchLocked}
                           required
                         />
                         </div>
@@ -307,7 +431,7 @@ export function MatchesListClient({
                           className="w-full rounded-md border border-input bg-card px-2 py-1 text-xs text-foreground focus:border-ring focus:outline-none"
                           placeholder="Home"
                           defaultValue={games[2]?.homePoints ?? ""}
-                          disabled={isStageLocked}
+                          disabled={isMatchLocked}
                         />
                         <input
                           name="game3Away"
@@ -316,7 +440,7 @@ export function MatchesListClient({
                           className="w-full rounded-md border border-input bg-card px-2 py-1 text-xs text-foreground focus:border-ring focus:outline-none"
                           placeholder="Away"
                           defaultValue={games[2]?.awayPoints ?? ""}
-                          disabled={isStageLocked}
+                          disabled={isMatchLocked}
                         />
                         </div>
                       </div>
@@ -324,7 +448,7 @@ export function MatchesListClient({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <Button size="sm" type="submit" disabled={isStageLocked}>
+                    <Button size="sm" type="submit" disabled={isMatchLocked}>
                       Save result
                     </Button>
                   </div>
@@ -333,7 +457,7 @@ export function MatchesListClient({
                   <form action={undoMatchResult} className="mt-2">
                     <GlobalFormPendingBridge />
                     <input type="hidden" name="matchId" value={match.id} />
-                    <input type="hidden" name="category" value={categoryCode} />
+                    <input type="hidden" name="category" value={match.categoryCode} />
                     <input type="hidden" name="filterGroupId" value={groupId} />
                     <input type="hidden" name="filterSearch" value={search} />
                     <input type="hidden" name="filterView" value="group" />
@@ -341,7 +465,7 @@ export function MatchesListClient({
                       size="sm"
                       type="submit"
                       variant="outline"
-                      disabled={isStageLocked}
+                      disabled={isMatchLocked}
                     >
                       Undo
                     </Button>

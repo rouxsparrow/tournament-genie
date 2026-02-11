@@ -3,6 +3,7 @@ import { getScheduledMatches } from "@/lib/matches/getScheduledMatches";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Referee Scoresheet" };
 
 const COURT_LABELS: Record<string, "P5" | "P6" | "P7" | "P8" | "P9"> = {
   C1: "P5",

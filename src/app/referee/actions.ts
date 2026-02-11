@@ -9,6 +9,14 @@ import {
   upsertMatchScoreNoRedirect,
 } from "@/app/matches/actions";
 
+const COURT_LABELS: Record<string, "P5" | "P6" | "P7" | "P8" | "P9"> = {
+  C1: "P5",
+  C2: "P6",
+  C3: "P7",
+  C4: "P8",
+  C5: "P9",
+};
+
 const scoreValueSchema = z.number().int().min(0).max(30);
 
 const submitRefereeScoreSchema = z.object({
@@ -56,7 +64,11 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
   if (payload.stage === "GROUP") {
     const match = await prisma.match.findUnique({
       where: { id: payload.matchId },
-      include: { group: { include: { category: true } } },
+      include: {
+        group: { include: { category: true } },
+        homeTeam: { select: { name: true } },
+        awayTeam: { select: { name: true } },
+      },
     });
 
     if (!match || !match.group) {
@@ -84,6 +96,37 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
         groupMatchId: payload.matchId,
       },
     });
+
+    const assignment = await prisma.courtAssignment.findFirst({
+      where: {
+        status: "ACTIVE",
+        stage: "GROUP",
+        matchType: "GROUP",
+        groupMatchId: payload.matchId,
+      },
+      select: { courtId: true },
+    });
+
+    await prisma.scheduleActionLog.create({
+      data: {
+        action: "REFEREE_SCORE_SUBMITTED",
+        payload: {
+          stage: "GROUP",
+          matchType: "GROUP",
+          matchId: payload.matchId,
+          courtLabel: assignment ? COURT_LABELS[assignment.courtId] ?? null : null,
+          categoryCode: match.group.category.code,
+          series: null,
+          round: null,
+          matchNo: null,
+          groupName: match.group.name,
+          homeTeamName: match.homeTeam?.name ?? "TBD",
+          awayTeamName: match.awayTeam?.name ?? "TBD",
+          submittedAt: new Date().toISOString(),
+          isRead: false,
+        },
+      },
+    });
   } else {
     const match = await prisma.knockoutMatch.findUnique({
       where: { id: payload.matchId },
@@ -94,6 +137,8 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
         round: true,
         matchNo: true,
         isBestOf3: true,
+        homeTeam: { select: { name: true } },
+        awayTeam: { select: { name: true } },
       },
     });
 
@@ -123,6 +168,37 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
         round: match.round,
         matchNo: match.matchNo,
         isBestOf3: match.isBestOf3,
+      },
+    });
+
+    const assignment = await prisma.courtAssignment.findFirst({
+      where: {
+        status: "ACTIVE",
+        stage: "KNOCKOUT",
+        matchType: "KNOCKOUT",
+        knockoutMatchId: payload.matchId,
+      },
+      select: { courtId: true },
+    });
+
+    await prisma.scheduleActionLog.create({
+      data: {
+        action: "REFEREE_SCORE_SUBMITTED",
+        payload: {
+          stage: "KNOCKOUT",
+          matchType: "KNOCKOUT",
+          matchId: payload.matchId,
+          courtLabel: assignment ? COURT_LABELS[assignment.courtId] ?? null : null,
+          categoryCode: match.categoryCode,
+          series: match.series,
+          round: match.round,
+          matchNo: match.matchNo,
+          groupName: null,
+          homeTeamName: match.homeTeam?.name ?? "TBD",
+          awayTeamName: match.awayTeam?.name ?? "TBD",
+          submittedAt: new Date().toISOString(),
+          isRead: false,
+        },
       },
     });
   }
