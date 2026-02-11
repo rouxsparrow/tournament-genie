@@ -102,6 +102,23 @@ function sanitizeScoreInput(value: string) {
   return clampScore(Number.parseInt(digits, 10));
 }
 
+function shortRoundLabel(match: MatchItem) {
+  if (match.stage !== "KNOCKOUT") return "-";
+  if (match.round === 1) return "PI";
+  if (match.round === 2) return "QF";
+  if (match.round === 3) return "SF";
+  if (match.round === 4) return "F";
+  return `R${match.round}`;
+}
+
+function shortMatchMeta(match: MatchItem | null) {
+  if (!match) return "Category - - Stage - - Series - - Round -";
+  const stage = match.stage === "GROUP" ? "GS" : "KO";
+  const series = match.stage === "KNOCKOUT" ? match.series : "-";
+  const round = shortRoundLabel(match);
+  return `${match.categoryCode} - ${stage} - ${series} - ${round}`;
+}
+
 export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScoreboardProps) {
   const [selectedCategory, setSelectedCategory] = useState<CategoryCode>("MD");
   const [stage, setStage] = useState<Stage>("GROUP");
@@ -386,9 +403,10 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
                 ? `${teamLabel(selectedMatch.homeTeam)} vs ${teamLabel(selectedMatch.awayTeam)}`
                 : "Select match"}
             </p>
-            {selectedMatch?.court ? (
-              <p className="text-xs text-muted-foreground">Court {selectedMatch.court}</p>
-            ) : null}
+            <p className="text-xs text-muted-foreground">
+              {shortMatchMeta(selectedMatch)}
+            </p>
+            {selectedMatch?.court ? <p className="text-xs text-muted-foreground">Court {selectedMatch.court}</p> : null}
           </div>
           {isFinal || bestOf3Enabled ? (
             <BestOf3Controls

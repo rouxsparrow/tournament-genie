@@ -84,7 +84,27 @@ export function MatchContextBar({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="col-span-2 md:col-span-1">
+          <label className="text-xs font-medium text-muted-foreground">Court</label>
+          <select
+            value={selectedCourt}
+            onChange={(event) =>
+              onCourtChange(
+                event.target.value as "P5" | "P6" | "P7" | "P8" | "P9" | ""
+              )
+            }
+            className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
+          >
+            <option value="">All courts</option>
+            <option value="P5">P5</option>
+            <option value="P6">P6</option>
+            <option value="P7">P7</option>
+            <option value="P8">P8</option>
+            <option value="P9">P9</option>
+          </select>
+        </div>
+
         <div>
           <label className="text-xs font-medium text-muted-foreground">Stage</label>
           <select
@@ -127,27 +147,7 @@ export function MatchContextBar({
           </div>
         )}
 
-        <div>
-          <label className="text-xs font-medium text-muted-foreground">Court</label>
-          <select
-            value={selectedCourt}
-            onChange={(event) =>
-              onCourtChange(
-                event.target.value as "P5" | "P6" | "P7" | "P8" | "P9" | ""
-              )
-            }
-            className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
-          >
-            <option value="">All courts</option>
-            <option value="P5">P5</option>
-            <option value="P6">P6</option>
-            <option value="P7">P7</option>
-            <option value="P8">P8</option>
-            <option value="P9">P9</option>
-          </select>
-        </div>
-
-        <div className="md:col-span-2 min-w-0">
+        <div className="col-span-2 min-w-0 md:col-span-2">
           <label className="text-xs font-medium text-muted-foreground">Match</label>
           <div className="mt-1">
             <Select
@@ -155,7 +155,7 @@ export function MatchContextBar({
               onValueChange={onMatchChange}
               disabled={!hasMatches}
             >
-              <SelectTrigger className="w-full min-w-0">
+              <SelectTrigger className="h-14 w-full min-w-0 md:h-10 [&>span]:block [&>span]:max-w-full [&>span]:truncate [&>span]:text-left">
                 <SelectValue
                   placeholder={hasMatches ? "Select match" : "No scheduled matches"}
                   className="truncate"
@@ -163,7 +163,7 @@ export function MatchContextBar({
               </SelectTrigger>
               <SelectContent>
                 {matches.map((match) => (
-                  <SelectItem key={match.id} value={match.id}>
+                  <SelectItem key={match.id} value={match.id} className="max-w-[85vw] truncate md:max-w-none">
                     {match.label}
                   </SelectItem>
                 ))}
