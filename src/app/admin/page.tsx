@@ -12,6 +12,7 @@ const ADMIN_LINKS = [
   { href: "/matches", label: "Matches" },
   { href: "/knockout", label: "Knockout" },
   { href: "/schedule", label: "Schedule" },
+  { href: "/utilities", label: "Utilities" },
   { href: "/schedule-overview", label: "Schedule Overview" },
   { href: "/presenting", label: "Live Matches" },
 ];

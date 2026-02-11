@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
   upsertKnockoutMatchScore,
@@ -22,6 +21,9 @@ const scoreValueSchema = z.number().int().min(0).max(30);
 const submitRefereeScoreSchema = z.object({
   stage: z.enum(["GROUP", "KNOCKOUT"]),
   matchId: z.string().min(1, "Match is required."),
+  passcode: z
+    .string()
+    .regex(/^\d{4}$/, "Passcode must be a 4 digit number."),
   lockState: z.literal(true),
   notes: z.string().max(500).optional(),
   bestOf3Enabled: z.boolean().optional(),
@@ -34,21 +36,48 @@ const submitRefereeScoreSchema = z.object({
 
 type SubmitRefereeScoreInput = z.infer<typeof submitRefereeScoreSchema>;
 
-export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
-  const auth = await requireAdmin({ onFail: "return" });
-  if (auth?.error) {
-    return { error: auth.error };
-  }
+function getConfiguredRefereePasscode() {
+  const configuredPasscode = process.env.Referee_code ?? process.env.REFEREE_CODE ?? "";
+  if (!/^\d{4}$/.test(configuredPasscode)) return null;
+  return configuredPasscode;
+}
 
+export async function verifyRefereePasscode(passcode: string) {
+  const configuredPasscode = getConfiguredRefereePasscode();
+  if (!configuredPasscode) {
+    return { error: "Referee passcode is not configured correctly." };
+  }
+  if (!/^\d{4}$/.test(passcode)) {
+    return { error: "Passcode must be a 4 digit number." };
+  }
+  if (passcode !== configuredPasscode) {
+    return { error: "Invalid referee passcode." };
+  }
+  return { ok: true as const };
+}
+
+export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
   const parsed = submitRefereeScoreSchema.safeParse(input);
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid submission." };
   }
 
   const payload = parsed.data;
+  if (payload.scores.game1.home === 0 && payload.scores.game1.away === 0) {
+    return { error: "Score cannot be 0-0" };
+  }
+
+  const configuredPasscode = getConfiguredRefereePasscode();
+  if (!configuredPasscode) {
+    return { error: "Referee passcode is not configured correctly." };
+  }
+  if (payload.passcode !== configuredPasscode) {
+    return { error: "Invalid referee passcode." };
+  }
 
   const scoreFormData = new FormData();
   scoreFormData.set("matchId", payload.matchId);
+  scoreFormData.set("refereePasscode", payload.passcode);
   scoreFormData.set("game1Home", String(payload.scores.game1.home));
   scoreFormData.set("game1Away", String(payload.scores.game1.away));
 
@@ -86,7 +115,7 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
         matchType: "GROUP",
         categoryCode: match.group.category.code,
         lockState: payload.lockState,
-        submittedBy: "admin",
+        submittedBy: "referee",
         scores: {
           game1: payload.scores.game1,
           game2: payload.scores.game2 ?? null,
@@ -156,7 +185,7 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
         matchType: "KNOCKOUT",
         categoryCode: match.categoryCode,
         lockState: payload.lockState,
-        submittedBy: "admin",
+        submittedBy: "referee",
         scores: {
           game1: payload.scores.game1,
           game2: payload.scores.game2 ?? null,

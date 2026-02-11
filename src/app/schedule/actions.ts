@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
 
@@ -840,6 +841,10 @@ async function loadScheduleMatches(stage: ScheduleStage, category: CategoryFilte
   return { groupMatches: [], knockoutMatches };
 }
 
+type LoadedScheduleMatches = Awaited<ReturnType<typeof loadScheduleMatches>>;
+type LoadedGroupMatch = LoadedScheduleMatches["groupMatches"][number];
+type LoadedKnockoutMatch = LoadedScheduleMatches["knockoutMatches"][number];
+
 async function loadForcedPriorities(stage: ScheduleStage) {
   const forced = await prisma.forcedMatchPriority.findMany({
     where: { matchType: stage === "GROUP" ? "GROUP" : "KNOCKOUT" },
@@ -899,8 +904,8 @@ async function buildListEligibleMatches(params: {
   playingSet: Set<string>;
   recentlyPlayedSet: Set<string>;
   preloaded?: {
-    groupMatches: any[];
-    knockoutMatches: any[];
+    groupMatches: LoadedGroupMatch[];
+    knockoutMatches: LoadedKnockoutMatch[];
     blocked: {
       matchType: MatchType;
       groupMatchId: string | null;
@@ -1322,33 +1327,59 @@ async function applyAutoSchedule(params: {
       knockoutMatchId: next.matchType === "KNOCKOUT" ? next.matchId : null,
     };
 
-    await prisma.$transaction(async (tx) => {
-      const existingEmpty = assignments.find(
-        (entry) =>
-          entry.courtId === targetCourt.id &&
-          entry.stage === params.stage &&
-          entry.status === "ACTIVE" &&
-          isAssignmentEmpty(entry)
-      );
-      if (existingEmpty) {
-        await tx.courtAssignment.update({
-          where: { id: existingEmpty.id },
-          data: {
-            matchType: assignment.matchType,
-            groupMatchId: assignment.groupMatchId,
-            knockoutMatchId: assignment.knockoutMatchId,
-            assignedAt: new Date(),
-            clearedAt: null,
+    try {
+      await prisma.$transaction(async (tx) => {
+        const existingEmpty = assignments.find(
+          (entry) =>
+            entry.courtId === targetCourt.id &&
+            entry.stage === params.stage &&
+            entry.status === "ACTIVE" &&
+            isAssignmentEmpty(entry)
+        );
+        if (existingEmpty) {
+          await tx.courtAssignment.update({
+            where: { id: existingEmpty.id },
+            data: {
+              matchType: assignment.matchType,
+              groupMatchId: assignment.groupMatchId,
+              knockoutMatchId: assignment.knockoutMatchId,
+              assignedAt: new Date(),
+              clearedAt: null,
+              status: "ACTIVE",
+            },
+          });
+        } else {
+          await tx.courtAssignment.create({ data: assignment });
+        }
+        await tx.scheduleActionLog.create({
+          data: { action: "AUTO_ASSIGN", payload: assignment },
+        });
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        snapshot.assignments = await prisma.courtAssignment.findMany({
+          where: {
             status: "ACTIVE",
+            stage: params.stage,
+            courtId: { in: params.activeCourtIds },
+          },
+          select: {
+            id: true,
+            courtId: true,
+            status: true,
+            stage: true,
+            matchType: true,
+            groupMatchId: true,
+            knockoutMatchId: true,
           },
         });
-      } else {
-        await tx.courtAssignment.create({ data: assignment });
+        continue;
       }
-      await tx.scheduleActionLog.create({
-        data: { action: "AUTO_ASSIGN", payload: assignment },
-      });
-    });
+      throw error;
+    }
 
     const existingIndex = assignments.findIndex(
       (entry) =>
@@ -2397,6 +2428,8 @@ export async function blockMatch(
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (matchType !== stage) return { error: "Stage mismatch." };
 
+  const config = await ensureScheduleSetup(stage);
+
   await prisma.blockedMatch.deleteMany({
     where:
       matchType === "GROUP"
@@ -2421,15 +2454,8 @@ export async function blockMatch(
   await prisma.scheduleActionLog.create({
     data: { action: "BLOCK_MATCH", payload: { stage, matchType, matchId } },
   });
-  const state = await getScheduleState({ stage });
-  if (state.config.autoScheduleEnabled) {
-    await applyAutoSchedule({
-      stage,
-      configId: state.config.id,
-      autoEnabled: state.config.autoScheduleEnabled,
-      eligible: state.eligibleMatches,
-      activeCourtIds: ACTIVE_COURT_IDS,
-    });
+  if (config.autoScheduleEnabled) {
+    await getScheduleState({ stage });
   }
   revalidatePath("/schedule");
   return { ok: true };
@@ -2500,14 +2526,7 @@ export async function markCompleted(courtId: string, stage: ScheduleStage) {
   });
 
   if (config.autoScheduleEnabled) {
-    const state = await getScheduleState({ stage });
-    await applyAutoSchedule({
-      stage,
-      configId: state.config.id,
-      autoEnabled: state.config.autoScheduleEnabled,
-      eligible: state.eligibleMatches,
-      activeCourtIds: ACTIVE_COURT_IDS,
-    });
+    await getScheduleState({ stage });
   }
 
   revalidatePath("/schedule");

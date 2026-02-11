@@ -34,6 +34,19 @@ const finalBestOf3Schema = z.object({
   isBestOf3: z.boolean(),
 });
 
+function getConfiguredRefereePasscode() {
+  const configuredPasscode = process.env.Referee_code ?? process.env.REFEREE_CODE ?? "";
+  if (!/^\d{4}$/.test(configuredPasscode)) return null;
+  return configuredPasscode;
+}
+
+function hasValidRefereePasscode(formData: FormData) {
+  const configured = getConfiguredRefereePasscode();
+  if (!configured) return false;
+  const supplied = String(formData.get("refereePasscode") ?? "");
+  return supplied === configured;
+}
+
 function parseNumber(value: FormDataEntryValue | null) {
   if (value === null || value === "") return undefined;
   const parsed = Number.parseInt(String(value), 10);
@@ -652,9 +665,12 @@ type ScoreUpsertResult =
 
 async function upsertMatchScoreInternal(formData: FormData): Promise<ScoreUpsertResult | void> {
   const noRedirect = String(formData.get("noRedirect") ?? "") === "true";
-  const auth = await requireAdmin({ onFail: noRedirect ? "return" : "redirect" });
-  if (auth?.error) {
-    return { error: auth.error };
+  const refereeAuthorized = hasValidRefereePasscode(formData);
+  if (!refereeAuthorized) {
+    const auth = await requireAdmin({ onFail: noRedirect ? "return" : "redirect" });
+    if (auth?.error) {
+      return { error: auth.error };
+    }
   }
   const redirectOptions = readMatchFilterRedirectOptions(formData);
   const parsedCategory = categorySchema.safeParse(formData.get("category"));
@@ -1070,7 +1086,9 @@ export async function generateMatchesKnockout(formData: FormData) {
 }
 
 export async function upsertKnockoutMatchScore(formData: FormData) {
-  await requireAdmin({ onFail: "redirect" });
+  if (!hasValidRefereePasscode(formData)) {
+    await requireAdmin({ onFail: "redirect" });
+  }
   const parsed = scoreSchema.safeParse({
     matchId: formData.get("matchId"),
     winnerTeamId: formData.get("winnerTeamId")?.toString() || undefined,

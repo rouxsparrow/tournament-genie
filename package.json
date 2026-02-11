@@ -9,7 +9,9 @@
     "start": "next start",
     "postinstall": "prisma generate",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:schedule:integrity": "node scripts/validate-schedule-assignment-integrity.mjs",
+    "test:schedule:stress": "node scripts/stress-schedule-concurrency.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",

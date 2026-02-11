@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useGlobalTransition } from "@/components/use-global-transition";
@@ -130,7 +130,12 @@ function hasInPlayConflict(
 function formatNotificationTime(timestamp: string) {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "UTC",
+  }).format(date);
 }
 
 export function ScheduleClient({
@@ -257,7 +262,7 @@ export function ScheduleClient({
   return (
     <div className="space-y-6">
       {isAdmin ? (
-        <div className="sticky top-0 z-10 rounded-xl border border-border bg-card/95 p-4 backdrop-blur">
+        <div className="rounded-xl border border-border bg-card p-4">
           <div className="grid gap-3 lg:grid-cols-[1fr,auto] lg:items-center">
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
@@ -323,8 +328,18 @@ export function ScheduleClient({
       ) : null}
 
       {error ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <span>{error}</span>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            className="h-6 w-6 shrink-0 rounded-md text-red-700 hover:bg-red-200 hover:text-red-800"
+            onClick={() => setError(null)}
+            aria-label="Dismiss error"
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
         </div>
       ) : null}
 
@@ -417,7 +432,7 @@ export function ScheduleClient({
                           size="sm"
                           variant="outline"
                           onClick={() => handleAction(() => backToQueue(court.id, stage))}
-                          disabled={!playing}
+                          disabled={!playing || isPending}
                         >
                           Back to Queue
                         </Button>
@@ -433,7 +448,7 @@ export function ScheduleClient({
                               blockMatch(playing.matchType, matchId, stage)
                             );
                           }}
-                          disabled={!playing}
+                          disabled={!playing || isPending}
                         >
                           Block
                         </Button>
@@ -442,7 +457,7 @@ export function ScheduleClient({
                           size="sm"
                           variant="outline"
                           onClick={() => handleAction(() => markCompleted(court.id, stage))}
-                          disabled={!playing}
+                          disabled={!playing || isPending}
                         >
                           Completed
                         </Button>
@@ -453,6 +468,7 @@ export function ScheduleClient({
                             setSelectedMatchKey(eligibleForModal[0]?.key ?? "");
                             setModal({ type: "assign", courtId: court.id });
                           }}
+                          disabled={isPending}
                         >
                           Assign Next
                         </Button>

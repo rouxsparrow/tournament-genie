@@ -1,6 +1,5 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -25,9 +24,6 @@ type MatchOption = {
 };
 
 type MatchContextBarProps = {
-  categories: CategoryCode[];
-  selectedCategory: CategoryCode;
-  onCategoryChange: (value: CategoryCode) => void;
   stage: Stage;
   onStageChange: (value: Stage) => void;
   groups: GroupOption[];
@@ -43,9 +39,6 @@ type MatchContextBarProps = {
 };
 
 export function MatchContextBar({
-  categories,
-  selectedCategory,
-  onCategoryChange,
   stage,
   onStageChange,
   groups,
@@ -69,18 +62,6 @@ export function MatchContextBar({
           <p className="mt-1 text-sm text-muted-foreground">
             Select a match, lock the sheet, and submit official score updates.
           </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {categories.map((category) => (
-            <Button
-              key={category}
-              variant={category === selectedCategory ? "default" : "outline"}
-              size="sm"
-              onClick={() => onCategoryChange(category)}
-            >
-              {category}
-            </Button>
-          ))}
         </div>
       </div>
 
@@ -153,20 +134,24 @@ export function MatchContextBar({
         <div className="col-span-2 min-w-0 md:col-span-2">
           <label className="text-xs font-medium text-muted-foreground">Match</label>
           <div className="mt-1">
-            <Select
-              value={selectedMatchId}
-              onValueChange={onMatchChange}
-              disabled={!hasMatches}
-            >
-              <SelectTrigger className="h-14 w-full min-w-0 md:h-10 [&>span]:block [&>span]:max-w-full [&>span]:truncate [&>span]:text-left">
+              <Select
+                value={selectedMatchId}
+                onValueChange={onMatchChange}
+                disabled={!hasMatches}
+              >
+              <SelectTrigger className="h-14 w-full min-w-0 md:h-10 [&>span]:block [&>span]:max-w-full [&>span]:text-left [&>span]:whitespace-pre-line md:[&>span]:truncate md:[&>span]:whitespace-nowrap">
                 <SelectValue
                   placeholder={hasMatches ? "Select match" : "No scheduled matches"}
-                  className="truncate"
+                  className="whitespace-pre-line md:truncate"
                 />
               </SelectTrigger>
               <SelectContent>
                 {matches.map((match) => (
-                  <SelectItem key={match.id} value={match.id} className="max-w-[85vw] truncate md:max-w-none">
+                  <SelectItem
+                    key={match.id}
+                    value={match.id}
+                    className="max-w-[85vw] whitespace-pre-line leading-tight md:max-w-none md:whitespace-nowrap"
+                  >
                     {match.label}
                   </SelectItem>
                 ))}
