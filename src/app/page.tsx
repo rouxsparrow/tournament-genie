@@ -4,6 +4,7 @@ import { getFavouritePlayerId } from "@/lib/favourite-player";
 import { getRoleFromRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Home" };
 
 export default async function Home() {
   const role = await getRoleFromRequest();

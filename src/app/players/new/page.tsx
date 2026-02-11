@@ -7,6 +7,8 @@ type PlayersNewPageProps = {
   searchParams?: Promise<{ error?: string; success?: string }>;
 };
 
+export const metadata = { title: "Add Player" };
+
 export default async function PlayersNewPage({
   searchParams,
 }: PlayersNewPageProps) {

@@ -33,8 +33,10 @@ type MatchContextBarProps = {
   groups: GroupOption[];
   selectedGroupId: string;
   onGroupChange: (value: string) => void;
-  selectedSeries: "A" | "B";
-  onSeriesChange: (value: "A" | "B") => void;
+  selectedSeries: "ALL" | "A" | "B";
+  onSeriesChange: (value: "ALL" | "A" | "B") => void;
+  selectedCourt: "P5" | "P6" | "P7" | "P8" | "P9" | "";
+  onCourtChange: (value: "P5" | "P6" | "P7" | "P8" | "P9" | "") => void;
   matches: MatchOption[];
   selectedMatchId: string;
   onMatchChange: (value: string) => void;
@@ -51,6 +53,8 @@ export function MatchContextBar({
   onGroupChange,
   selectedSeries,
   onSeriesChange,
+  selectedCourt,
+  onCourtChange,
   matches,
   selectedMatchId,
   onMatchChange,
@@ -63,7 +67,7 @@ export function MatchContextBar({
         <div>
           <h1 className="text-xl font-semibold text-foreground">Referee Scoresheet</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Select a match and update the live score locally.
+            Select a match, lock the sheet, and submit official score updates.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -80,7 +84,27 @@ export function MatchContextBar({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="col-span-2 md:col-span-1">
+          <label className="text-xs font-medium text-muted-foreground">Court</label>
+          <select
+            value={selectedCourt}
+            onChange={(event) =>
+              onCourtChange(
+                event.target.value as "P5" | "P6" | "P7" | "P8" | "P9" | ""
+              )
+            }
+            className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
+          >
+            <option value="">All courts</option>
+            <option value="P5">P5</option>
+            <option value="P6">P6</option>
+            <option value="P7">P7</option>
+            <option value="P8">P8</option>
+            <option value="P9">P9</option>
+          </select>
+        </div>
+
         <div>
           <label className="text-xs font-medium text-muted-foreground">Stage</label>
           <select
@@ -114,16 +138,19 @@ export function MatchContextBar({
             <label className="text-xs font-medium text-muted-foreground">Series</label>
             <select
               value={selectedSeries}
-              onChange={(event) => onSeriesChange(event.target.value as "A" | "B")}
+              onChange={(event) =>
+                onSeriesChange(event.target.value as "ALL" | "A" | "B")
+              }
               className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
             >
+              <option value="ALL">All Series</option>
               <option value="A">Series A</option>
               <option value="B">Series B</option>
             </select>
           </div>
         )}
 
-        <div className="md:col-span-2 min-w-0">
+        <div className="col-span-2 min-w-0 md:col-span-2">
           <label className="text-xs font-medium text-muted-foreground">Match</label>
           <div className="mt-1">
             <Select
@@ -131,7 +158,7 @@ export function MatchContextBar({
               onValueChange={onMatchChange}
               disabled={!hasMatches}
             >
-              <SelectTrigger className="w-full min-w-0">
+              <SelectTrigger className="h-14 w-full min-w-0 md:h-10 [&>span]:block [&>span]:max-w-full [&>span]:truncate [&>span]:text-left">
                 <SelectValue
                   placeholder={hasMatches ? "Select match" : "No scheduled matches"}
                   className="truncate"
@@ -139,7 +166,7 @@ export function MatchContextBar({
               </SelectTrigger>
               <SelectContent>
                 {matches.map((match) => (
-                  <SelectItem key={match.id} value={match.id}>
+                  <SelectItem key={match.id} value={match.id} className="max-w-[85vw] truncate md:max-w-none">
                     {match.label}
                   </SelectItem>
                 ))}

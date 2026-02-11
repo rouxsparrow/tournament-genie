@@ -17,10 +17,21 @@ type BottomBarProps = {
   locked: boolean;
   onToggleLock: () => void;
   onReset: () => void;
+  onSubmit: () => void;
+  submitDisabled: boolean;
+  isSubmitting: boolean;
   disabled: boolean;
 };
 
-export function BottomBar({ locked, onToggleLock, onReset, disabled }: BottomBarProps) {
+export function BottomBar({
+  locked,
+  onToggleLock,
+  onReset,
+  onSubmit,
+  submitDisabled,
+  isSubmitting,
+  disabled,
+}: BottomBarProps) {
   return (
     <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4">
       <AlertDialog>
@@ -42,6 +53,10 @@ export function BottomBar({ locked, onToggleLock, onReset, disabled }: BottomBar
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Button size="lg" variant="secondary" onClick={onSubmit} disabled={submitDisabled}>
+        {isSubmitting ? "Submitting..." : "Submit"}
+      </Button>
 
       <Button size="lg" onClick={onToggleLock} disabled={disabled}>
         {locked ? "Unlock" : "Lock"}

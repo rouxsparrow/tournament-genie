@@ -13,6 +13,31 @@ type StandingRow = {
   pointDiff: number;
 };
 
+type GroupForStandings = {
+  id: string;
+  name: string;
+  category: { code: "MD" | "WD" | "XD" };
+  teams: {
+    team: {
+      id: string;
+      name: string;
+      members: { player: { name: string } }[];
+    };
+  }[];
+  matches: {
+    id: string;
+    status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+    winnerTeamId: string | null;
+    homeTeamId: string | null;
+    awayTeamId: string | null;
+    games: {
+      gameNumber: number;
+      homePoints: number;
+      awayPoints: number;
+    }[];
+  }[];
+};
+
 async function getRandomDrawOrder(params: {
   groupId: string;
   categoryCode: "MD" | "WD" | "XD";
@@ -79,6 +104,10 @@ export async function computeStandings(groupId: string) {
   });
 
   if (!group) return null;
+  return resolveStandingsForGroup(group as GroupForStandings);
+}
+
+async function resolveStandingsForGroup(group: GroupForStandings) {
 
   const stats = new Map<string, StandingRow>();
   const teams = group.teams.map((entry) => entry.team);
@@ -199,4 +228,34 @@ export async function computeStandings(groupId: string) {
     matches: group.matches,
     standings: resolved,
   };
+}
+
+export async function computeStandingsForCategory(categoryCode: "MD" | "WD" | "XD") {
+  const groups = await prisma.group.findMany({
+    where: { category: { code: categoryCode } },
+    include: {
+      category: true,
+      teams: {
+        include: {
+          team: {
+            include: { members: { include: { player: true } } },
+          },
+        },
+      },
+      matches: {
+        where: { stage: "GROUP" },
+        include: {
+          games: true,
+          homeTeam: true,
+          awayTeam: true,
+        },
+        orderBy: { createdAt: "asc" },
+      },
+    },
+    orderBy: { name: "asc" },
+  });
+
+  return Promise.all(
+    groups.map((group) => resolveStandingsForGroup(group as GroupForStandings))
+  );
 }

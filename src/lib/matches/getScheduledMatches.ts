@@ -12,6 +12,12 @@ export async function getScheduledMatches() {
       group: { include: { category: true } },
       homeTeam: { include: { members: { include: { player: true } } } },
       awayTeam: { include: { members: { include: { player: true } } } },
+      courtAssignments: {
+        where: { status: "ACTIVE" },
+        orderBy: { assignedAt: "desc" },
+        take: 1,
+        select: { courtId: true },
+      },
     },
     orderBy: [{ group: { name: "asc" } }, { createdAt: "asc" }],
   });
@@ -26,6 +32,12 @@ export async function getScheduledMatches() {
     include: {
       homeTeam: { include: { members: { include: { player: true } } } },
       awayTeam: { include: { members: { include: { player: true } } } },
+      courtAssignments: {
+        where: { status: "ACTIVE" },
+        orderBy: { assignedAt: "desc" },
+        take: 1,
+        select: { courtId: true },
+      },
     },
     orderBy: [
       { categoryCode: "asc" },

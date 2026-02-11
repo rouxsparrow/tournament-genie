@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Schedule Overview" };
 
 const CATEGORY_ORDER = ["MD", "WD", "XD"] as const;
 const COURT_COUNT = 5;

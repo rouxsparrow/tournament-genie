@@ -5,6 +5,7 @@ import { TeamsTable } from "@/app/teams/teams-table";
 import { ImportSection } from "@/components/import-section";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Teams" };
 
 export default async function TeamsPage() {
   const teams = await prisma.team.findMany({

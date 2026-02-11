@@ -4,9 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useGlobalTransition } from "@/components/use-global-transition";
 import {
-  clearMatchesKnockout,
   fetchKnockoutMatches,
-  generateMatchesKnockout,
   randomizeAllKnockoutResultsDev,
   setFinalBestOf3,
   undoKnockoutMatchResult,
@@ -31,6 +29,7 @@ type MatchGame = {
 
 type KnockoutMatchItem = {
   id: string;
+  categoryCode: "MD" | "WD" | "XD";
   series: "A" | "B";
   round: number;
   matchNo: number;
@@ -43,7 +42,7 @@ type KnockoutMatchItem = {
 };
 
 type KnockoutMatchesSectionProps = {
-  categoryCode: "MD" | "WD" | "XD";
+  categoryCode: "ALL" | "MD" | "WD" | "XD";
   matches: KnockoutMatchItem[];
   isDev: boolean;
   scoringMode: "SINGLE_GAME_21" | "BEST_OF_3_21";
@@ -84,8 +83,12 @@ export function KnockoutMatchesSection({
 }: KnockoutMatchesSectionProps) {
   const [pending, startTransition] = useGlobalTransition();
   const [items, setItems] = useState(matches);
+  const [categoryFilter, setCategoryFilter] = useState<"ALL" | "MD" | "WD" | "XD">(
+    categoryCode
+  );
   const [series, setSeries] = useState<"ALL" | "A" | "B">("ALL");
   const [round, setRound] = useState("ALL");
+  const [status, setStatus] = useState<"ALL" | "COMPLETED" | "SCHEDULED">("ALL");
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -94,10 +97,17 @@ export function KnockoutMatchesSection({
     setError(null);
   }, [matches]);
 
+  useEffect(() => {
+    setCategoryFilter(categoryCode);
+  }, [categoryCode]);
+
   const availableRounds = useMemo(() => {
     const unique = Array.from(
       new Set(
         matches
+          .filter((match) =>
+            categoryFilter === "ALL" ? true : match.categoryCode === categoryFilter
+          )
           .filter((match) => (series === "ALL" ? true : match.series === series))
           .map((match) => match.round)
       )
@@ -106,7 +116,7 @@ export function KnockoutMatchesSection({
       value: String(roundNo),
       label: roundLabel(roundNo),
     }));
-  }, [matches, series]);
+  }, [categoryFilter, matches, series]);
 
   useEffect(() => {
     if (series === "ALL") return;
@@ -119,11 +129,21 @@ export function KnockoutMatchesSection({
 
   const filteredMatches = useMemo(() => {
     let filtered = items;
+    if (categoryFilter !== "ALL") {
+      filtered = filtered.filter((match) => match.categoryCode === categoryFilter);
+    }
     if (series !== "ALL") {
       filtered = filtered.filter((match) => match.series === series);
     }
     if (round !== "ALL") {
       filtered = filtered.filter((match) => String(match.round) === round);
+    }
+    if (status !== "ALL") {
+      filtered = filtered.filter((match) =>
+        status === "COMPLETED"
+          ? match.status === "COMPLETED" || match.status === "WALKOVER"
+          : match.status === "SCHEDULED"
+      );
     }
     if (!search.trim()) return filtered;
     const query = search.trim().toLowerCase();
@@ -132,7 +152,7 @@ export function KnockoutMatchesSection({
       const away = teamSearchText(match.awayTeam);
       return home.includes(query) || away.includes(query);
     });
-  }, [items, round, search, series]);
+  }, [categoryFilter, items, round, search, series, status]);
 
   const statusBadge = (status: KnockoutMatchItem["status"]) => {
     if (status === "COMPLETED" || status === "WALKOVER") {
@@ -154,58 +174,18 @@ export function KnockoutMatchesSection({
             Knockout Matches
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            Buttons below apply to Knockout matches only.
+            Knockout scoring and result management.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              const formData = new FormData(event.currentTarget);
-              startTransition(async () => {
-                const result = await generateMatchesKnockout(formData);
-                if (result?.error) {
-                  setError(result.error);
-                  return;
-                }
-                const refreshed = await fetchKnockoutMatches({ categoryCode });
-                setItems(refreshed);
-                setError(null);
-              });
-            }}
-          >
-            <input type="hidden" name="category" value={categoryCode} />
-            <input type="hidden" name="series" value={series} />
-            <Button type="submit" disabled={pending}>
-              Generate matches
-            </Button>
-          </form>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              const formData = new FormData(event.currentTarget);
-              startTransition(async () => {
-                const result = await clearMatchesKnockout(formData);
-                if (result?.error) {
-                  setError(result.error);
-                  return;
-                }
-                const refreshed = await fetchKnockoutMatches({ categoryCode });
-                setItems(refreshed);
-                setError(null);
-              });
-            }}
-          >
-            <input type="hidden" name="category" value={categoryCode} />
-            <input type="hidden" name="series" value={series} />
-            <Button type="submit" variant="outline" disabled={pending}>
-              Clear matches
-            </Button>
-          </form>
           {isDev ? (
             <form
               onSubmit={(event) => {
                 event.preventDefault();
+                if (categoryFilter === "ALL") {
+                  setError("Select a category in filter to randomize matches.");
+                  return;
+                }
                 const formData = new FormData(event.currentTarget);
                 startTransition(async () => {
                   const result = await randomizeAllKnockoutResultsDev(formData);
@@ -219,11 +199,15 @@ export function KnockoutMatchesSection({
                 });
               }}
             >
-              <input type="hidden" name="category" value={categoryCode} />
+              <input type="hidden" name="category" value={categoryFilter} />
               <input type="hidden" name="series" value={series} />
               <input type="hidden" name="round" value={round} />
               <input type="hidden" name="search" value={search} />
-              <Button type="submit" variant="destructive" disabled={pending}>
+              <Button
+                type="submit"
+                variant="destructive"
+                disabled={pending || categoryFilter === "ALL"}
+              >
                 ⚠️ Randomize match results (DEV)
               </Button>
             </form>
@@ -237,7 +221,26 @@ export function KnockoutMatchesSection({
         </div>
       ) : null}
 
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">
+            Categories
+          </label>
+          <select
+            value={categoryFilter}
+            onChange={(event) =>
+              setCategoryFilter(
+                event.target.value as "ALL" | "MD" | "WD" | "XD"
+              )
+            }
+            className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
+          >
+            <option value="ALL">All categories</option>
+            <option value="MD">MD</option>
+            <option value="WD">WD</option>
+            <option value="XD">XD</option>
+          </select>
+        </div>
         <div>
           <label className="text-xs font-medium text-muted-foreground">
             Series
@@ -269,6 +272,22 @@ export function KnockoutMatchesSection({
                 {entry.label}
               </option>
             ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">
+            Status
+          </label>
+          <select
+            value={status}
+            onChange={(event) =>
+              setStatus(event.target.value as "ALL" | "COMPLETED" | "SCHEDULED")
+            }
+            className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
+          >
+            <option value="ALL">All</option>
+            <option value="COMPLETED">Completed</option>
+            <option value="SCHEDULED">Scheduled</option>
           </select>
         </div>
         <div>
@@ -312,7 +331,7 @@ export function KnockoutMatchesSection({
                     {teamLabel(match.awayTeam)}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {matchRoundLabel(match.round, match.matchNo)}{" "}
+                    {match.categoryCode} · {matchRoundLabel(match.round, match.matchNo)}{" "}
                     · Series {match.series} · Match {match.matchNo}
                   </p>
                 </div>

@@ -1,10 +1,26 @@
 import { RefereeScoreboard } from "@/app/referee/components/RefereeScoreboard";
 import { getScheduledMatches } from "@/lib/matches/getScheduledMatches";
+import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Referee Scoresheet" };
+
+const COURT_LABELS: Record<string, "P5" | "P6" | "P7" | "P8" | "P9"> = {
+  C1: "P5",
+  C2: "P6",
+  C3: "P7",
+  C4: "P8",
+  C5: "P9",
+};
 
 export default async function RefereePage() {
-  const { groupMatches, knockoutMatches, groups } = await getScheduledMatches();
+  const [{ groupMatches, knockoutMatches, groups }, settings] = await Promise.all([
+    getScheduledMatches(),
+    prisma.tournamentSettings.findFirst({
+      orderBy: { createdAt: "desc" },
+      select: { scoringMode: true },
+    }),
+  ]);
 
   const groupItems = groupMatches
     .filter((match) => match.group)
@@ -17,6 +33,9 @@ export default async function RefereePage() {
       groupName: match.group?.name ?? "",
       homeTeam: match.homeTeam,
       awayTeam: match.awayTeam,
+      court: match.courtAssignments[0]
+        ? (COURT_LABELS[match.courtAssignments[0].courtId] ?? null)
+        : null,
     }));
 
   const knockoutItems = knockoutMatches.map((match) => ({
@@ -27,8 +46,12 @@ export default async function RefereePage() {
     series: match.series,
     round: match.round,
     matchNo: match.matchNo,
+    isBestOf3: match.isBestOf3,
     homeTeam: match.homeTeam,
     awayTeam: match.awayTeam,
+    court: match.courtAssignments[0]
+      ? (COURT_LABELS[match.courtAssignments[0].courtId] ?? null)
+      : null,
   }));
 
   const groupOptions = groups.map((group) => ({
@@ -39,7 +62,11 @@ export default async function RefereePage() {
 
   return (
     <section className="rounded-2xl border border-border bg-muted/40 p-6">
-      <RefereeScoreboard matches={[...groupItems, ...knockoutItems]} groups={groupOptions} />
+      <RefereeScoreboard
+        matches={[...groupItems, ...knockoutItems]}
+        groups={groupOptions}
+        scoringMode={settings?.scoringMode ?? "SINGLE_GAME_21"}
+      />
     </section>
   );
 }

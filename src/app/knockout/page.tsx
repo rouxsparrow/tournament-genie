@@ -7,11 +7,11 @@ import {
 import { SecondChanceToggle } from "@/app/knockout/second-chance-toggle";
 import { loadGlobalGroupRanking } from "@/app/knockout/logic";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
-import { ClearBracketButton } from "@/app/knockout/clear-bracket-button";
-import { GenerateBracketButton } from "@/app/knockout/generate-bracket-button";
+import { KnockoutBracketControls } from "@/app/knockout/knockout-bracket-controls";
 import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Knockout" };
 
 type KnockoutPageProps = {
   searchParams?: Promise<{ category?: string; error?: string; adjusted?: string }>;
@@ -56,17 +56,6 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
   const categoryConfig = await prisma.categoryConfig.findUnique({
     where: { categoryCode: selectedCategory },
   });
-
-  const seriesAExists = await prisma.knockoutMatch.findFirst({
-    where: { categoryCode: selectedCategory, series: "A" },
-    select: { id: true },
-  });
-  const seriesBExists = isWD
-    ? null
-    : await prisma.knockoutMatch.findFirst({
-        where: { categoryCode: selectedCategory, series: "B" },
-        select: { id: true },
-      });
 
   const qualifiers = await prisma.seriesQualifier.findMany({
     where: { categoryCode: selectedCategory },
@@ -148,20 +137,6 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
             Compute Series Split
           </Button>
         </form>
-        <GenerateBracketButton
-          category={selectedCategory}
-          series="A"
-          disabled={!isLocked}
-          exists={Boolean(seriesAExists)}
-        />
-        {!isWD ? (
-          <GenerateBracketButton
-            category={selectedCategory}
-            series="B"
-            disabled={!isLocked}
-            exists={Boolean(seriesBExists)}
-          />
-        ) : null}
         {!isWD && categoryConfig?.secondChanceEnabled ? (
           <span className="text-xs text-muted-foreground">
             Second chance enabled for this category.
@@ -185,8 +160,9 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
             Adjusted: moved lowest-ranked team(s) from Series A to Series B to make Series A even.
           </span>
         ) : null}
-        <ClearBracketButton category={selectedCategory} />
       </div>
+
+      <KnockoutBracketControls category={selectedCategory} disabled={!isLocked} />
 
 
       <div className="mt-8 space-y-6">

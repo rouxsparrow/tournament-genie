@@ -2,8 +2,10 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import {
   assignTeamToGroup,
+  clearGroupStageMatchesFromGroups,
   createGroupsManual,
   deleteGroup,
+  generateGroupStageMatchesFromGroups,
   lockGroupAssignment,
   randomizeGroups,
   unlockGroupAssignment,
@@ -11,11 +13,18 @@ import {
 } from "@/app/groups/actions";
 import { Button } from "@/components/ui/button";
 import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
+import { DismissibleMessageCard } from "@/components/dismissible-message-card";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Groups" };
 
 type GroupsPageProps = {
-  searchParams?: Promise<{ category?: string; error?: string }>;
+  searchParams?: Promise<{
+    category?: string;
+    error?: string;
+    notice?: string;
+    noticeType?: "success" | "error";
+  }>;
 };
 
 const categories = ["MD", "WD", "XD"] as const;
@@ -39,6 +48,11 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
   const errorMessage = resolvedSearchParams?.error
     ? decodeURIComponent(resolvedSearchParams.error)
     : null;
+  const noticeMessage = resolvedSearchParams?.notice
+    ? decodeURIComponent(resolvedSearchParams.notice)
+    : null;
+  const noticeType =
+    resolvedSearchParams?.noticeType === "error" ? "error" : "success";
 
   const category = await prisma.category.findUnique({
     where: { code: selectedCategory },
@@ -138,8 +152,32 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
               Unlock
             </Button>
           </form>
+          <form action={generateGroupStageMatchesFromGroups}>
+            <GlobalFormPendingBridge />
+            <input type="hidden" name="category" value={selectedCategory} />
+            <Button size="sm" type="submit" disabled={!isAssignmentLocked}>
+              Generate matches
+            </Button>
+          </form>
+          <form action={clearGroupStageMatchesFromGroups}>
+            <GlobalFormPendingBridge />
+            <input type="hidden" name="category" value={selectedCategory} />
+            <Button size="sm" type="submit" variant="destructive">
+              Clear matches
+            </Button>
+          </form>
         </div>
       </div>
+
+      {noticeMessage ? (
+        <div className="mt-4">
+          <DismissibleMessageCard
+            key={selectedCategory}
+            message={noticeMessage}
+            variant={noticeType}
+          />
+        </div>
+      ) : null}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[2fr,1fr]">
         <div className="space-y-6">

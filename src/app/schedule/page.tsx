@@ -8,6 +8,7 @@ import { getFavouritePlayerContext } from "@/lib/favourite-player";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Schedule" };
 
 export default async function SchedulePage({
   searchParams,

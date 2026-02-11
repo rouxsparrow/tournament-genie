@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Edit Player" };
 
 type PlayersEditPageProps = {
   params: Promise<{ id: string }>;

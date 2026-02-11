@@ -6,6 +6,10 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { buildRandomizedGroups } from "@/lib/group-randomizer";
 import { requireAdmin } from "@/lib/auth";
+import {
+  clearGroupStageMatchesForCategory,
+  generateGroupStageMatchesForCategory,
+} from "@/lib/match-management";
 
 const categorySchema = z.enum(["MD", "WD", "XD"]);
 
@@ -41,6 +45,18 @@ function categoryName(code: "MD" | "WD" | "XD") {
   if (code === "MD") return "Men's Doubles";
   if (code === "WD") return "Women's Doubles";
   return "Mixed Doubles";
+}
+
+function buildGroupsRedirect(
+  category: "MD" | "WD" | "XD",
+  options?: { notice?: string; noticeType?: "success" | "error"; error?: string }
+) {
+  const params = new URLSearchParams();
+  params.set("category", category);
+  if (options?.notice) params.set("notice", options.notice);
+  if (options?.noticeType) params.set("noticeType", options.noticeType);
+  if (options?.error) params.set("error", options.error);
+  return `/groups?${params.toString()}`;
 }
 
 export async function createGroupsManual(formData: FormData) {
@@ -288,4 +304,83 @@ export async function unlockGroupAssignment(formData: FormData) {
 
   revalidatePath("/groups");
   redirect(`/groups?category=${parsed.data}`);
+}
+
+export async function generateGroupStageMatchesFromGroups(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
+  const parsed = categorySchema.safeParse(formData.get("category"));
+  if (!parsed.success) {
+    redirect(`/groups?error=${encodeURIComponent("Invalid category.")}`);
+  }
+
+  const categoryCode = parsed.data;
+
+  const lock = await prisma.groupAssignmentLock.findUnique({
+    where: { categoryCode },
+    select: { locked: true },
+  });
+  if (!lock?.locked) {
+    redirect(
+      buildGroupsRedirect(categoryCode, {
+        notice: "Lock group assignment before generating matches.",
+        noticeType: "error",
+      })
+    );
+  }
+
+  let result: { createdCount: number };
+  try {
+    result = await generateGroupStageMatchesForCategory(categoryCode);
+  } catch (error) {
+    redirect(
+      buildGroupsRedirect(categoryCode, {
+        notice: (error as Error).message || "Unable to generate matches.",
+        noticeType: "error",
+      })
+    );
+  }
+
+  revalidatePath("/groups");
+  revalidatePath("/matches");
+  revalidatePath("/standings");
+  revalidatePath("/schedule-overview");
+  redirect(
+    buildGroupsRedirect(categoryCode, {
+      notice: `Generated ${result.createdCount} group-stage matches.`,
+      noticeType: "success",
+    })
+  );
+}
+
+export async function clearGroupStageMatchesFromGroups(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
+  const parsed = categorySchema.safeParse(formData.get("category"));
+  if (!parsed.success) {
+    redirect(`/groups?error=${encodeURIComponent("Invalid category.")}`);
+  }
+
+  const categoryCode = parsed.data;
+
+  let result: { deletedCount: number };
+  try {
+    result = await clearGroupStageMatchesForCategory(categoryCode);
+  } catch (error) {
+    redirect(
+      buildGroupsRedirect(categoryCode, {
+        notice: (error as Error).message || "Unable to clear matches.",
+        noticeType: "error",
+      })
+    );
+  }
+
+  revalidatePath("/groups");
+  revalidatePath("/matches");
+  revalidatePath("/standings");
+  revalidatePath("/schedule-overview");
+  redirect(
+    buildGroupsRedirect(categoryCode, {
+      notice: `Cleared ${result.deletedCount} group-stage matches.`,
+      noticeType: "success",
+    })
+  );
 }
