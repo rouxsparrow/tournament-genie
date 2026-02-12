@@ -190,6 +190,10 @@ export function ScheduleClient({
   }
 
   useEffect(() => {
+    setAutoSchedule(initialState.config.autoScheduleEnabled);
+  }, [initialState.stage, initialState.config.autoScheduleEnabled]);
+
+  useEffect(() => {
     if (!isAdmin) return;
 
     let isMounted = true;
@@ -209,6 +213,18 @@ export function ScheduleClient({
     };
   }, [isAdmin, stage]);
 
+  const notifyBroadcastRefresh = async (source: string) => {
+    try {
+      await fetch("/api/broadcast/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage, source }),
+      });
+    } catch {
+      // Ignore publish failures. Schedule UI should continue to function.
+    }
+  };
+
   const handleAction = async <T,>(action: () => Promise<T>) => {
     setError(null);
     startTransition(async () => {
@@ -216,6 +232,9 @@ export function ScheduleClient({
       if (result?.error) {
         setError(result.error);
         return;
+      }
+      if (isAdmin) {
+        void notifyBroadcastRefresh("schedule-action");
       }
       router.refresh();
     });

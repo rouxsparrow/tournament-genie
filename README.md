@@ -55,6 +55,12 @@ npx prisma migrate dev --name init
 curl http://localhost:3000/api/health/db
 ```
 
+4. Verify broadcast realtime DB wiring:
+
+```bash
+npm run test:realtime:verify
+```
+
 ## Project Structure
 
 - `src/app`: Next.js routes and layouts

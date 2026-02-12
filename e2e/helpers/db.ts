@@ -84,6 +84,114 @@ export async function getGroupScheduleSnapshot() {
   return { scheduled, active, blocked };
 }
 
+export async function getGroupStagePreconditions() {
+  const [assignmentLocks, stageLocks, schedulableGroupMatches] = await Promise.all([
+    prisma.groupAssignmentLock.findMany({
+      where: { categoryCode: { in: ["MD", "WD", "XD"] } },
+      select: { categoryCode: true, locked: true },
+    }),
+    prisma.groupStageLock.findMany({
+      where: { categoryCode: { in: ["MD", "WD", "XD"] } },
+      select: { categoryCode: true, locked: true },
+    }),
+    prisma.match.count({
+      where: {
+        stage: "GROUP",
+        homeTeamId: { not: null },
+        awayTeamId: { not: null },
+      },
+    }),
+  ]);
+
+  return {
+    assignmentLocks,
+    stageLocks,
+    schedulableGroupMatches,
+  };
+}
+
+export async function getGeneratedGroupMatchesByCategory(categoryCodes: ("MD" | "WD" | "XD")[]) {
+  const rows = await prisma.match.groupBy({
+    by: ["groupId"],
+    where: {
+      stage: "GROUP",
+      group: { category: { code: { in: categoryCodes } } },
+    },
+    _count: { _all: true },
+  });
+
+  const groups = await prisma.group.findMany({
+    where: { id: { in: rows.map((row) => row.groupId).filter(Boolean) as string[] } },
+    select: { id: true, category: { select: { code: true } } },
+  });
+  const codeByGroupId = new Map(groups.map((group) => [group.id, group.category.code]));
+  const counts: Record<"MD" | "WD" | "XD", number> = { MD: 0, WD: 0, XD: 0 };
+
+  for (const row of rows) {
+    if (!row.groupId) continue;
+    const code = codeByGroupId.get(row.groupId);
+    if (!code) continue;
+    counts[code] += row._count._all;
+  }
+  return counts;
+}
+
+export async function getGroupSimulationCourtLabels(limit = 5) {
+  const [activeAssignments, courts] = await Promise.all([
+    prisma.courtAssignment.findMany({
+      where: { stage: "GROUP", status: "ACTIVE" },
+      orderBy: [{ assignedAt: "asc" }, { courtId: "asc" }],
+      select: { courtId: true },
+    }),
+    prisma.court.findMany({
+      orderBy: { id: "asc" },
+      select: { id: true },
+    }),
+  ]);
+
+  const ordered = [
+    ...new Set([
+      ...activeAssignments.map((entry) => entry.courtId),
+      ...courts.map((court) => court.id),
+    ]),
+  ].slice(0, limit);
+
+  return ordered;
+}
+
+export async function getGroupProgress() {
+  const [scheduled, completed, activeAssignments, blocked] = await Promise.all([
+    prisma.match.count({
+      where: {
+        stage: "GROUP",
+        status: "SCHEDULED",
+        homeTeamId: { not: null },
+        awayTeamId: { not: null },
+      },
+    }),
+    prisma.match.count({
+      where: {
+        stage: "GROUP",
+        status: { in: ["COMPLETED", "WALKOVER"] },
+        homeTeamId: { not: null },
+        awayTeamId: { not: null },
+      },
+    }),
+    prisma.courtAssignment.count({
+      where: {
+        stage: "GROUP",
+        status: "ACTIVE",
+        matchType: "GROUP",
+        groupMatchId: { not: null },
+      },
+    }),
+    prisma.blockedMatch.count({
+      where: { matchType: "GROUP", groupMatchId: { not: null } },
+    }),
+  ]);
+  return { scheduled, completed, activeAssignments, blocked };
+}
+
 export async function getActiveGroupMatchId() {
   const assignment = await prisma.courtAssignment.findFirst({
     where: { stage: "GROUP", status: "ACTIVE", matchType: "GROUP", groupMatchId: { not: null } },
@@ -318,7 +426,9 @@ export async function seedSeriesAQualifiersFromTop8(categoryCode: "MD" | "WD" | 
   const ranking = await getGlobalRankingEntries(categoryCode);
   const top8 = ranking.slice(0, 8);
   await prisma.seriesQualifier.deleteMany({ where: { categoryCode } });
-  if (top8.length === 0) return;
+  if (top8.length === 0) {
+    return { seriesACount: 0, seriesBCount: 0 };
+  }
 
   await prisma.seriesQualifier.createMany({
     data: top8.map((entry) => ({
@@ -342,6 +452,8 @@ export async function seedSeriesAQualifiersFromTop8(categoryCode: "MD" | "WD" | 
       })),
     });
   }
+
+  return { seriesACount: top8.length, seriesBCount: rest.length };
 }
 
 export async function setSecondChanceEnabled(

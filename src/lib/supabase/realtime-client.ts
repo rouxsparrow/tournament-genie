@@ -20,5 +20,8 @@ export function getRealtimeBrowserClient() {
       params: { eventsPerSecond: 10 },
     },
   });
+  // With RLS-enabled Postgres changes, Realtime needs an explicit JWT on the socket.
+  // We use anon key because this app has no Supabase-authenticated user session.
+  void cachedClient.realtime.setAuth(anonKey);
   return cachedClient;
 }

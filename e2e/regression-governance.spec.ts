@@ -32,7 +32,11 @@ test("Group stage lock enforcement @regression", async ({ page }) => {
 test("Group-to-knockout boundary top-8 only @regression", async ({ page }) => {
   await loginAsAdmin(page);
   await setGroupStageLock("MD", true);
-  await seedSeriesAQualifiersFromTop8("MD");
+  const seeded = await seedSeriesAQualifiersFromTop8("MD");
+  test.skip(
+    seeded.seriesACount < 8,
+    "existing-group dataset needs at least 8 ranked MD teams for top-8 boundary checks."
+  );
 
   const seriesAIds = await getSeriesAQualifierTeamIds("MD");
   const top8 = await getTop8GlobalRankingTeamIds("MD");
@@ -45,7 +49,13 @@ test("Knockout generation idempotency @regression", async ({ page }) => {
   await loginAsAdmin(page);
   await setGroupStageLock("MD", true);
   await setSecondChanceEnabled("MD", false);
-  await seedSeriesAQualifiersFromTop8("MD");
+  const seeded = await seedSeriesAQualifiersFromTop8("MD");
+  const seriesBSupportsNoSecondChance =
+    seeded.seriesBCount > 0 && (seeded.seriesBCount & (seeded.seriesBCount - 1)) === 0;
+  test.skip(
+    seeded.seriesACount < 8 || !seriesBSupportsNoSecondChance,
+    "existing-group dataset needs 8 Series A qualifiers and power-of-two Series B qualifiers when second chance is OFF."
+  );
 
   const first = await page.request.post("/api/knockout/generate-full", {
     data: { category: "MD" },

@@ -42,6 +42,14 @@ from pg_policies
 where schemaname = 'public'
   and roles @> ARRAY['anon']::name[]
 order by tablename, policyname;
+
+-- Realtime publication membership for broadcast tables
+select schemaname, tablename
+from pg_publication_tables
+where pubname = 'supabase_realtime'
+  and schemaname = 'public'
+  and tablename in ('CourtAssignment', 'BlockedMatch', 'Match', 'KnockoutMatch', 'ScheduleConfig')
+order by tablename;
 ```
 
 Expected anon policy tables:
@@ -50,6 +58,19 @@ Expected anon policy tables:
 - `Match`
 - `KnockoutMatch`
 - `ScheduleConfig`
+
+Expected realtime publication tables:
+- `CourtAssignment`
+- `BlockedMatch`
+- `Match`
+- `KnockoutMatch`
+- `ScheduleConfig`
+
+CLI check:
+
+```bash
+npm run test:realtime:verify
+```
 
 ## 4) App Validation (Dev)
 

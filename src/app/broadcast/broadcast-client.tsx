@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Badge } from "@/components/ui/badge";
 import { getPresentingState } from "@/app/schedule/actions";
 import { getRealtimeBrowserClient } from "@/lib/supabase/realtime-client";
@@ -16,19 +17,6 @@ const COURT_LABELS: Record<string, string> = {
   C4: "P8",
   C5: "P9",
 };
-
-const REALTIME_TABLES = [
-  "courtAssignment",
-  "CourtAssignment",
-  "blockedMatch",
-  "BlockedMatch",
-  "match",
-  "Match",
-  "knockoutMatch",
-  "KnockoutMatch",
-  "scheduleConfig",
-  "ScheduleConfig",
-];
 
 function courtLabel(courtId: string) {
   return `Court ${COURT_LABELS[courtId] ?? courtId}`;
@@ -68,68 +56,139 @@ function formatPlayingMeta(
 export function BroadcastClient({ state }: { state: ScheduleState }) {
   const router = useRouter();
   const stage = state.stage as ScheduleStage;
+  const broadcastDebug = process.env.NEXT_PUBLIC_SCHEDULE_DEBUG === "1";
 
   useEffect(() => {
-    let pollInterval: ReturnType<typeof setInterval> | null = null;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let eventCount = 0;
+    let mode: "realtime" = "realtime";
+    let disposed = false;
+    let activeChannel: RealtimeChannel | null = null;
+
+    const log = (
+      message: string,
+      extra?: Record<string, string | number | boolean | null | undefined>
+    ) => {
+      if (!broadcastDebug) return;
+      const payload = {
+        stage,
+        mode,
+        ...(extra ?? {}),
+      };
+      console.log(`[broadcast][updates] ${message}`, payload);
+      void fetch("/api/broadcast/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stage,
+          mode,
+          message,
+          extra: payload,
+        }),
+        keepalive: true,
+      }).catch(() => undefined);
+    };
+
+    const warn = (
+      message: string,
+      extra?: Record<string, string | number | boolean | null | undefined>
+    ) => {
+      if (!broadcastDebug) return;
+      const payload = {
+        stage,
+        mode,
+        ...(extra ?? {}),
+      };
+      console.warn(`[broadcast][updates] ${message}`, payload);
+      void fetch("/api/broadcast/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stage,
+          mode,
+          message,
+          extra: payload,
+        }),
+        keepalive: true,
+      }).catch(() => undefined);
+    };
 
     const scheduleRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
+        log("router.refresh", { source: "realtime", eventCount });
         router.refresh();
       }, 350);
     };
 
-    const startFallbackPolling = () => {
-      if (pollInterval) return;
-      pollInterval = setInterval(() => {
-        router.refresh();
-      }, 60000);
-    };
-
-    const stopFallbackPolling = () => {
-      if (!pollInterval) return;
-      clearInterval(pollInterval);
-      pollInterval = null;
-    };
-
     const supabase = getRealtimeBrowserClient();
     if (!supabase) {
-      startFallbackPolling();
+      warn("supabase client unavailable; realtime disabled", {
+        hasUrl: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
+        hasAnonKey: Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+      });
       return () => {
-        stopFallbackPolling();
         if (refreshTimer) clearTimeout(refreshTimer);
       };
     }
 
-    const channel = supabase.channel(`broadcast-live-${stage.toLowerCase()}`);
-    for (const table of REALTIME_TABLES) {
-      channel.on(
-        "postgres_changes",
-        { event: "*", schema: "public", table },
-        () => {
-          stopFallbackPolling();
-          scheduleRefresh();
+    const start = async () => {
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (anonKey) {
+        try {
+          await supabase.realtime.setAuth(anonKey);
+          log("realtime auth set");
+        } catch (error) {
+          warn("realtime auth failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
-      );
-    }
+      }
+      if (disposed) return;
 
-    channel.subscribe((status: string) => {
-      if (status === "SUBSCRIBED") {
-        stopFallbackPolling();
-        return;
-      }
-      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-        startFallbackPolling();
-      }
-    });
+      const channel = supabase.channel(`broadcast-live-${stage.toLowerCase()}`);
+      activeChannel = channel;
+
+      channel.on("broadcast", { event: "schedule_update" }, (payload) => {
+        eventCount += 1;
+        mode = "realtime";
+        log("realtime event", {
+          eventType: payload.event,
+          eventCount,
+        });
+        scheduleRefresh();
+      });
+
+      channel.subscribe((status: string, err?: Error) => {
+        log("channel status", {
+          status,
+          error: err?.message ?? null,
+        });
+        if (status === "SUBSCRIBED") {
+          mode = "realtime";
+          log("realtime connected");
+          return;
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          log("realtime unavailable", {
+            status,
+            error: err?.message ?? null,
+          });
+        }
+      });
+    };
+
+    void start();
 
     return () => {
-      stopFallbackPolling();
+      disposed = true;
+      log("cleanup", { eventCount });
       if (refreshTimer) clearTimeout(refreshTimer);
-      void supabase.removeChannel(channel);
+      if (activeChannel) {
+        void supabase.removeChannel(activeChannel);
+      }
     };
-  }, [router, stage]);
+  }, [broadcastDebug, router, stage]);
 
   const upcoming = state.upcomingMatches;
 
