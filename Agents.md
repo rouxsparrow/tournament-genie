@@ -312,6 +312,16 @@ Pair the play-in teams using:
 
 ---
 
+## Broadcast Page
+- Route: `/broadcast` (admin-only)
+- Purpose: TV-friendly live display for Playing + Upcoming matches
+- Layout/style mirrors `/presenting` without favourite-player highlighting
+- Stage toggle supports Group / Knockout via query param (`?stage=group|ko`)
+- Uses Supabase Realtime to refresh on schedule-relevant changes
+- Fallback polling refresh runs every 10 seconds when realtime is unavailable
+
+---
+
 ## Auth & Permissions
 - Roles:
   - **Admin** (username: `admin`, password from `ADMIN_PASSWORD` env; defaults to `Starhub` locally)
@@ -421,4 +431,3 @@ Pair the play-in teams using:
 - `Agents.md` updated: Yes/No — reason
 - `[OtherDoc].md` updated: Yes/No — reason
 - If none: “No documentation updates (behavior unchanged)”
-

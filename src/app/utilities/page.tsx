@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getRoleFromRequest } from "@/lib/auth";
 import { UtilitiesClient } from "@/app/utilities/utilities-client";
-import { checkDuplicateAssignments } from "@/app/utilities/actions";
+import { checkDuplicateAssignments, checkLegacyCourtIds } from "@/app/utilities/actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Utilities" };
@@ -12,11 +12,18 @@ export default async function UtilitiesPage() {
     redirect("/presenting");
   }
 
-  const result = await checkDuplicateAssignments();
+  const [duplicateResult, legacyResult] = await Promise.all([
+    checkDuplicateAssignments(),
+    checkLegacyCourtIds(),
+  ]);
   const initialSummary =
-    result && !("error" in result)
-      ? result.summary
+    duplicateResult && !("error" in duplicateResult)
+      ? duplicateResult.summary
       : { byCourt: [], byGroupMatch: [], byKnockoutMatch: [] };
+  const initialLegacySummary =
+    legacyResult && !("error" in legacyResult)
+      ? legacyResult.summary
+      : { legacyCourtRows: 0, legacyStageLockRows: 0, legacyAssignmentRows: 0, byCourt: [] };
 
   return (
     <section className="rounded-2xl border border-border bg-card p-8">
@@ -24,7 +31,10 @@ export default async function UtilitiesPage() {
       <p className="mt-1 text-sm text-muted-foreground">
         Admin-only emergency tools for schedule assignment integrity.
       </p>
-      <UtilitiesClient initialSummary={initialSummary} />
+      <UtilitiesClient
+        initialSummary={initialSummary}
+        initialLegacySummary={initialLegacySummary}
+      />
     </section>
   );
 }

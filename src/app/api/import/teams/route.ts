@@ -5,6 +5,7 @@ import {
   parseCsv,
   parseXlsx,
 } from "@/lib/import-utils";
+import { getRoleFromRequest } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -56,6 +57,11 @@ function teamKey(categoryId: string, playerIds: [string, string]) {
 }
 
 export async function POST(request: Request) {
+  const role = await getRoleFromRequest();
+  if (role !== "admin") {
+    return Response.json({ error: "Admin access required." }, { status: 401 });
+  }
+
   const formData = await request.formData();
   const file = formData.get("file");
 

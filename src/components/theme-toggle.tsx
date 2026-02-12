@@ -15,23 +15,17 @@ function applyTheme(mode: ThemeMode) {
 }
 
 export function ThemeToggle() {
-  const [mounted, setMounted] = useState(false);
-  const [mode, setMode] = useState<ThemeMode>("light");
+  const [mode, setMode] = useState<ThemeMode>(() => {
+    if (typeof window === "undefined") return "light";
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (stored === "light" || stored === "dark") return stored;
+    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+    return prefersDark ? "dark" : "light";
+  });
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === "light" || stored === "dark") {
-      setMode(stored);
-      applyTheme(stored);
-    } else {
-      const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")
-        .matches;
-      const fallback = prefersDark ? "dark" : "light";
-      setMode(fallback);
-      applyTheme(fallback);
-    }
-    setMounted(true);
-  }, []);
+    applyTheme(mode);
+  }, [mode]);
 
   function toggleTheme() {
     const next = mode === "dark" ? "light" : "dark";
@@ -48,7 +42,6 @@ export function ThemeToggle() {
       onClick={toggleTheme}
       aria-label="Toggle theme"
       aria-pressed={mode === "dark"}
-      disabled={!mounted}
     >
       {mode === "dark" ? (
         <Moon className="h-4 w-4" />

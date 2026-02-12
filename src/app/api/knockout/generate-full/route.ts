@@ -8,12 +8,18 @@ import {
 import { prisma } from "@/lib/prisma";
 import { publishKnockoutMatchesForCategory } from "@/lib/match-management";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
+import { getRoleFromRequest } from "@/lib/auth";
 
 const payloadSchema = z.object({
   category: z.enum(["MD", "WD", "XD"]),
 });
 
 export async function POST(request: Request) {
+  const role = await getRoleFromRequest();
+  if (role !== "admin") {
+    return NextResponse.json({ error: "Admin access required." }, { status: 401 });
+  }
+
   const body = await request.json().catch(() => null);
   const parsed = payloadSchema.safeParse(body);
   if (!parsed.success) {

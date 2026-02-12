@@ -2,11 +2,17 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { clearKnockoutBracketArtifacts } from "@/lib/match-management";
+import { getRoleFromRequest } from "@/lib/auth";
 
 const categorySchema = z.enum(["MD", "WD", "XD"]);
 const seriesSchema = z.enum(["A", "B"]);
 
 export async function DELETE(request: Request) {
+  const role = await getRoleFromRequest();
+  if (role !== "admin") {
+    return NextResponse.json({ error: "Admin access required." }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const categoryParam = searchParams.get("category");
   const seriesParam = searchParams.get("series");
