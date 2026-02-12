@@ -349,14 +349,6 @@ model ScheduleConfig {
   @@index([stage])
 }
 
-model BroadcastSignal {
-  id        Int      @id @default(1) @db.SmallInt
-  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
-  source    String   @default("system")
-
-  @@map("broadcast_signal")
-}
-
 model Court {
   id         String   @id
   isLocked   Boolean  @default(false)

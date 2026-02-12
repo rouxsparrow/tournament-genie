@@ -5,7 +5,6 @@ dotenv.config({ path: ".env.e2e" });
 dotenv.config();
 
 const REQUIRED_TABLES = [
-  "broadcast_signal",
   "BlockedMatch",
   "CourtAssignment",
   "KnockoutMatch",
@@ -30,7 +29,7 @@ async function main() {
       WHERE schemaname = 'public'
         AND cmd = 'SELECT'
         AND roles @> ARRAY['anon']::name[]
-        AND tablename IN ('broadcast_signal', 'CourtAssignment', 'BlockedMatch', 'Match', 'KnockoutMatch', 'ScheduleConfig')
+        AND tablename IN ('CourtAssignment', 'BlockedMatch', 'Match', 'KnockoutMatch', 'ScheduleConfig')
       ORDER BY tablename, policyname
     `);
 
