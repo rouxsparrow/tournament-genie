@@ -40,7 +40,6 @@ type MatchItem = {
 
 type MatchesListClientProps = {
   categoryCode: "ALL" | "MD" | "WD" | "XD";
-  groups: { id: string; name: string }[];
   matches: MatchItem[];
   initialFilters?: { search?: string; groupId?: string };
   scoringMode: "SINGLE_GAME_21" | "BEST_OF_3_21";
@@ -72,7 +71,6 @@ function matchScoreSummary(match: MatchItem) {
 
 export function MatchesListClient({
   categoryCode,
-  groups,
   matches,
   initialFilters,
   scoringMode,
@@ -80,6 +78,7 @@ export function MatchesListClient({
   isDev,
 }: MatchesListClientProps) {
   const storageKey = `matches:filters:${categoryCode}`;
+  const shouldHydrateFromStorage = initialFilters === undefined;
   const [categoryFilter, setCategoryFilter] = useState<"ALL" | "MD" | "WD" | "XD">(
     categoryCode
   );
@@ -94,7 +93,6 @@ export function MatchesListClient({
 
   useEffect(() => {
     const stored = window.localStorage.getItem(storageKey);
-    const shouldHydrateFromStorage = initialFilters === undefined;
     if (stored && shouldHydrateFromStorage) {
       try {
         const parsed = JSON.parse(stored) as { search?: string; groupId?: string };
@@ -105,7 +103,7 @@ export function MatchesListClient({
       }
     }
     setMounted(true);
-  }, [initialFilters?.groupId, initialFilters?.search, storageKey]);
+  }, [shouldHydrateFromStorage, storageKey]);
 
   useEffect(() => {
     if (!mounted) return;

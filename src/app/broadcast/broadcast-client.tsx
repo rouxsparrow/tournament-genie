@@ -61,7 +61,7 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
   useEffect(() => {
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     let eventCount = 0;
-    let mode: "realtime" = "realtime";
+    const mode = "realtime" as const;
     let disposed = false;
     let activeChannel: RealtimeChannel | null = null;
 
@@ -151,7 +151,6 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
 
       channel.on("broadcast", { event: "schedule_update" }, (payload) => {
         eventCount += 1;
-        mode = "realtime";
         log("realtime event", {
           eventType: payload.event,
           eventCount,
@@ -165,7 +164,6 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
           error: err?.message ?? null,
         });
         if (status === "SUBSCRIBED") {
-          mode = "realtime";
           log("realtime connected");
           return;
         }

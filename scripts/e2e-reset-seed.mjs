@@ -223,6 +223,8 @@ async function createTeamsFromPlayers({ categoryId, players, teamPrefix }) {
   return teams;
 }
 
+// Legacy synthetic scenario helper kept for reference; intentionally disabled in main flow.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function seedBaselineGroup() {
   const { mdCategory } = await createStandardCategories();
 
@@ -293,6 +295,8 @@ async function seedBaselineGroup() {
   }
 }
 
+// Legacy synthetic scenario helper kept for reference; intentionally disabled in main flow.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function seedKnockoutReady() {
   const { mdCategory } = await createStandardCategories();
 
@@ -416,6 +420,8 @@ async function seedKnockoutReady() {
   await createCourts();
 }
 
+// Legacy synthetic scenario helper kept for reference; intentionally disabled in main flow.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function seedImportsValidation() {
   const { mdCategory, wdCategory, xdCategory } = await createStandardCategories();
 
@@ -473,6 +479,8 @@ async function seedImportsValidation() {
   await createCourts(["C1", "C2"]);
 }
 
+// Legacy cleanup helper for synthetic fixtures; intentionally disabled in main flow.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function cleanupSeededTestCoreData() {
   await prisma.teamFlags.deleteMany({
     where: {

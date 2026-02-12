@@ -155,9 +155,10 @@ export function ScheduleClient({
   const [category, setCategory] = useState<CategoryFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<QueueStatus>("ELIGIBLE");
   const [search, setSearch] = useState("");
-  const [autoSchedule, setAutoSchedule] = useState(
-    initialState.config.autoScheduleEnabled
-  );
+  const [autoScheduleOverride, setAutoScheduleOverride] = useState<{
+    stage: ScheduleStage;
+    value: boolean;
+  } | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
   const [selectedMatchKey, setSelectedMatchKey] = useState("");
   const [refereeNotifications, setRefereeNotifications] = useState<RefereeNotificationItem[]>(
@@ -170,6 +171,10 @@ export function ScheduleClient({
     [initialState.inPlayPlayerIds]
   );
   const scheduleDebug = process.env.NEXT_PUBLIC_SCHEDULE_DEBUG === "1";
+  const autoSchedule =
+    autoScheduleOverride?.stage === stage
+      ? autoScheduleOverride.value
+      : initialState.config.autoScheduleEnabled;
 
   if (scheduleDebug) {
     console.log(
@@ -188,10 +193,6 @@ export function ScheduleClient({
       }))
     );
   }
-
-  useEffect(() => {
-    setAutoSchedule(initialState.config.autoScheduleEnabled);
-  }, [initialState.stage, initialState.config.autoScheduleEnabled]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -231,6 +232,7 @@ export function ScheduleClient({
       const result = (await action()) as { error?: string } | undefined;
       if (result?.error) {
         setError(result.error);
+        setAutoScheduleOverride(null);
         return;
       }
       if (isAdmin) {
@@ -323,7 +325,7 @@ export function ScheduleClient({
                 variant={autoSchedule ? "default" : "outline"}
                 onClick={() => {
                   const next = !autoSchedule;
-                  setAutoSchedule(next);
+                  setAutoScheduleOverride({ stage, value: next });
                   handleAction(() => toggleAutoSchedule(stage, next));
                 }}
               >

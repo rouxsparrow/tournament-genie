@@ -13,13 +13,12 @@ export const metadata = { title: "Schedule" };
 export default async function SchedulePage({
   searchParams,
 }: {
-  searchParams?: Promise<{ stage?: string | string[]; fromNav?: string }>;
+  searchParams?: Promise<{ stage?: string | string[] }>;
 }) {
   const resolvedParams = (await searchParams) ?? {};
   const stageParam =
     typeof resolvedParams.stage === "string" ? resolvedParams.stage.toLowerCase() : "";
   const stage = stageParam === "ko" ? "KNOCKOUT" : "GROUP";
-  const fromNav = resolvedParams.fromNav === "1";
   const role = await getRoleFromRequest();
   if (role === "viewer") {
     redirect("/presenting");

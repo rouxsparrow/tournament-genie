@@ -15,18 +15,14 @@ function applyTheme(mode: ThemeMode) {
 }
 
 export function ThemeToggle() {
-  const [mode, setMode] = useState<ThemeMode>("light");
-
-  useEffect(() => {
+  const [mode, setMode] = useState<ThemeMode>(() => {
+    if (typeof window === "undefined") return "light";
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    const nextMode =
-      stored === "light" || stored === "dark"
-        ? stored
-        : window.matchMedia?.("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light";
-    setMode(nextMode);
-  }, []);
+    if (stored === "light" || stored === "dark") return stored;
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+  });
 
   useEffect(() => {
     applyTheme(mode);

@@ -45,14 +45,6 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
           where: { code: selectedCategory },
         });
 
-  const assignmentLock =
-    selectedCategory === "ALL"
-      ? null
-      : await prisma.groupAssignmentLock.findUnique({
-          where: { categoryCode: selectedCategory },
-        });
-  const isAssignmentLocked = assignmentLock?.locked ?? false;
-
   const stageLocks = await prisma.groupStageLock.findMany({
     select: { categoryCode: true, locked: true },
   });
@@ -61,13 +53,6 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
     WD: stageLocks.find((lock) => lock.categoryCode === "WD")?.locked ?? false,
     XD: stageLocks.find((lock) => lock.categoryCode === "XD")?.locked ?? false,
   } as const;
-
-  const groups = category
-    ? await prisma.group.findMany({
-        where: { categoryId: category.id },
-        orderBy: { name: "asc" },
-      })
-    : [];
 
   const settings = await prisma.tournamentSettings.findFirst({
     orderBy: { createdAt: "desc" },
@@ -168,7 +153,6 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
           <div className="mt-6">
             <MatchesListClient
               categoryCode={selectedCategory}
-              groups={groups.map((group) => ({ id: group.id, name: group.name }))}
               matches={matches.map((match) => ({
                 id: match.id,
                 categoryCode:
