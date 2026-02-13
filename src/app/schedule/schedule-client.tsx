@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff } from "lucide-react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import { Eye, EyeOff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useGlobalTransition } from "@/components/use-global-transition";
@@ -22,6 +23,7 @@ import {
   toggleAutoSchedule,
   unblockMatch,
 } from "@/app/schedule/actions";
+import { getRealtimeBrowserClient } from "@/lib/supabase/realtime-client";
 
 type ScheduleState = Awaited<ReturnType<typeof getScheduleState>>;
 type UserRole = "admin" | "viewer";
@@ -130,7 +132,12 @@ function hasInPlayConflict(
 function formatNotificationTime(timestamp: string) {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "UTC",
+  }).format(date);
 }
 
 export function ScheduleClient({
@@ -150,9 +157,10 @@ export function ScheduleClient({
   const [category, setCategory] = useState<CategoryFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<QueueStatus>("ELIGIBLE");
   const [search, setSearch] = useState("");
-  const [autoSchedule, setAutoSchedule] = useState(
-    initialState.config.autoScheduleEnabled
-  );
+  const [autoScheduleOverride, setAutoScheduleOverride] = useState<{
+    stage: ScheduleStage;
+    value: boolean;
+  } | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
   const [selectedMatchKey, setSelectedMatchKey] = useState("");
   const [refereeNotifications, setRefereeNotifications] = useState<RefereeNotificationItem[]>(
@@ -160,11 +168,16 @@ export function ScheduleClient({
   );
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useGlobalTransition();
+  const [isAutoScheduleSubmitting, setIsAutoScheduleSubmitting] = useState(false);
   const inPlayPlayerIds = useMemo(
     () => new Set(initialState.inPlayPlayerIds ?? []),
     [initialState.inPlayPlayerIds]
   );
   const scheduleDebug = process.env.NEXT_PUBLIC_SCHEDULE_DEBUG === "1";
+  const autoSchedule =
+    autoScheduleOverride?.stage === stage
+      ? autoScheduleOverride.value
+      : initialState.config.autoScheduleEnabled;
 
   if (scheduleDebug) {
     console.log(
@@ -204,12 +217,99 @@ export function ScheduleClient({
     };
   }, [isAdmin, stage]);
 
+  useEffect(() => {
+    if (!isAdmin || !autoSchedule) return;
+
+    const supabase = getRealtimeBrowserClient();
+    if (!supabase) return;
+
+    let disposed = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let activeChannel: RealtimeChannel | null = null;
+    let eventCount = 0;
+
+    const channelName =
+      stage === "GROUP" ? "schedule-auto-group" : "schedule-auto-knockout";
+
+    const logDebug = (
+      message: string,
+      extra?: Record<string, string | number | boolean | null | undefined>
+    ) => {
+      if (!scheduleDebug) return;
+      console.log("[schedule][realtime][client]", {
+        stage,
+        autoSchedule,
+        channelName,
+        message,
+        ...(extra ?? {}),
+      });
+    };
+
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        logDebug("router.refresh", { eventCount });
+        router.refresh();
+      }, 350);
+    };
+
+    const start = async () => {
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (anonKey) {
+        try {
+          await supabase.realtime.setAuth(anonKey);
+        } catch (error) {
+          logDebug("setAuth failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      if (disposed) return;
+
+      const channel = supabase.channel(channelName);
+      activeChannel = channel;
+
+      channel.on("broadcast", { event: "match_completed" }, (payload) => {
+        eventCount += 1;
+        logDebug("event", {
+          eventType: payload.event,
+          source:
+            typeof payload.payload?.source === "string"
+              ? payload.payload.source
+              : undefined,
+          eventCount,
+        });
+        scheduleRefresh();
+      });
+
+      channel.subscribe((status: string, err?: Error) => {
+        logDebug("channel status", {
+          status,
+          error: err?.message ?? null,
+        });
+      });
+    };
+
+    void start();
+
+    return () => {
+      disposed = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      if (activeChannel) {
+        void supabase.removeChannel(activeChannel);
+      }
+      logDebug("cleanup", { eventCount });
+    };
+  }, [autoSchedule, isAdmin, router, scheduleDebug, stage]);
+
   const handleAction = async <T,>(action: () => Promise<T>) => {
     setError(null);
     startTransition(async () => {
       const result = (await action()) as { error?: string } | undefined;
       if (result?.error) {
         setError(result.error);
+        setAutoScheduleOverride(null);
         return;
       }
       router.refresh();
@@ -257,7 +357,7 @@ export function ScheduleClient({
   return (
     <div className="space-y-6">
       {isAdmin ? (
-        <div className="sticky top-0 z-10 rounded-xl border border-border bg-card/95 p-4 backdrop-blur">
+        <div className="rounded-xl border border-border bg-card p-4">
           <div className="grid gap-3 lg:grid-cols-[1fr,auto] lg:items-center">
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
@@ -296,11 +396,32 @@ export function ScheduleClient({
               <Button
                 type="button"
                 size="sm"
-                variant={autoSchedule ? "default" : "outline"}
-                onClick={() => {
+                variant="outline"
+                className={
+                  autoSchedule
+                    ? "border-lime-300 bg-lime-300 text-slate-950 hover:bg-lime-400 hover:text-slate-950 dark:!border-lime-300 dark:!bg-lime-300 dark:!text-slate-950 dark:hover:!bg-lime-400"
+                    : undefined
+                }
+                disabled={isPending || isAutoScheduleSubmitting}
+                onClick={async () => {
+                  if (isAutoScheduleSubmitting) return;
                   const next = !autoSchedule;
-                  setAutoSchedule(next);
-                  handleAction(() => toggleAutoSchedule(stage, next));
+                  setAutoScheduleOverride({ stage, value: next });
+                  setError(null);
+                  setIsAutoScheduleSubmitting(true);
+                  try {
+                    const result = (await toggleAutoSchedule(stage, next)) as
+                      | { error?: string }
+                      | undefined;
+                    if (result?.error) {
+                      setError(result.error);
+                      setAutoScheduleOverride(null);
+                      return;
+                    }
+                    router.refresh();
+                  } finally {
+                    setIsAutoScheduleSubmitting(false);
+                  }
                 }}
               >
                 Auto Schedule {autoSchedule ? "ON" : "OFF"}
@@ -323,8 +444,18 @@ export function ScheduleClient({
       ) : null}
 
       {error ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <span>{error}</span>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            className="h-6 w-6 shrink-0 rounded-md text-red-700 hover:bg-red-200 hover:text-red-800"
+            onClick={() => setError(null)}
+            aria-label="Dismiss error"
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
         </div>
       ) : null}
 
@@ -417,7 +548,7 @@ export function ScheduleClient({
                           size="sm"
                           variant="outline"
                           onClick={() => handleAction(() => backToQueue(court.id, stage))}
-                          disabled={!playing}
+                          disabled={!playing || isPending}
                         >
                           Back to Queue
                         </Button>
@@ -433,7 +564,7 @@ export function ScheduleClient({
                               blockMatch(playing.matchType, matchId, stage)
                             );
                           }}
-                          disabled={!playing}
+                          disabled={!playing || isPending}
                         >
                           Block
                         </Button>
@@ -442,7 +573,7 @@ export function ScheduleClient({
                           size="sm"
                           variant="outline"
                           onClick={() => handleAction(() => markCompleted(court.id, stage))}
-                          disabled={!playing}
+                          disabled={!playing || isPending}
                         >
                           Completed
                         </Button>
@@ -453,6 +584,7 @@ export function ScheduleClient({
                             setSelectedMatchKey(eligibleForModal[0]?.key ?? "");
                             setModal({ type: "assign", courtId: court.id });
                           }}
+                          disabled={isPending}
                         >
                           Assign Next
                         </Button>

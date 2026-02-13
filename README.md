@@ -23,7 +23,9 @@ npm install
 cp .env.example .env
 ```
 
-3. Update `DATABASE_URL` and `DIRECT_URL` with your Supabase Postgres values.
+3. Update env values:
+   - `DATABASE_URL` and `DIRECT_URL` with your Supabase Postgres values
+   - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` for Broadcast realtime updates
 
 2. Run the dev server:
 
@@ -51,6 +53,12 @@ npx prisma migrate dev --name init
 
 ```bash
 curl http://localhost:3000/api/health/db
+```
+
+4. Verify broadcast realtime DB wiring:
+
+```bash
+npm run test:realtime:verify
 ```
 
 ## Project Structure

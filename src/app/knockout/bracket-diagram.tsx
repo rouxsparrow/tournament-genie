@@ -8,7 +8,7 @@ type BracketMatch = {
   id: string;
   round: number;
   matchNo: number;
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
   winnerTeamId: string | null;
   homeTeam: MatchTeam;
   awayTeam: MatchTeam;
@@ -44,14 +44,14 @@ function roundHeader(round: number) {
 }
 
 function statusBadge(status: BracketMatch["status"]) {
-  if (status === "COMPLETED" || status === "WALKOVER") {
+  if (status === "COMPLETED") {
     return "bg-emerald-500 text-white";
   }
   return "bg-amber-700 text-amber-100";
 }
 
 function statusText(status: BracketMatch["status"]) {
-  if (status === "COMPLETED" || status === "WALKOVER") return "Completed";
+  if (status === "COMPLETED") return "Completed";
   return "Scheduled";
 }
 
@@ -118,7 +118,7 @@ function MatchBox({
 }) {
   const homeWins = match.winnerTeamId === match.homeTeam.id;
   const awayWins = match.winnerTeamId === match.awayTeam.id;
-  const isFinalized = match.status === "COMPLETED" || match.status === "WALKOVER";
+  const isFinalized = match.status === "COMPLETED";
   const score = scoreSummary(match.games);
 
   function rowClass(isWinner: boolean, finalized: boolean) {

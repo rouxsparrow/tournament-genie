@@ -31,7 +31,7 @@ type MatchGame = {
 
 type MatchItem = {
   id: string;
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
   winnerTeamId: string | null;
   homeTeamId: string | null;
   awayTeamId: string | null;
@@ -96,23 +96,10 @@ export function StandingsClient({
   initialGroupId,
 }: StandingsClientProps) {
   const storageKey = `standings:filters:${categoryCode}`;
-  const [groupId, setGroupId] = useState(() => {
-    if (initialGroupId) return initialGroupId;
-    if (typeof window === "undefined") return "";
-    const stored = window.localStorage.getItem(storageKey);
-    if (!stored) return "";
-    try {
-      const parsed = JSON.parse(stored) as { groupId?: string };
-      return typeof parsed.groupId === "string" ? parsed.groupId : "";
-    } catch {
-      return "";
-    }
-  });
-  const [collapsedMatchesByGroup, setCollapsedMatchesByGroup] = useState<Record<string, boolean>>(() => {
-    const isMobile =
-      typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
-    return Object.fromEntries(groupData.map((entry) => [entry.group.id, isMobile]));
-  });
+  const [groupId, setGroupId] = useState(initialGroupId || "");
+  const [collapsedMatchesByGroup, setCollapsedMatchesByGroup] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(groupData.map((entry) => [entry.group.id, false]))
+  );
 
   useEffect(() => {
     window.localStorage.setItem(storageKey, JSON.stringify({ groupId }));

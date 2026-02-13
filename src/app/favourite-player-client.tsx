@@ -41,7 +41,7 @@ export function FavouritePlayerClient({
       });
       setFavouriteId(playerId);
       router.refresh();
-    } catch (err) {
+    } catch {
       setError("Unable to save favourite player.");
     }
   }

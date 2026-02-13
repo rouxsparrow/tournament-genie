@@ -30,7 +30,7 @@ type Team = {
 
 type CategoryMatch = {
   id: string;
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
   group: { name: string; category: { code: CategoryCode } } | null;
   homeTeam: Team | null;
   awayTeam: Team | null;
@@ -146,8 +146,6 @@ export default async function ScheduleOverviewPage() {
       plannedTotalMatches.set(playerId, (plannedTotalMatches.get(playerId) ?? 0) + 1);
     });
   });
-  const maxPlannedMatches = Math.max(...plannedTotalMatches.values(), 1);
-
   for (let slotIndex = 0; slotIndex < MAX_SLOTS; slotIndex += 1) {
     if (remainingPool.length === 0) break;
     const slotPickedPlayers = new Set<string>();

@@ -4,8 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { loadGlobalGroupRanking, nextPowerOfTwo } from "@/app/knockout/logic";
-import { syncKnockoutPropagation } from "@/app/knockout/sync";
+import { loadGlobalGroupRanking } from "@/app/knockout/logic";
 import { BracketError, generateKnockoutBracketInternal } from "@/app/knockout/bracket-service";
 import { requireAdmin } from "@/lib/auth";
 
@@ -170,13 +169,6 @@ export async function applySecondChanceDrop(formData: FormData) {
     const loser = match.winnerTeamId === match.homeTeamId ? match.awayTeamId : match.homeTeamId;
     losers.push(loser);
   }
-
-  const loserSeeds = await prisma.knockoutSeed.findMany({
-    where: { categoryCode, series: "A", teamId: { in: losers } },
-    orderBy: { seedNo: "asc" },
-  });
-
-  const orderedLosers = loserSeeds.map((seed) => seed.teamId);
 
   const qfMatches = await prisma.knockoutMatch.findMany({
     where: { categoryCode, series: "B", round: 2 },

@@ -60,8 +60,8 @@ export function TeamsTable({ teams }: TeamsTableProps) {
           className="h-9 rounded-md border border-input px-3 text-sm focus:border-ring focus:outline-none"
         >
           <option value="ALL">All categories</option>
-          <option value="MD">Men's Doubles (MD)</option>
-          <option value="WD">Women's Doubles (WD)</option>
+          <option value="MD">Men&apos;s Doubles (MD)</option>
+          <option value="WD">Women&apos;s Doubles (WD)</option>
           <option value="XD">Mixed Doubles (XD)</option>
         </select>
       </div>

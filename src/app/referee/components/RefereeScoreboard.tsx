@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { useGlobalTransition } from "@/components/use-global-transition";
-import { submitRefereeScore } from "@/app/referee/actions";
+import { submitRefereeScore, verifyRefereePasscode } from "@/app/referee/actions";
 import { BestOf3Controls } from "@/app/referee/components/BestOf3Controls";
 import { BottomBar } from "@/app/referee/components/BottomBar";
 import { MatchContextBar } from "@/app/referee/components/MatchContextBar";
@@ -25,7 +24,7 @@ type Team = {
 type GroupMatchItem = {
   id: string;
   stage: "GROUP";
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
   categoryCode: CategoryCode;
   groupId: string;
   groupName: string;
@@ -37,7 +36,7 @@ type GroupMatchItem = {
 type KnockoutMatchItem = {
   id: string;
   stage: "KNOCKOUT";
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
   categoryCode: CategoryCode;
   series: "A" | "B";
   round: number;
@@ -69,7 +68,6 @@ type RefereeScoreboardProps = {
   scoringMode: "SINGLE_GAME_21" | "BEST_OF_3_21";
 };
 
-const categories: CategoryCode[] = ["MD", "WD", "XD"];
 const MAX_SCORE = 30;
 
 function teamLabel(team: Team | null) {
@@ -120,25 +118,53 @@ function shortMatchMeta(match: MatchItem | null) {
 }
 
 export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScoreboardProps) {
-  const [selectedCategory, setSelectedCategory] = useState<CategoryCode>("MD");
   const [stage, setStage] = useState<Stage>("GROUP");
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [selectedSeries, setSelectedSeries] = useState<"ALL" | "A" | "B">("ALL");
   const [selectedCourt, setSelectedCourt] = useState<CourtLabel | "">("");
-  const [selectedMatchId, setSelectedMatchId] = useState(() => {
-    if (typeof window === "undefined") return "";
-    return window.sessionStorage.getItem("referee:selectedMatchId") ?? "";
-  });
+  const [selectedMatchId, setSelectedMatchId] = useState("");
   const [matchStates, setMatchStates] = useState<Record<string, MatchState>>({});
   const [submitMessage, setSubmitMessage] = useState<string | null>(null);
-  const [pending, startTransition] = useGlobalTransition();
+  const [submittedForMatchId, setSubmittedForMatchId] = useState<string | null>(null);
+  const [submittedMatchSnapshot, setSubmittedMatchSnapshot] = useState<MatchItem | null>(null);
+  const [passcodeInput, setPasscodeInput] = useState("");
+  const [passcodeError, setPasscodeError] = useState<string | null>(null);
+  const [sessionPasscode, setSessionPasscode] = useState("");
+  const [pending, startTransition] = useTransition();
 
   const sessionMatchKey = (matchId: string) => `referee:scoresheet:${matchId}`;
-
-  const filteredGroups = useMemo(
-    () => groups.filter((group) => group.categoryCode === selectedCategory),
-    [groups, selectedCategory]
+  const selectedMatchIdFromStorage = useSyncExternalStore(
+    (callback) => {
+      if (typeof window === "undefined") return () => undefined;
+      const handler = () => callback();
+      window.addEventListener("storage", handler);
+      return () => window.removeEventListener("storage", handler);
+    },
+    () => {
+      if (typeof window === "undefined") return "";
+      return window.sessionStorage.getItem("referee:selectedMatchId") ?? "";
+    },
+    () => ""
   );
+  const storedPasscode = useSyncExternalStore(
+    (callback) => {
+      if (typeof window === "undefined") return () => undefined;
+      const handler = () => callback();
+      window.addEventListener("storage", handler);
+      return () => window.removeEventListener("storage", handler);
+    },
+    () => {
+      if (typeof window === "undefined") return "";
+      return window.localStorage.getItem("referee:passcode") ?? "";
+    },
+    () => ""
+  );
+  const validStoredPasscode = /^\d{4}$/.test(storedPasscode) ? storedPasscode : "";
+  const activePasscode = sessionPasscode || validStoredPasscode;
+  const passcodeVerified = !!activePasscode;
+  const activeSelectedMatchId = selectedMatchId || selectedMatchIdFromStorage;
+
+  const filteredGroups = groups;
 
   const effectiveGroupId = useMemo(() => {
     if (!selectedGroupId) return "";
@@ -149,7 +175,7 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
 
   const availableMatches = useMemo(() => {
     let filtered = matches.filter(
-      (match) => match.categoryCode === selectedCategory && match.stage === stage
+      (match) => match.stage === stage
     );
     if (stage === "GROUP" && effectiveGroupId) {
       filtered = filtered.filter(
@@ -157,28 +183,34 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
       );
     }
     if (stage === "KNOCKOUT") {
-      filtered = filtered.filter((match) =>
-        match.stage === "KNOCKOUT" &&
-        (selectedSeries === "ALL" ? true : match.series === selectedSeries)
+      filtered = filtered.filter(
+        (match) =>
+          match.stage === "KNOCKOUT" &&
+          (selectedSeries === "ALL" ? true : match.series === selectedSeries)
       );
     }
     if (selectedCourt) {
       filtered = filtered.filter((match) => match.court === selectedCourt);
     }
     return filtered;
-  }, [effectiveGroupId, matches, selectedCategory, selectedSeries, selectedCourt, stage]);
+  }, [effectiveGroupId, matches, selectedSeries, selectedCourt, stage]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (selectedMatchId) {
       window.sessionStorage.setItem("referee:selectedMatchId", selectedMatchId);
+      return;
     }
+    window.sessionStorage.removeItem("referee:selectedMatchId");
   }, [selectedMatchId]);
 
   const selectedMatch = useMemo(
-    () => availableMatches.find((match) => match.id === selectedMatchId) ?? null,
-    [availableMatches, selectedMatchId]
+    () => availableMatches.find((match) => match.id === activeSelectedMatchId) ?? null,
+    [activeSelectedMatchId, availableMatches]
   );
+  const displayMatch =
+    selectedMatch ??
+    (submittedForMatchId === activeSelectedMatchId ? submittedMatchSnapshot : null);
 
   const loadStoredState = (matchId: string): MatchState | null => {
     if (typeof window === "undefined") return null;
@@ -191,28 +223,31 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
     }
   };
 
-  const matchState = selectedMatch
-    ? matchStates[selectedMatch.id] ?? loadStoredState(selectedMatch.id) ?? createDefaultState()
+  const matchState = displayMatch
+    ? matchStates[displayMatch.id] ?? loadStoredState(displayMatch.id) ?? createDefaultState()
     : null;
 
   const isFinal =
-    selectedMatch?.stage === "KNOCKOUT" &&
-    selectedMatch.round === 4 &&
-    selectedMatch.matchNo === 1;
+    displayMatch?.stage === "KNOCKOUT" &&
+    displayMatch.round === 4 &&
+    displayMatch.matchNo === 1;
 
   const requiresBestOf3 =
     scoringMode === "BEST_OF_3_21" ||
-    (isFinal && selectedMatch?.stage === "KNOCKOUT" && selectedMatch.isBestOf3);
+    (isFinal && displayMatch?.stage === "KNOCKOUT" && displayMatch.isBestOf3);
 
   const bestOf3Enabled = requiresBestOf3 || (matchState?.bestOf3Enabled ?? false);
   const activeGame = bestOf3Enabled ? matchState?.currentGame ?? 1 : 1;
   const activeScore = matchState?.gameScores[activeGame] ?? { home: 0, away: 0 };
   const locked = matchState?.locked ?? false;
   const controlsDisabled = !selectedMatch || locked || pending;
+  const actionsHidden = submittedForMatchId === activeSelectedMatchId && !!displayMatch;
 
   const matchOptions = availableMatches.map((match) => ({
     id: match.id,
-    label: `${teamLabel(match.homeTeam)} vs ${teamLabel(match.awayTeam)}${match.court ? ` (${match.court})` : ""}`,
+    label: `${teamLabel(match.homeTeam)} vs.\n${teamLabel(match.awayTeam)}${
+      match.court ? ` (${match.court})` : ""
+    }`,
   }));
 
   const updateMatchState = (id: string, updater: (state: MatchState) => MatchState) => {
@@ -229,12 +264,8 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
   const clearSelection = () => {
     setSelectedMatchId("");
     setSubmitMessage(null);
-  };
-
-  const handleCategoryChange = (value: CategoryCode) => {
-    setSelectedCategory(value);
-    setSelectedGroupId("");
-    clearSelection();
+    setSubmittedForMatchId(null);
+    setSubmittedMatchSnapshot(null);
   };
 
   const handleStageChange = (value: Stage) => {
@@ -260,6 +291,8 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
   const handleMatchChange = (value: string) => {
     setSelectedMatchId(value);
     setSubmitMessage(null);
+    setSubmittedForMatchId(null);
+    setSubmittedMatchSnapshot(null);
   };
 
   const adjustScore = (side: "home" | "away", delta: number) => {
@@ -298,20 +331,6 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
     });
   };
 
-  const resetScore = () => {
-    if (!selectedMatch) return;
-    updateMatchState(selectedMatch.id, (state) => {
-      const targetGame = bestOf3Enabled ? state.currentGame : 1;
-      return {
-        ...state,
-        gameScores: {
-          ...state.gameScores,
-          [targetGame]: { home: 0, away: 0 },
-        },
-      };
-    });
-  };
-
   const toggleLock = () => {
     if (!selectedMatch) return;
     updateMatchState(selectedMatch.id, (state) => ({
@@ -343,6 +362,7 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
       const result = await submitRefereeScore({
         stage: selectedMatch.stage,
         matchId: selectedMatch.id,
+        passcode: activePasscode,
         lockState: locked,
         bestOf3Enabled,
         scores: {
@@ -367,20 +387,80 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
 
       if (result?.error) {
         setSubmitMessage(result.error);
+        if (result.error.toLowerCase().includes("passcode")) {
+          setSessionPasscode("");
+          if (typeof window !== "undefined") {
+            window.localStorage.removeItem("referee:passcode");
+          }
+          setPasscodeError("Passcode invalid. Enter again.");
+        }
         return;
       }
 
-      setSubmitMessage("Submitted.");
-      updateMatchState(selectedMatch.id, (state) => ({ ...state, locked: false }));
+      setSubmitMessage("Submitted");
+      setSubmittedForMatchId(selectedMatch.id);
+      setSubmittedMatchSnapshot(selectedMatch);
     });
   };
+
+  const submitPasscode = () => {
+    const normalized = passcodeInput.replace(/\D/g, "").slice(0, 4);
+    if (!/^\d{4}$/.test(normalized)) {
+      setPasscodeError("Enter a valid 4 digit code.");
+      return;
+    }
+    startTransition(async () => {
+      const result = await verifyRefereePasscode(normalized);
+      if (result?.error) {
+        setPasscodeError(result.error);
+        return;
+      }
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("referee:passcode", normalized);
+      }
+      setSessionPasscode(normalized);
+      setPasscodeInput("");
+      setPasscodeError(null);
+    });
+  };
+
+  if (!passcodeVerified) {
+    return (
+      <div className="mx-auto max-w-sm rounded-2xl border border-border bg-card p-6">
+        <h1 className="text-xl font-semibold text-foreground">Referee Access</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Enter the 4 digit referee passcode.
+        </p>
+        <input
+          type="password"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          value={passcodeInput}
+          onChange={(event) => {
+            setPasscodeInput(event.target.value.replace(/\D/g, "").slice(0, 4));
+            setPasscodeError(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              submitPasscode();
+            }
+          }}
+          className="mt-4 h-11 w-full rounded-md border border-input bg-card px-3 text-center text-lg tracking-[0.3em] text-foreground focus:border-ring focus:outline-none"
+          maxLength={4}
+          aria-label="Referee passcode"
+        />
+        {passcodeError ? <p className="mt-2 text-sm text-red-600">{passcodeError}</p> : null}
+        <Button className="mt-4 w-full" onClick={submitPasscode}>
+          Enter
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <MatchContextBar
-        categories={categories}
-        selectedCategory={selectedCategory}
-        onCategoryChange={handleCategoryChange}
         stage={stage}
         onStageChange={handleStageChange}
         groups={filteredGroups}
@@ -391,7 +471,7 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
         selectedCourt={selectedCourt}
         onCourtChange={handleCourtChange}
         matches={matchOptions}
-        selectedMatchId={selectedMatchId}
+        selectedMatchId={activeSelectedMatchId}
         onMatchChange={handleMatchChange}
       />
 
@@ -399,15 +479,19 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="text-sm text-muted-foreground">Current Match</p>
-            <p className="text-lg font-semibold text-foreground break-words">
+            <p className="text-lg font-semibold break-words text-foreground">
               {selectedMatch
                 ? `${teamLabel(selectedMatch.homeTeam)} vs ${teamLabel(selectedMatch.awayTeam)}`
+                : displayMatch
+                  ? `${teamLabel(displayMatch.homeTeam)} vs ${teamLabel(displayMatch.awayTeam)}`
                 : "Select match"}
             </p>
-            <p className="text-xs text-muted-foreground">
-              {shortMatchMeta(selectedMatch)}
-            </p>
-            {selectedMatch?.court ? <p className="text-xs text-muted-foreground">Court {selectedMatch.court}</p> : null}
+            <p className="text-xs text-muted-foreground">{shortMatchMeta(displayMatch)}</p>
+            {(selectedMatch?.court ?? displayMatch?.court) ? (
+              <p className="text-xs text-muted-foreground">
+                Court {selectedMatch?.court ?? displayMatch?.court}
+              </p>
+            ) : null}
           </div>
           {isFinal || bestOf3Enabled ? (
             <BestOf3Controls
@@ -447,7 +531,7 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                value={selectedMatch ? String(activeScore.home) : ""}
+                value={displayMatch ? String(activeScore.home) : ""}
                 onChange={(event) => setScore("home", event.target.value)}
                 disabled={controlsDisabled}
                 className="h-full w-full bg-transparent text-center text-4xl font-semibold text-white outline-none"
@@ -467,7 +551,7 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                value={selectedMatch ? String(activeScore.away) : ""}
+                value={displayMatch ? String(activeScore.away) : ""}
                 onChange={(event) => setScore("away", event.target.value)}
                 disabled={controlsDisabled}
                 className="h-full w-full bg-transparent text-center text-4xl font-semibold text-white outline-none"
@@ -496,17 +580,17 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
           </Button>
 
           <div className="col-start-1 row-start-4 text-center text-sm text-muted-foreground">
-            {selectedMatch ? teamLabel(selectedMatch.homeTeam) : "Home team"}
+            {displayMatch ? teamLabel(displayMatch.homeTeam) : "Home team"}
           </div>
           <div className="col-start-3 row-start-4 text-center text-sm text-muted-foreground">
-            {selectedMatch ? teamLabel(selectedMatch.awayTeam) : "Away team"}
+            {displayMatch ? teamLabel(displayMatch.awayTeam) : "Away team"}
           </div>
         </div>
 
-        <p className="mt-4 text-center text-xs text-muted-foreground">Score range: 0 to {MAX_SCORE}</p>
-
-        {!selectedMatch ? (
-          <p className="mt-6 text-center text-sm text-muted-foreground">Select a match to start scoring.</p>
+        {!displayMatch ? (
+          <p className="mt-6 text-center text-sm text-muted-foreground">
+            Select a match to start scoring.
+          </p>
         ) : null}
 
         {submitMessage ? (
@@ -517,11 +601,11 @@ export function RefereeScoreboard({ matches, groups, scoringMode }: RefereeScore
       <BottomBar
         locked={locked}
         onToggleLock={toggleLock}
-        onReset={resetScore}
         onSubmit={submitScore}
         submitDisabled={!selectedMatch || !locked || pending}
         isSubmitting={pending}
         disabled={!selectedMatch || pending}
+        hidden={actionsHidden}
       />
     </div>
   );

@@ -33,7 +33,7 @@ type KnockoutMatchItem = {
   series: "A" | "B";
   round: number;
   matchNo: number;
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
   winnerTeamId: string | null;
   isBestOf3: boolean;
   games: MatchGame[];
@@ -141,7 +141,7 @@ export function KnockoutMatchesSection({
     if (status !== "ALL") {
       filtered = filtered.filter((match) =>
         status === "COMPLETED"
-          ? match.status === "COMPLETED" || match.status === "WALKOVER"
+          ? match.status === "COMPLETED"
           : match.status === "SCHEDULED"
       );
     }
@@ -155,14 +155,14 @@ export function KnockoutMatchesSection({
   }, [categoryFilter, items, round, search, series, status]);
 
   const statusBadge = (status: KnockoutMatchItem["status"]) => {
-    if (status === "COMPLETED" || status === "WALKOVER") {
+    if (status === "COMPLETED") {
       return "bg-emerald-500 text-white";
     }
     return "bg-amber-700 text-amber-100";
   };
 
   const statusText = (status: KnockoutMatchItem["status"]) => {
-    if (status === "COMPLETED" || status === "WALKOVER") return "Completed";
+    if (status === "COMPLETED") return "Completed";
     return "Scheduled";
   };
 

@@ -26,7 +26,7 @@ type GroupForStandings = {
   }[];
   matches: {
     id: string;
-    status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+    status: "SCHEDULED" | "COMPLETED";
     winnerTeamId: string | null;
     homeTeamId: string | null;
     awayTeamId: string | null;
@@ -126,7 +126,7 @@ async function resolveStandingsForGroup(group: GroupForStandings) {
   }
 
   const completedMatches = group.matches.filter(
-    (match) => match.status === "COMPLETED" || match.status === "WALKOVER"
+    (match) => match.status === "COMPLETED"
   );
 
   for (const match of completedMatches) {

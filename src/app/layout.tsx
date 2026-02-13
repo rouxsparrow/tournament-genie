@@ -6,6 +6,7 @@ import "./globals.css";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { GlobalLoadingProvider } from "@/components/global-loading-provider";
 import { GlobalLoadingIndicator } from "@/components/loading-indicator";
+import { NavigationLoadingBridge } from "@/components/navigation-loading-bridge";
 import { clearSession, getRoleFromRequest } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import logo from "./logo.png";
@@ -58,6 +59,7 @@ export default async function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-background antialiased`}
       >
         <GlobalLoadingProvider>
+          <NavigationLoadingBridge />
           <GlobalLoadingIndicator />
           <header className="border-b border-border bg-card">
             <div className="mx-auto w-full max-w-6xl px-6 py-4">

@@ -1,19 +1,27 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import {
+  CalendarRange,
+  FolderKanban,
+  Radio,
+  ShieldCheck,
+  Trophy,
+  Users,
+  Wrench,
+} from "lucide-react";
 import { getRoleFromRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Admin" };
 
 const ADMIN_LINKS = [
-  { href: "/players", label: "Players" },
-  { href: "/teams", label: "Teams" },
-  { href: "/groups", label: "Groups" },
-  { href: "/matches", label: "Matches" },
-  { href: "/knockout", label: "Knockout" },
-  { href: "/schedule", label: "Schedule" },
-  { href: "/schedule-overview", label: "Schedule Overview" },
-  { href: "/presenting", label: "Live Matches" },
+  { href: "/players", label: "Players", icon: Users },
+  { href: "/teams", label: "Teams", icon: ShieldCheck },
+  { href: "/groups", label: "Groups", icon: FolderKanban },
+  { href: "/knockout", label: "Knockout", icon: Trophy },
+  { href: "/broadcast", label: "Broadcast", icon: Radio },
+  { href: "/utilities", label: "Utilities", icon: Wrench },
+  { href: "/schedule-overview", label: "Schedule Overview", icon: CalendarRange },
 ];
 
 export default async function AdminPage() {
@@ -36,9 +44,12 @@ export default async function AdminPage() {
           <Link
             key={item.href}
             href={item.href}
-            className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm font-medium text-foreground hover:bg-muted"
+            className="group rounded-xl border border-border bg-muted/30 p-4 text-foreground transition hover:bg-muted/70"
           >
-            {item.label}
+            <div className="flex items-center gap-3">
+              <item.icon className="h-5 w-5 text-muted-foreground transition group-hover:text-foreground" />
+              <span className="text-sm font-medium leading-tight">{item.label}</span>
+            </div>
           </Link>
         ))}
       </div>

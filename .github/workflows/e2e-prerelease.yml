@@ -1,0 +1,60 @@
+name: E2E Pre-release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  prerelease:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.E2E_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.E2E_DIRECT_URL }}
+      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      REFEREE_CODE: ${{ secrets.REFEREE_CODE }}
+      E2E_REFEREE_CODE: ${{ secrets.REFEREE_CODE }}
+      E2E_DB_GUARD: ${{ vars.E2E_DB_GUARD }}
+      E2E_PORT: "4173"
+      E2E_RETRIES: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required E2E secrets
+        run: |
+          test -n "$DATABASE_URL" || (echo "Missing E2E_DATABASE_URL" && exit 1)
+          test -n "$E2E_DB_GUARD" || (echo "Missing E2E_DB_GUARD repo var" && exit 1)
+          test -n "$AUTH_SECRET" || (echo "Missing AUTH_SECRET" && exit 1)
+          test -n "$ADMIN_PASSWORD" || (echo "Missing ADMIN_PASSWORD" && exit 1)
+          test -n "$REFEREE_CODE" || (echo "Missing REFEREE_CODE" && exit 1)
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install chromium
+
+      - name: Run nightly suites
+        run: npm run test:e2e:nightly
+
+      - name: Run DB integrity checks
+        run: |
+          npm run test:schedule:integrity
+          npm run test:schedule:stress
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-prerelease-artifacts
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
