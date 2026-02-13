@@ -172,7 +172,7 @@ export async function getGroupProgress() {
     prisma.match.count({
       where: {
         stage: "GROUP",
-        status: { in: ["COMPLETED", "WALKOVER"] },
+        status: { in: ["COMPLETED"] },
         homeTeamId: { not: null },
         awayTeamId: { not: null },
       },
@@ -303,6 +303,151 @@ export async function ensureActiveGroupMatchId() {
   return match.id;
 }
 
+export async function getActiveGroupAssignmentSnapshot() {
+  const assignment = await prisma.courtAssignment.findFirst({
+    where: {
+      stage: "GROUP",
+      status: "ACTIVE",
+      matchType: "GROUP",
+      groupMatchId: { not: null },
+    },
+    orderBy: { assignedAt: "asc" },
+    include: {
+      groupMatch: {
+        select: {
+          id: true,
+          homeTeam: { select: { name: true } },
+          awayTeam: { select: { name: true } },
+        },
+      },
+    },
+  });
+
+  if (!assignment?.groupMatch) return null;
+  return {
+    courtId: assignment.courtId,
+    matchId: assignment.groupMatch.id,
+    homeTeamName: assignment.groupMatch.homeTeam?.name ?? "TBD",
+    awayTeamName: assignment.groupMatch.awayTeam?.name ?? "TBD",
+  };
+}
+
+export async function getActiveKnockoutMatchId() {
+  const assignment = await prisma.courtAssignment.findFirst({
+    where: {
+      stage: "KNOCKOUT",
+      status: "ACTIVE",
+      matchType: "KNOCKOUT",
+      knockoutMatchId: { not: null },
+    },
+    orderBy: { assignedAt: "asc" },
+    select: { knockoutMatchId: true },
+  });
+  return assignment?.knockoutMatchId ?? null;
+}
+
+export async function ensureActiveKnockoutMatchId() {
+  const existing = await getActiveKnockoutMatchId();
+  if (existing) return existing;
+
+  const activeIds = await prisma.courtAssignment.findMany({
+    where: {
+      stage: "KNOCKOUT",
+      status: "ACTIVE",
+      matchType: "KNOCKOUT",
+      knockoutMatchId: { not: null },
+    },
+    select: { knockoutMatchId: true },
+  });
+  const occupiedMatchIds = activeIds
+    .map((entry) => entry.knockoutMatchId)
+    .filter(Boolean) as string[];
+
+  const match = await prisma.knockoutMatch.findFirst({
+    where: {
+      status: "SCHEDULED",
+      isPublished: true,
+      homeTeamId: { not: null },
+      awayTeamId: { not: null },
+      ...(occupiedMatchIds.length > 0 ? { id: { notIn: occupiedMatchIds } } : {}),
+    },
+    orderBy: [{ round: "asc" }, { matchNo: "asc" }, { createdAt: "asc" }],
+    select: { id: true },
+  });
+  if (!match) return null;
+
+  let court = await prisma.court.findFirst({
+    where: {
+      assignments: {
+        none: {
+          stage: "KNOCKOUT",
+          status: "ACTIVE",
+        },
+      },
+    },
+    orderBy: { id: "asc" },
+    select: { id: true },
+  });
+
+  if (!court) {
+    const active = await prisma.courtAssignment.findFirst({
+      where: {
+        stage: "KNOCKOUT",
+        status: "ACTIVE",
+      },
+      orderBy: { assignedAt: "asc" },
+      select: { id: true, courtId: true },
+    });
+    if (!active) return null;
+    await prisma.courtAssignment.update({
+      where: { id: active.id },
+      data: { status: "CANCELED", clearedAt: new Date() },
+    });
+    court = { id: active.courtId };
+  }
+
+  await prisma.courtAssignment.create({
+    data: {
+      courtId: court.id,
+      stage: "KNOCKOUT",
+      matchType: "KNOCKOUT",
+      knockoutMatchId: match.id,
+      status: "ACTIVE",
+    },
+  });
+
+  return match.id;
+}
+
+export async function getActiveKnockoutAssignmentSnapshot() {
+  const assignment = await prisma.courtAssignment.findFirst({
+    where: {
+      stage: "KNOCKOUT",
+      status: "ACTIVE",
+      matchType: "KNOCKOUT",
+      knockoutMatchId: { not: null },
+    },
+    orderBy: { assignedAt: "asc" },
+    include: {
+      knockoutMatch: {
+        select: {
+          id: true,
+          homeTeam: { select: { name: true } },
+          awayTeam: { select: { name: true } },
+        },
+      },
+    },
+  });
+
+  if (!assignment?.knockoutMatch) return null;
+  return {
+    courtId: assignment.courtId,
+    matchId: assignment.knockoutMatch.id,
+    homeTeamName: assignment.knockoutMatch.homeTeam?.name ?? "TBD",
+    awayTeamName: assignment.knockoutMatch.awayTeam?.name ?? "TBD",
+  };
+}
+
 async function getGlobalRankingEntries(categoryCode: "MD" | "WD" | "XD") {
   const groups = await prisma.group.findMany({
     where: { category: { code: categoryCode } },
@@ -338,7 +483,7 @@ async function getGlobalRankingEntries(categoryCode: "MD" | "WD" | "XD") {
     }
 
     const completedMatches = group.matches.filter(
-      (match) => match.status === "COMPLETED" || match.status === "WALKOVER"
+      (match) => match.status === "COMPLETED"
     );
 
     for (const match of completedMatches) {

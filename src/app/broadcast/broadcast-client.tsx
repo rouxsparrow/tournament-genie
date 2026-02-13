@@ -1,14 +1,31 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Badge } from "@/components/ui/badge";
 import { getPresentingState } from "@/app/schedule/actions";
 import { getRealtimeBrowserClient } from "@/lib/supabase/realtime-client";
+import { REALTIME_CHANNELS, REALTIME_EVENTS } from "@/lib/supabase/realtime-events";
 
 type ScheduleState = Awaited<ReturnType<typeof getPresentingState>>;
 type ScheduleStage = "GROUP" | "KNOCKOUT";
+type BroadcastSubscriptionStatus =
+  | "CONNECTING"
+  | "SUBSCRIBED"
+  | "CHANNEL_ERROR"
+  | "TIMED_OUT"
+  | "CLOSED"
+  | "UNAVAILABLE";
+type RealtimeDebugState = {
+  channel: string;
+  event: string;
+  source: string | null;
+  reason: string | null;
+  changeType: string | null;
+  receivedAt: string;
+  eventCount: number;
+} | null;
 
 const COURT_LABELS: Record<string, string> = {
   C1: "P5",
@@ -53,17 +70,41 @@ function formatPlayingMeta(
   return `${playing.categoryCode} • ${playing.detail}`;
 }
 
+function getStatusLabel(status: BroadcastSubscriptionStatus) {
+  if (status === "SUBSCRIBED") return "SUBSCRIBED";
+  if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+    return "ERROR";
+  }
+  if (status === "UNAVAILABLE") return "ERROR";
+  return "CONNECTING";
+}
+
+function getStatusBadgeClass(status: BroadcastSubscriptionStatus) {
+  if (status === "SUBSCRIBED") return "border-emerald-600 text-emerald-700";
+  if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+    return "border-red-600 text-red-700";
+  }
+  if (status === "UNAVAILABLE") return "border-red-600 text-red-700";
+  return "border-amber-600 text-amber-700";
+}
+
 export function BroadcastClient({ state }: { state: ScheduleState }) {
   const router = useRouter();
   const stage = state.stage as ScheduleStage;
   const broadcastDebug = process.env.NEXT_PUBLIC_SCHEDULE_DEBUG === "1";
+  const hasRealtimeEnv =
+    Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL) &&
+    Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  const [subscriptionStatus, setSubscriptionStatus] =
+    useState<BroadcastSubscriptionStatus>("CONNECTING");
+  const [lastRealtimeEvent, setLastRealtimeEvent] = useState<RealtimeDebugState>(null);
 
   useEffect(() => {
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     let eventCount = 0;
     const mode = "realtime" as const;
     let disposed = false;
-    let activeChannel: RealtimeChannel | null = null;
+    const activeChannels: RealtimeChannel[] = [];
 
     const log = (
       message: string,
@@ -146,30 +187,65 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
       }
       if (disposed) return;
 
-      const channel = supabase.channel(`broadcast-live-${stage.toLowerCase()}`);
-      activeChannel = channel;
+      const refreshChannel = supabase.channel(REALTIME_CHANNELS.broadcastRefresh[stage]);
+      activeChannels.push(refreshChannel);
+      refreshChannel.on(
+        "broadcast",
+        { event: REALTIME_EVENTS.BROADCAST_REFRESH_REQUIRED },
+        (payload) => {
+          eventCount += 1;
+          const source =
+            typeof payload.payload?.source === "string" ? payload.payload.source : null;
+          const reason =
+            typeof payload.payload?.reason === "string" ? payload.payload.reason : null;
+          const changeType =
+            typeof payload.payload?.changeType === "string"
+              ? payload.payload.changeType
+              : null;
+          setLastRealtimeEvent({
+            channel: REALTIME_CHANNELS.broadcastRefresh[stage],
+            event: payload.event,
+            source,
+            reason,
+            changeType,
+            receivedAt: new Date().toISOString(),
+            eventCount,
+          });
+          log("realtime event", {
+            eventType: payload.event,
+            channel: REALTIME_CHANNELS.broadcastRefresh[stage],
+            source,
+            reason,
+            changeType,
+            eventCount,
+          });
+          scheduleRefresh();
+        }
+      );
 
-      channel.on("broadcast", { event: "schedule_update" }, (payload) => {
-        eventCount += 1;
-        log("realtime event", {
-          eventType: payload.event,
-          eventCount,
-        });
-        scheduleRefresh();
-      });
-
-      channel.subscribe((status: string, err?: Error) => {
+      refreshChannel.subscribe((status: string, err?: Error) => {
+        const nextStatus = (
+          status === "SUBSCRIBED" ||
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT" ||
+          status === "CLOSED"
+            ? status
+            : "CONNECTING"
+        ) as BroadcastSubscriptionStatus;
+        setSubscriptionStatus(nextStatus);
         log("channel status", {
           status,
+          channel: REALTIME_CHANNELS.broadcastRefresh[stage],
           error: err?.message ?? null,
         });
         if (status === "SUBSCRIBED") {
-          log("realtime connected");
+          log("realtime connected", { channel: REALTIME_CHANNELS.broadcastRefresh[stage] });
           return;
         }
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           log("realtime unavailable", {
             status,
+            channel: REALTIME_CHANNELS.broadcastRefresh[stage],
             error: err?.message ?? null,
           });
         }
@@ -182,16 +258,53 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
       disposed = true;
       log("cleanup", { eventCount });
       if (refreshTimer) clearTimeout(refreshTimer);
-      if (activeChannel) {
-        void supabase.removeChannel(activeChannel);
-      }
+      activeChannels.forEach((channel) => {
+        void supabase.removeChannel(channel);
+      });
     };
   }, [broadcastDebug, router, stage]);
 
   const upcoming = state.upcomingMatches;
+  const effectiveSubscriptionStatus: BroadcastSubscriptionStatus = hasRealtimeEnv
+    ? subscriptionStatus
+    : "UNAVAILABLE";
 
   return (
     <div className="space-y-6">
+      {broadcastDebug ? (
+        <div className="flex items-center justify-end gap-2 text-xs">
+          <span className="font-mono text-muted-foreground">
+            {REALTIME_CHANNELS.broadcastRefresh[stage]}
+          </span>
+          <Badge variant="outline" className={getStatusBadgeClass(effectiveSubscriptionStatus)}>
+            {getStatusLabel(effectiveSubscriptionStatus)}
+          </Badge>
+        </div>
+      ) : null}
+      {broadcastDebug ? (
+        <div className="rounded-lg border border-amber-400/60 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          <div className="font-semibold">Realtime Debug</div>
+          <div className="mt-1">
+            Last event:{" "}
+            {lastRealtimeEvent
+              ? `${lastRealtimeEvent.event} @ ${lastRealtimeEvent.channel}`
+              : "none yet"}
+          </div>
+          <div>
+            Source: {lastRealtimeEvent?.source ?? "-"} • Count:{" "}
+            {lastRealtimeEvent?.eventCount ?? 0}
+          </div>
+          <div>Reason: {lastRealtimeEvent?.reason ?? "-"}</div>
+          <div>Change: {lastRealtimeEvent?.changeType ?? "-"}</div>
+          <div>
+            Received:{" "}
+            {lastRealtimeEvent
+              ? new Date(lastRealtimeEvent.receivedAt).toLocaleTimeString()
+              : "-"}
+          </div>
+        </div>
+      ) : null}
+
       {stage === "KNOCKOUT" && state.matchPoolCount === 0 ? (
         <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
           No knockout matches available. Generate brackets first.
@@ -262,11 +375,6 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
                       {formatMetaLine(match)}
                     </div>
                   </div>
-                  {match.isForced ? (
-                    <Badge variant="outline" className="border-red-600 text-red-600">
-                      Forced
-                    </Badge>
-                  ) : null}
                 </div>
                 <div className="mt-2 text-sm font-semibold text-foreground">
                   {match.teams.homeName}

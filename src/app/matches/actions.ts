@@ -6,12 +6,19 @@ import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
+import { getScheduleState } from "@/app/schedule/actions";
 import { requireAdmin } from "@/lib/auth";
 import {
   clearGroupStageMatchesForCategory,
   generateGroupStageMatchesForCategory,
   publishKnockoutMatchesForCategory,
 } from "@/lib/match-management";
+import {
+  getBroadcastViewChangeType,
+  getBroadcastViewSignature,
+} from "@/lib/schedule/broadcast-view-signature";
+import { publishBroadcastRefreshEvent } from "@/lib/supabase/broadcast-refresh-publisher";
+import { publishScheduleCompletionEvent } from "@/lib/supabase/schedule-realtime-publisher";
 
 const categorySchema = z.enum(["MD", "WD", "XD"]);
 const pageCategorySchema = z.enum(["ALL", "MD", "WD", "XD"]);
@@ -51,6 +58,63 @@ function parseNumber(value: FormDataEntryValue | null) {
   if (value === null || value === "") return undefined;
   const parsed = Number.parseInt(String(value), 10);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+type CompletionRealtimeParams = {
+  stage: "GROUP" | "KNOCKOUT";
+  source: "matches-score-save" | "referee-score-submit";
+  matchType: "GROUP" | "KNOCKOUT";
+  matchId: string;
+  completedAt: string;
+};
+
+async function reconcileScheduleAndBroadcastCompletion(
+  params: CompletionRealtimeParams
+) {
+  const before = await getBroadcastViewSignature(params.stage);
+
+  try {
+    await getScheduleState({ stage: params.stage }, { mode: "presenting" });
+  } catch (error) {
+    console.error("[schedule][completion] reconcile failed", {
+      stage: params.stage,
+      matchType: params.matchType,
+      matchId: params.matchId,
+      source: params.source,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  await publishScheduleCompletionEvent({
+    stage: params.stage,
+    source: params.source,
+    matchType: params.matchType,
+    matchId: params.matchId,
+    completedAt: params.completedAt,
+  });
+
+  const after = await getBroadcastViewSignature(params.stage);
+  const changeType = getBroadcastViewChangeType(before, after);
+  if (!changeType) {
+    return;
+  }
+
+  const broadcastResult = await publishBroadcastRefreshEvent({
+    stage: params.stage,
+    source: params.source,
+    reason: "view-change",
+    changeType,
+  });
+  if (!broadcastResult.ok) {
+    console.error("[broadcast][completion] publish failed", {
+      stage: params.stage,
+      matchType: params.matchType,
+      matchId: params.matchId,
+      source: params.source,
+      error: broadcastResult.error,
+      response: broadcastResult.response ?? null,
+    });
+  }
 }
 
 async function getScoringMode() {
@@ -907,6 +971,7 @@ async function upsertMatchScoreInternal(formData: FormData): Promise<ScoreUpsert
     }
   }
 
+  const completedAt = new Date();
   await prisma.$transaction([
     prisma.gameScore.deleteMany({ where: { matchId: match.id } }),
     prisma.gameScore.createMany({
@@ -917,11 +982,20 @@ async function upsertMatchScoreInternal(formData: FormData): Promise<ScoreUpsert
       data: {
         status: "COMPLETED",
         winnerTeamId,
-        completedAt: new Date(),
+        completedAt,
       },
     }),
   ]);
 
+  await reconcileScheduleAndBroadcastCompletion({
+    stage: "GROUP",
+    source: refereeAuthorized ? "referee-score-submit" : "matches-score-save",
+    matchType: "GROUP",
+    matchId: match.id,
+    completedAt: completedAt.toISOString(),
+  });
+
+  revalidatePath("/schedule");
   revalidatePath("/matches");
   revalidatePath("/standings");
   if (noRedirect) {
@@ -982,6 +1056,7 @@ export async function undoMatchResult(formData: FormData) {
   const redirectOptions = readMatchFilterRedirectOptions(formData);
 
   await assertGroupStageUnlocked(match.group.category.code);
+  const before = await getBroadcastViewSignature("GROUP");
 
   await prisma.$transaction([
     prisma.gameScore.deleteMany({ where: { matchId: match.id } }),
@@ -994,6 +1069,27 @@ export async function undoMatchResult(formData: FormData) {
       },
     }),
   ]);
+
+  const after = await getBroadcastViewSignature("GROUP");
+  const changeType = getBroadcastViewChangeType(before, after);
+  if (changeType) {
+    const broadcastResult = await publishBroadcastRefreshEvent({
+      stage: "GROUP",
+      source: "matches-score-save",
+      reason: "view-change",
+      changeType,
+    });
+    if (!broadcastResult.ok) {
+      console.error("[broadcast][undo] publish failed", {
+        stage: "GROUP",
+        matchType: "GROUP",
+        matchId: match.id,
+        source: "matches-score-save",
+        error: broadcastResult.error,
+        response: broadcastResult.response ?? null,
+      });
+    }
+  }
 
   revalidatePath("/matches");
   redirect(buildMatchesRedirect(match.group.category.code, redirectOptions));
@@ -1086,7 +1182,8 @@ export async function generateMatchesKnockout(formData: FormData) {
 }
 
 export async function upsertKnockoutMatchScore(formData: FormData) {
-  if (!hasValidRefereePasscode(formData)) {
+  const refereeAuthorized = hasValidRefereePasscode(formData);
+  if (!refereeAuthorized) {
     await requireAdmin({ onFail: "redirect" });
   }
   const parsed = scoreSchema.safeParse({
@@ -1211,6 +1308,7 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
     }
   }
 
+  const completedAt = new Date();
   await prisma.$transaction(async (tx) => {
     await tx.knockoutGameScore.deleteMany({ where: { knockoutMatchId: match.id } });
     await tx.knockoutGameScore.createMany({
@@ -1221,7 +1319,7 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
       data: {
         status: "COMPLETED",
         winnerTeamId,
-        completedAt: new Date(),
+        completedAt,
       },
     });
     if (winnerTeamId) {
@@ -1231,6 +1329,15 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
     }
   });
 
+  await reconcileScheduleAndBroadcastCompletion({
+    stage: "KNOCKOUT",
+    source: refereeAuthorized ? "referee-score-submit" : "matches-score-save",
+    matchType: "KNOCKOUT",
+    matchId: match.id,
+    completedAt: completedAt.toISOString(),
+  });
+
+  revalidatePath("/schedule");
   revalidatePath("/matches");
   revalidatePath("/knockout");
   return { ok: true };
@@ -1250,6 +1357,7 @@ export async function undoKnockoutMatchResult(formData: FormData) {
   if (!match) {
     return { error: "Match not found." };
   }
+  const before = await getBroadcastViewSignature("KNOCKOUT");
 
   await prisma.$transaction(async (tx) => {
     if (match.winnerTeamId) {
@@ -1267,6 +1375,27 @@ export async function undoKnockoutMatchResult(formData: FormData) {
       },
     });
   });
+
+  const after = await getBroadcastViewSignature("KNOCKOUT");
+  const changeType = getBroadcastViewChangeType(before, after);
+  if (changeType) {
+    const broadcastResult = await publishBroadcastRefreshEvent({
+      stage: "KNOCKOUT",
+      source: "matches-score-save",
+      reason: "view-change",
+      changeType,
+    });
+    if (!broadcastResult.ok) {
+      console.error("[broadcast][undo] publish failed", {
+        stage: "KNOCKOUT",
+        matchType: "KNOCKOUT",
+        matchId: match.id,
+        source: "matches-score-save",
+        error: broadcastResult.error,
+        response: broadcastResult.response ?? null,
+      });
+    }
+  }
 
   revalidatePath("/matches");
   revalidatePath("/knockout");

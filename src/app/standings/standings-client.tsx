@@ -31,7 +31,7 @@ type MatchGame = {
 
 type MatchItem = {
   id: string;
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
   winnerTeamId: string | null;
   homeTeamId: string | null;
   awayTeamId: string | null;

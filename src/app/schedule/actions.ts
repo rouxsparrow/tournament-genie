@@ -5,6 +5,12 @@ import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
+import {
+  getBroadcastViewChangeType,
+  getBroadcastViewSignature,
+  type BroadcastViewSignature,
+} from "@/lib/schedule/broadcast-view-signature";
+import { publishBroadcastRefreshEvent } from "@/lib/supabase/broadcast-refresh-publisher";
 
 type CategoryFilter = "ALL" | "MD" | "WD" | "XD";
 type MatchType = "GROUP" | "KNOCKOUT";
@@ -75,6 +81,31 @@ type PerfEntry = { step: string; ms: number };
 
 function startPerfTimer() {
   return Date.now();
+}
+
+async function publishBroadcastRefreshIfViewChanged(params: {
+  stage: ScheduleStage;
+  source: "schedule-action";
+  before: BroadcastViewSignature;
+}) {
+  const after = await getBroadcastViewSignature(params.stage);
+  const changeType = getBroadcastViewChangeType(params.before, after);
+  if (!changeType) return;
+
+  const result = await publishBroadcastRefreshEvent({
+    stage: params.stage,
+    source: params.source,
+    reason: "view-change",
+    changeType,
+  });
+  if (!result.ok) {
+    console.error("[broadcast][schedule] publish failed", {
+      stage: params.stage,
+      source: params.source,
+      error: result.error,
+      response: result.response ?? null,
+    });
+  }
 }
 
 function stopPerfTimer(
@@ -261,7 +292,7 @@ function getPlayersForKnockoutMatch(match: {
 }
 
 function isListEligibleGroupMatch(match: {
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
   homeTeamId: string | null;
   awayTeamId: string | null;
 }) {
@@ -269,7 +300,7 @@ function isListEligibleGroupMatch(match: {
 }
 
 function isListEligibleKnockoutMatch(match: {
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
   homeTeamId: string | null;
   awayTeamId: string | null;
   isPublished: boolean;
@@ -283,9 +314,9 @@ function isListEligibleKnockoutMatch(match: {
 }
 
 function isCompletedMatch(match: {
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
 }) {
-  return match.status === "COMPLETED" || match.status === "WALKOVER";
+  return match.status === "COMPLETED";
 }
 
 function hasInPlayPlayers(playerIds: string[], inPlayPlayerIds: Set<string>) {
@@ -357,6 +388,8 @@ function buildMatchItemLite(params: {
   homeTeam: { name: string; members: { playerId: string }[] } | null;
   awayTeam: { name: string; members: { playerId: string }[] } | null;
   restScore: number;
+  forcedRank?: number;
+  isForced?: boolean;
 }) {
   const homeIds = params.homeTeam?.members.map((member) => member.playerId) ?? [];
   const awayIds = params.awayTeam?.members.map((member) => member.playerId) ?? [];
@@ -379,8 +412,11 @@ function buildMatchItemLite(params: {
       playerIds: [...homeIds, ...awayIds],
     },
     restScore: params.restScore,
-    forcedRank: undefined,
-    isForced: false,
+    forcedRank: params.forcedRank,
+    isForced:
+      typeof params.isForced === "boolean"
+        ? params.isForced
+        : typeof params.forcedRank === "number",
   } satisfies ScheduleMatchItem;
 }
 
@@ -486,9 +522,13 @@ function refereeRoundToken(payload: RefereeNotificationPayload) {
 
 function formatRefereeNotificationMessage(payload: RefereeNotificationPayload) {
   const stageToken = payload.stage === "GROUP" ? "GS" : "KO";
-  const seriesToken = payload.stage === "KNOCKOUT" ? (payload.series ?? "-") : "-";
-  const roundToken = refereeRoundToken(payload);
   const court = payload.courtLabel ?? "-";
+  if (payload.stage === "GROUP") {
+    const groupToken = payload.groupName ?? "-";
+    return `Court ${court} - ${payload.categoryCode} - ${stageToken} - ${groupToken} - ${payload.homeTeamName} vs ${payload.awayTeamName} finished`;
+  }
+  const seriesToken = payload.series ?? "-";
+  const roundToken = refereeRoundToken(payload);
   return `Court ${court} - ${payload.categoryCode} - ${stageToken} - ${seriesToken} - ${roundToken} - ${payload.homeTeamName} vs ${payload.awayTeamName} finished`;
 }
 
@@ -2028,7 +2068,7 @@ export async function getPresentingState(filters?: {
 
   const stageMatchType = stage === "GROUP" ? "GROUP" : "KNOCKOUT";
 
-  const [courts, assignments, blocked, matchPoolCount] = await Promise.all([
+  const [courts, assignments, blocked, matchPoolCount, forcedData] = await Promise.all([
     prisma.court.findMany({ orderBy: { id: "asc" } }),
     prisma.courtAssignment.findMany({
       where: { status: "ACTIVE", stage },
@@ -2070,6 +2110,7 @@ export async function getPresentingState(filters?: {
             ...(category !== "ALL" ? { categoryCode: category } : {}),
           },
         }),
+    loadForcedPriorities(stage),
   ]);
 
   const blockedKeys = new Set(
@@ -2222,6 +2263,8 @@ export async function getPresentingState(filters?: {
           homeTeam: match.homeTeam,
           awayTeam: match.awayTeam,
           restScore: computeRestScore(playerIds, inPlayPlayerIds, recentlyPlayedSet),
+          forcedRank: forcedData.rankMap.get(matchKey),
+          isForced: forcedData.forcedSet.has(matchKey),
         }),
       ];
     });
@@ -2259,6 +2302,8 @@ export async function getPresentingState(filters?: {
           homeTeam: match.homeTeam,
           awayTeam: match.awayTeam,
           restScore: computeRestScore(playerIds, inPlayPlayerIds, recentlyPlayedSet),
+          forcedRank: forcedData.rankMap.get(matchKey),
+          isForced: forcedData.forcedSet.has(matchKey),
         }),
       ];
     });
@@ -2382,6 +2427,7 @@ export async function toggleAutoSchedule(stage: ScheduleStage, enabled: boolean)
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
+  const before = await getBroadcastViewSignature(stage);
   const config = await ensureScheduleSetup(stage);
   await prisma.scheduleConfig.update({
     where: { id: config.id },
@@ -2389,6 +2435,16 @@ export async function toggleAutoSchedule(stage: ScheduleStage, enabled: boolean)
   });
   await prisma.scheduleActionLog.create({
     data: { action: "AUTO_SCHEDULE", payload: { stage, enabled } },
+  });
+
+  if (enabled) {
+    await getScheduleState({ stage });
+  }
+
+  await publishBroadcastRefreshIfViewChanged({
+    stage,
+    source: "schedule-action",
+    before,
   });
   revalidatePath("/schedule");
   return { ok: true };
@@ -2426,12 +2482,18 @@ export async function backToQueue(courtId: string, stage: ScheduleStage) {
   if (!assignment) return { ok: true };
 
   if (!config.autoScheduleEnabled) {
+    const before = await getBroadcastViewSignature(stage);
     await prisma.courtAssignment.update({
       where: { id: assignment.id },
       data: { status: "CANCELED", clearedAt: new Date() },
     });
     await prisma.scheduleActionLog.create({
       data: { action: "BACK_TO_QUEUE", payload: { stage, courtId } },
+    });
+    await publishBroadcastRefreshIfViewChanged({
+      stage,
+      source: "schedule-action",
+      before,
     });
     revalidatePath("/schedule");
     return { ok: true };
@@ -2451,6 +2513,7 @@ export async function swapBackToQueue(courtId: string, stage: ScheduleStage) {
     where: { courtId, status: "ACTIVE", stage },
   });
   if (!assignment) return { ok: true };
+  const before = await getBroadcastViewSignature(stage);
 
   const inPlayPlayerIds = await getInPlayPlayerIds(stage);
   if (assignment.matchType === "GROUP" && assignment.groupMatchId) {
@@ -2498,6 +2561,11 @@ export async function swapBackToQueue(courtId: string, stage: ScheduleStage) {
     await prisma.scheduleActionLog.create({
       data: { action: "BACK_TO_QUEUE_EMPTY", payload: { stage, courtId } },
     });
+    await publishBroadcastRefreshIfViewChanged({
+      stage,
+      source: "schedule-action",
+      before,
+    });
     revalidatePath("/schedule");
     return { error: "No assignable match available; court is now empty." };
   }
@@ -2520,6 +2588,11 @@ export async function swapBackToQueue(courtId: string, stage: ScheduleStage) {
   });
 
   await updateLastBatch(config.id, buildMatchKey(next.matchType, next.matchId));
+  await publishBroadcastRefreshIfViewChanged({
+    stage,
+    source: "schedule-action",
+    before,
+  });
   revalidatePath("/schedule");
   return { ok: true };
 }
@@ -2537,6 +2610,7 @@ export async function blockMatch(
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (matchType !== stage) return { error: "Stage mismatch." };
 
+  const before = await getBroadcastViewSignature(stage);
   const config = await ensureScheduleSetup(stage);
 
   await prisma.blockedMatch.deleteMany({
@@ -2566,6 +2640,11 @@ export async function blockMatch(
   if (config.autoScheduleEnabled) {
     await getScheduleState({ stage });
   }
+  await publishBroadcastRefreshIfViewChanged({
+    stage,
+    source: "schedule-action",
+    before,
+  });
   revalidatePath("/schedule");
   return { ok: true };
 }
@@ -2607,6 +2686,7 @@ export async function markCompleted(courtId: string, stage: ScheduleStage) {
     where: { courtId, status: "ACTIVE", stage },
   });
   if (!assignment) return { ok: true };
+  const before = await getBroadcastViewSignature(stage);
 
   if (assignment.matchType === "GROUP" && assignment.groupMatchId) {
     const match = await prisma.match.findUnique({
@@ -2638,6 +2718,11 @@ export async function markCompleted(courtId: string, stage: ScheduleStage) {
     await getScheduleState({ stage });
   }
 
+  await publishBroadcastRefreshIfViewChanged({
+    stage,
+    source: "schedule-action",
+    before,
+  });
   revalidatePath("/schedule");
   return { ok: true };
 }
@@ -2661,6 +2746,7 @@ export async function assignNext(params: {
     where: { courtId_stage: { courtId: params.courtId, stage: params.stage } },
   });
   if (courtLock?.locked) return { error: "Court is locked." };
+  const before = await getBroadcastViewSignature(params.stage);
 
   await prisma.courtAssignment.updateMany({
     where: { courtId: params.courtId, status: "ACTIVE", stage: params.stage },
@@ -2743,6 +2829,11 @@ export async function assignNext(params: {
   });
 
   await updateLastBatch(config.id, buildMatchKey(params.matchType, params.matchId));
+  await publishBroadcastRefreshIfViewChanged({
+    stage: params.stage,
+    source: "schedule-action",
+    before,
+  });
   revalidatePath("/schedule");
   return { ok: true };
 }
@@ -2759,6 +2850,7 @@ export async function forceNext(
   if (!parsed.success) return { error: "Invalid match type." };
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (matchType !== stage) return { error: "Stage mismatch." };
+  const before = await getBroadcastViewSignature(stage);
 
   if (matchType === "GROUP") {
     const match = await prisma.match.findUnique({
@@ -2793,6 +2885,11 @@ export async function forceNext(
   await prisma.scheduleActionLog.create({
     data: { action: "FORCE_NEXT", payload: { stage, matchType, matchId } },
   });
+  await publishBroadcastRefreshIfViewChanged({
+    stage,
+    source: "schedule-action",
+    before,
+  });
   revalidatePath("/schedule");
   return { ok: true };
 }
@@ -2809,12 +2906,18 @@ export async function clearForcedPriority(
   if (!parsed.success) return { error: "Invalid match type." };
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (matchType !== stage) return { error: "Stage mismatch." };
+  const before = await getBroadcastViewSignature(stage);
 
   await prisma.forcedMatchPriority.deleteMany({
     where: { matchType, matchId },
   });
   await prisma.scheduleActionLog.create({
     data: { action: "FORCE_CLEAR", payload: { stage, matchType, matchId } },
+  });
+  await publishBroadcastRefreshIfViewChanged({
+    stage,
+    source: "schedule-action",
+    before,
   });
   revalidatePath("/schedule");
   return { ok: true };
@@ -2825,12 +2928,18 @@ export async function resetQueueForcedPriorities(stage: ScheduleStage) {
   if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
+  const before = await getBroadcastViewSignature(stage);
 
   await prisma.forcedMatchPriority.deleteMany({
     where: { matchType: stage === "GROUP" ? "GROUP" : "KNOCKOUT" },
   });
   await prisma.scheduleActionLog.create({
     data: { action: "FORCE_RESET", payload: { stage } },
+  });
+  await publishBroadcastRefreshIfViewChanged({
+    stage,
+    source: "schedule-action",
+    before,
   });
   revalidatePath("/schedule");
   return { ok: true };

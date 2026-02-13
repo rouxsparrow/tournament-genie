@@ -128,11 +128,11 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
 
     const assignment = await prisma.courtAssignment.findFirst({
       where: {
-        status: "ACTIVE",
         stage: "GROUP",
         matchType: "GROUP",
         groupMatchId: payload.matchId,
       },
+      orderBy: { assignedAt: "desc" },
       select: { courtId: true },
     });
 
@@ -202,11 +202,11 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
 
     const assignment = await prisma.courtAssignment.findFirst({
       where: {
-        status: "ACTIVE",
         stage: "KNOCKOUT",
         matchType: "KNOCKOUT",
         knockoutMatchId: payload.matchId,
       },
+      orderBy: { assignedAt: "desc" },
       select: { courtId: true },
     });
 

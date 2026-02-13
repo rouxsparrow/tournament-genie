@@ -3,7 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 
 type CategoryCode = "MD" | "WD" | "XD";
-type MatchStatus = "SCHEDULED" | "COMPLETED" | "WALKOVER";
+type MatchStatus = "SCHEDULED" | "COMPLETED";
 
 type KnockoutMatchSnapshot = {
   id: string;

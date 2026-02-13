@@ -30,7 +30,7 @@ type MatchGame = {
 type MatchItem = {
   id: string;
   categoryCode: "MD" | "WD" | "XD";
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
   winnerTeamId: string | null;
   group: { id: string; name: string };
   homeTeam: Team | null;
@@ -158,7 +158,7 @@ export function MatchesListClient({
     if (status !== "ALL") {
       filtered = filtered.filter((match) =>
         status === "COMPLETED"
-          ? match.status === "COMPLETED" || match.status === "WALKOVER"
+          ? match.status === "COMPLETED"
           : match.status === "SCHEDULED"
       );
     }
@@ -307,11 +307,11 @@ export function MatchesListClient({
             );
             const isMatchLocked = stageLockByCategory[match.categoryCode];
             const statusText =
-              match.status === "COMPLETED" || match.status === "WALKOVER"
+              match.status === "COMPLETED"
                 ? "Completed"
                 : "Scheduled";
             const statusClass =
-              match.status === "COMPLETED" || match.status === "WALKOVER"
+              match.status === "COMPLETED"
                 ? "bg-emerald-500 text-white"
                 : "bg-amber-700 text-amber-100";
             const winnerLabel =

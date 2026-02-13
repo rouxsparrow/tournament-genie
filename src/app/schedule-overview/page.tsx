@@ -30,7 +30,7 @@ type Team = {
 
 type CategoryMatch = {
   id: string;
-  status: "SCHEDULED" | "COMPLETED" | "WALKOVER";
+  status: "SCHEDULED" | "COMPLETED";
   group: { name: string; category: { code: CategoryCode } } | null;
   homeTeam: Team | null;
   awayTeam: Team | null;
