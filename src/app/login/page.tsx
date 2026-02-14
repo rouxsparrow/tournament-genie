@@ -32,7 +32,7 @@ export default async function LoginPage({
       redirect(`/login?error=${encodeURIComponent("Unable to start session.")}`);
     }
 
-    redirect("/schedule");
+    redirect("/admin");
   }
 
   return (
