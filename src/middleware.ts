@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const SESSION_COOKIE = "tg_session";
 const PUBLIC_PATHS = new Set([
   "/",
+  "/favourite-player",
   "/standings",
   "/brackets",
   "/schedule",

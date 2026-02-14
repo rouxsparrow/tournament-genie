@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Image from "next/image";
 import Link from "next/link";
+import Script from "next/script";
 import "./globals.css";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { GlobalLoadingProvider } from "@/components/global-loading-provider";
@@ -24,7 +25,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: {
     default: "Tournament Genie",
-    template: "Tournament Genie - %s",
+    template: "%s",
   },
   description: "Admin-first tournament management for badminton doubles.",
 };
@@ -54,7 +55,28 @@ export default async function RootLayout({
   ];
   const useMobileMenu = navItems.length > 3;
   return (
-    <html lang="en">
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        <Script id="theme-bootstrap" strategy="beforeInteractive">
+          {`(() => {
+            try {
+              const root = document.documentElement;
+              const key = "theme";
+              const stored = window.localStorage.getItem(key);
+              const mode = stored === "light" || stored === "dark" ? stored : "dark";
+              root.classList.toggle("dark", mode === "dark");
+              root.style.colorScheme = mode;
+              if (stored !== "light" && stored !== "dark") {
+                window.localStorage.setItem(key, mode);
+              }
+            } catch {
+              const root = document.documentElement;
+              root.classList.add("dark");
+              root.style.colorScheme = "dark";
+            }
+          })();`}
+        </Script>
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-background antialiased`}
       >
