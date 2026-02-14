@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { Moon, Sun } from "lucide-react";
 
@@ -12,26 +12,35 @@ function applyTheme(mode: ThemeMode) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.classList.toggle("dark", mode === "dark");
+  root.style.colorScheme = mode;
+}
+
+function resolveThemeMode(): ThemeMode {
+  if (typeof document === "undefined") return "dark";
+  const root = document.documentElement;
+  if (root.classList.contains("dark")) return "dark";
+  return "light";
 }
 
 export function ThemeToggle() {
-  const [mode, setMode] = useState<ThemeMode>(() => {
-    if (typeof window === "undefined") return "light";
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === "light" || stored === "dark") return stored;
-    return window.matchMedia?.("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
-  });
+  // Hydration-safe mounted signal without useEffect state writes.
+  const hydrated = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
+  const [tick, setTick] = useState(0);
 
-  useEffect(() => {
-    applyTheme(mode);
-  }, [mode]);
+  void tick;
+  const isDark = hydrated ? resolveThemeMode() === "dark" : true;
 
   function toggleTheme() {
-    const next = mode === "dark" ? "light" : "dark";
-    setMode(next);
+    if (!hydrated) return;
+    const current = resolveThemeMode();
+    const next: ThemeMode = current === "dark" ? "light" : "dark";
+    applyTheme(next);
     window.localStorage.setItem(STORAGE_KEY, next);
+    setTick((value) => value + 1);
   }
 
   return (
@@ -41,9 +50,9 @@ export function ThemeToggle() {
       variant="outline"
       onClick={toggleTheme}
       aria-label="Toggle theme"
-      aria-pressed={mode === "dark"}
+      aria-pressed={isDark}
     >
-      {mode === "dark" ? (
+      {isDark ? (
         <Moon className="h-4 w-4" />
       ) : (
         <Sun className="h-4 w-4" />
