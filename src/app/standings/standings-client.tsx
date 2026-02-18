@@ -98,7 +98,7 @@ export function StandingsClient({
   const storageKey = `standings:filters:${categoryCode}`;
   const [groupId, setGroupId] = useState(initialGroupId || "");
   const [collapsedMatchesByGroup, setCollapsedMatchesByGroup] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(groupData.map((entry) => [entry.group.id, false]))
+    () => Object.fromEntries(groupData.map((entry) => [entry.group.id, true]))
   );
 
   useEffect(() => {
@@ -147,7 +147,7 @@ export function StandingsClient({
             const teams = group.teams.map((entry) => entry.team);
             const completedMatches = matches.filter((match) => match.status !== "SCHEDULED");
             const completedCount = completedMatches.length;
-            const isCollapsed = collapsedMatchesByGroup[group.id] ?? false;
+            const isCollapsed = collapsedMatchesByGroup[group.id] ?? true;
             const scoresByMatch = new Map(
               matches.map((match) => [
                 match.id,
