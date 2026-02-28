@@ -24,7 +24,7 @@ function signSession(secret) {
 async function testBroadcastTransport() {
   const receiver = createClient(SUPABASE_URL, ANON_KEY);
   const sender = createClient(SUPABASE_URL, ANON_KEY);
-  const channelName = `broadcast-live-group`;
+  const channelName = "broadcast-refresh-group";
   const timeoutMs = 8000;
   let receiverSubscribed = false;
   let senderSubscribed = false;
@@ -34,7 +34,7 @@ async function testBroadcastTransport() {
     const timeout = setTimeout(() => resolve(false), timeoutMs);
     const recvChannel = receiver
       .channel(channelName)
-      .on("broadcast", { event: "schedule_update" }, () => {
+      .on("broadcast", { event: "refresh_required" }, () => {
         received = true;
         clearTimeout(timeout);
         resolve(true);
@@ -53,7 +53,7 @@ async function testBroadcastTransport() {
       senderSubscribed = true;
       const res = await sendChannel.send({
         type: "broadcast",
-        event: "schedule_update",
+        event: "refresh_required",
         payload: { stage: "GROUP", source: "diagnose-script", sentAt: new Date().toISOString() },
       });
       clearTimeout(timeout);
@@ -62,6 +62,9 @@ async function testBroadcastTransport() {
   });
 
   const [sendOk, recvOk] = await Promise.all([senderDone, receiverDone]);
+  await Promise.all([receiver.removeAllChannels(), sender.removeAllChannels()]);
+  receiver.realtime.disconnect();
+  sender.realtime.disconnect();
   return {
     ok: Boolean(sendOk && recvOk && receiverSubscribed && senderSubscribed && received),
     detail: `senderSubscribed=${senderSubscribed} receiverSubscribed=${receiverSubscribed} sent=${Boolean(sendOk)} received=${received}`,

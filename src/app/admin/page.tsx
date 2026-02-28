@@ -6,6 +6,7 @@ import {
   Radio,
   ShieldCheck,
   Trophy,
+  UserCheck,
   Users,
   Wrench,
 } from "lucide-react";
@@ -20,6 +21,7 @@ const ADMIN_LINKS = [
   { href: "/groups", label: "Groups", icon: FolderKanban },
   { href: "/knockout", label: "Knockout", icon: Trophy },
   { href: "/broadcast", label: "Broadcast", icon: Radio },
+  { href: "/player-checkin", label: "Player Check-in", icon: UserCheck },
   { href: "/utilities", label: "Utilities", icon: Wrench },
   { href: "/schedule-overview", label: "Schedule Overview", icon: CalendarRange },
 ];

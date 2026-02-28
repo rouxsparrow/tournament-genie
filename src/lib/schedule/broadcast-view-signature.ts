@@ -39,6 +39,11 @@ function hasInPlayPlayers(playerIds: string[], inPlayPlayerIds: Set<string>) {
   return playerIds.some((playerId) => inPlayPlayerIds.has(playerId));
 }
 
+function hasUncheckedPlayers(playerIds: string[], uncheckedPlayerIds: Set<string>) {
+  if (uncheckedPlayerIds.size === 0) return false;
+  return playerIds.some((playerId) => uncheckedPlayerIds.has(playerId));
+}
+
 function computeRestScore(
   playerIds: string[],
   inPlayPlayerIds: Set<string>,
@@ -205,6 +210,14 @@ async function getAssignmentContext(stage: ScheduleStage) {
   return { assignedMatchKeys, inPlayPlayerIds };
 }
 
+async function getUncheckedPlayerIds() {
+  const unchecked = await prisma.player.findMany({
+    where: { checkedIn: false },
+    select: { id: true },
+  });
+  return new Set(unchecked.map((player) => player.id));
+}
+
 export async function getActiveAssignmentSignature(stage: ScheduleStage) {
   const assignments = await prisma.courtAssignment.findMany({
     where: {
@@ -233,7 +246,7 @@ export async function getActiveAssignmentSignature(stage: ScheduleStage) {
 }
 
 export async function getUpcomingSignature(stage: ScheduleStage) {
-  const [forcedData, blocked, context, recentlyPlayedIds] = await Promise.all([
+  const [forcedData, blocked, context, recentlyPlayedIds, uncheckedPlayerIds] = await Promise.all([
     getForcedData(stage),
     prisma.blockedMatch.findMany({
       where: { matchType: stage === "GROUP" ? "GROUP" : "KNOCKOUT" },
@@ -245,6 +258,7 @@ export async function getUpcomingSignature(stage: ScheduleStage) {
     }),
     getAssignmentContext(stage),
     getRecentCompletedPlayerIds(stage),
+    getUncheckedPlayerIds(),
   ]);
 
   const blockedKeys = new Set(
@@ -284,6 +298,7 @@ export async function getUpcomingSignature(stage: ScheduleStage) {
         ...(match.homeTeam?.members.map((member) => member.playerId) ?? []),
         ...(match.awayTeam?.members.map((member) => member.playerId) ?? []),
       ];
+      if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) continue;
       eligible.push({
         key,
         matchId: match.id,
@@ -324,6 +339,7 @@ export async function getUpcomingSignature(stage: ScheduleStage) {
         ...(match.homeTeam?.members.map((member) => member.playerId) ?? []),
         ...(match.awayTeam?.members.map((member) => member.playerId) ?? []),
       ];
+      if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) continue;
       eligible.push({
         key,
         matchId: match.id,

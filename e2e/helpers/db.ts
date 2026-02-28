@@ -15,6 +15,30 @@ export async function markAllActiveGroupAssignmentsCompleted() {
   });
 }
 
+export async function clearActiveGroupAssignments() {
+  await prisma.courtAssignment.updateMany({
+    where: { stage: "GROUP", status: "ACTIVE" },
+    data: { status: "CLEARED", clearedAt: new Date() },
+  });
+}
+
+export async function countActiveGroupAssignmentsWithUncheckedPlayers() {
+  return prisma.courtAssignment.count({
+    where: {
+      stage: "GROUP",
+      status: "ACTIVE",
+      matchType: "GROUP",
+      groupMatchId: { not: null },
+      groupMatch: {
+        OR: [
+          { homeTeam: { members: { some: { player: { checkedIn: false } } } } },
+          { awayTeam: { members: { some: { player: { checkedIn: false } } } } },
+        ],
+      },
+    },
+  });
+}
+
 export async function markCourtAssignmentCompleted(courtId: string) {
   const assignment = await prisma.courtAssignment.findFirst({
     where: { stage: "GROUP", status: "ACTIVE", courtId, matchType: "GROUP" },

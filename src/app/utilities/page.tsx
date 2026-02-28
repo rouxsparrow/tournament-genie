@@ -1,7 +1,11 @@
 import { redirect } from "next/navigation";
 import { getRoleFromRequest } from "@/lib/auth";
 import { UtilitiesClient } from "@/app/utilities/utilities-client";
-import { checkDuplicateAssignments, checkLegacyCourtIds } from "@/app/utilities/actions";
+import {
+  checkDuplicateAssignments,
+  checkLegacyCourtIds,
+  getAutoScheduleFunctionState,
+} from "@/app/utilities/actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Utilities" };
@@ -12,9 +16,10 @@ export default async function UtilitiesPage() {
     redirect("/presenting");
   }
 
-  const [duplicateResult, legacyResult] = await Promise.all([
+  const [duplicateResult, legacyResult, autoScheduleFunctionResult] = await Promise.all([
     checkDuplicateAssignments(),
     checkLegacyCourtIds(),
+    getAutoScheduleFunctionState(),
   ]);
   const initialSummary =
     duplicateResult && !("error" in duplicateResult)
@@ -24,6 +29,10 @@ export default async function UtilitiesPage() {
     legacyResult && !("error" in legacyResult)
       ? legacyResult.summary
       : { legacyCourtRows: 0, legacyStageLockRows: 0, legacyAssignmentRows: 0, byCourt: [] };
+  const initialAutoScheduleFunctionEnabled =
+    autoScheduleFunctionResult && !("error" in autoScheduleFunctionResult)
+      ? autoScheduleFunctionResult.enabled
+      : true;
 
   return (
     <section className="rounded-2xl border border-border bg-card p-8">
@@ -34,6 +43,7 @@ export default async function UtilitiesPage() {
       <UtilitiesClient
         initialSummary={initialSummary}
         initialLegacySummary={initialLegacySummary}
+        initialAutoScheduleFunctionEnabled={initialAutoScheduleFunctionEnabled}
       />
     </section>
   );

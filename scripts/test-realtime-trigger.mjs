@@ -10,7 +10,8 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const authSecret = process.env.AUTH_SECRET ?? "";
 const stage = (process.env.REALTIME_TEST_STAGE ?? "GROUP").toUpperCase() === "KNOCKOUT" ? "KNOCKOUT" : "GROUP";
-const channel = stage === "GROUP" ? "broadcast-live-group" : "broadcast-live-knockout";
+const channel =
+  stage === "GROUP" ? "broadcast-refresh-group" : "broadcast-refresh-knockout";
 const timeoutMs = Number.parseInt(process.env.REALTIME_TEST_TIMEOUT_MS ?? "8000", 10);
 
 function signAdminSession(secret) {
@@ -38,7 +39,7 @@ async function main() {
 
     const realtimeChannel = supabase
       .channel(channel)
-      .on("broadcast", { event: "schedule_update" }, (payload) => {
+      .on("broadcast", { event: "refresh_required" }, (payload) => {
         received = true;
         clearTimeout(timer);
         resolve({ ok: true, payload });

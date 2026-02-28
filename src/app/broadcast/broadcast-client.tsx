@@ -26,6 +26,10 @@ type RealtimeDebugState = {
   receivedAt: string;
   eventCount: number;
 } | null;
+type BroadcastLogMode = "realtime" | "polling";
+
+const POLLING_REFRESH_MS = 10_000;
+const REALTIME_RECONNECT_MS = 5_000;
 
 const COURT_LABELS: Record<string, string> = {
   C1: "P5",
@@ -98,17 +102,27 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<BroadcastSubscriptionStatus>("CONNECTING");
   const [lastRealtimeEvent, setLastRealtimeEvent] = useState<RealtimeDebugState>(null);
+  const [isPollingFallback, setIsPollingFallback] = useState(false);
+  const [pollingReason, setPollingReason] = useState<string | null>(null);
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
 
   useEffect(() => {
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollingTimer: ReturnType<typeof setInterval> | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let eventCount = 0;
-    const mode = "realtime" as const;
+    let reconnectAttemptCount = 0;
     let disposed = false;
-    const activeChannels: RealtimeChannel[] = [];
+    let activeChannel: RealtimeChannel | null = null;
+    let fallbackActive = false;
+    let fallbackReasonValue: string | null = null;
+    const channelName = REALTIME_CHANNELS.broadcastRefresh[stage];
+    const supabase = getRealtimeBrowserClient();
 
     const log = (
       message: string,
-      extra?: Record<string, string | number | boolean | null | undefined>
+      extra?: Record<string, string | number | boolean | null | undefined>,
+      mode: BroadcastLogMode = "realtime"
     ) => {
       if (!broadcastDebug) return;
       const payload = {
@@ -132,7 +146,8 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
 
     const warn = (
       message: string,
-      extra?: Record<string, string | number | boolean | null | undefined>
+      extra?: Record<string, string | number | boolean | null | undefined>,
+      mode: BroadcastLogMode = "realtime"
     ) => {
       if (!broadcastDebug) return;
       const payload = {
@@ -154,41 +169,127 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
       }).catch(() => undefined);
     };
 
-    const scheduleRefresh = () => {
+    const cleanupChannel = () => {
+      if (!supabase || !activeChannel) return;
+      void supabase.removeChannel(activeChannel);
+      activeChannel = null;
+    };
+
+    const scheduleRefresh = (mode: BroadcastLogMode, source: string) => {
       if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
-        log("router.refresh", { source: "realtime", eventCount });
+        log(
+          "router.refresh",
+          {
+            source,
+            eventCount,
+            fallbackActive,
+            fallbackReason: fallbackReasonValue,
+            reconnectAttempts: reconnectAttemptCount,
+          },
+          mode
+        );
         router.refresh();
       }, 350);
     };
 
-    const supabase = getRealtimeBrowserClient();
-    if (!supabase) {
-      warn("supabase client unavailable; realtime disabled", {
-        hasUrl: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
-        hasAnonKey: Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
-      });
-      return () => {
-        if (refreshTimer) clearTimeout(refreshTimer);
-      };
-    }
+    const stopPollingFallback = () => {
+      const wasPolling = Boolean(pollingTimer);
+      if (pollingTimer) {
+        clearInterval(pollingTimer);
+        pollingTimer = null;
+      }
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      fallbackActive = false;
+      fallbackReasonValue = null;
+      reconnectAttemptCount = 0;
+      if (!disposed) {
+        setIsPollingFallback(false);
+        setPollingReason(null);
+        setReconnectAttempts(0);
+      }
+      if (wasPolling) {
+        log("polling fallback stopped", { channel: channelName }, "polling");
+      }
+    };
 
-    const start = async () => {
+    const scheduleReconnect = (reason: string) => {
+      if (disposed || reconnectTimer || !supabase) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (disposed) return;
+        reconnectAttemptCount += 1;
+        setReconnectAttempts(reconnectAttemptCount);
+        setSubscriptionStatus("CONNECTING");
+        log(
+          "reconnect attempt",
+          { channel: channelName, reason, attempt: reconnectAttemptCount },
+          "polling"
+        );
+        void subscribeRealtime("fallback-retry");
+      }, REALTIME_RECONNECT_MS);
+    };
+
+    const startPollingFallback = (
+      reason: string,
+      status: BroadcastSubscriptionStatus,
+      error?: string | null
+    ) => {
+      fallbackActive = true;
+      fallbackReasonValue = reason;
+      if (!disposed) {
+        setSubscriptionStatus(status);
+        setIsPollingFallback(true);
+        setPollingReason(reason);
+      }
+      if (!pollingTimer) {
+        log(
+          "polling fallback started",
+          { channel: channelName, reason, status, error: error ?? null },
+          "polling"
+        );
+        pollingTimer = setInterval(() => {
+          if (disposed) return;
+          scheduleRefresh("polling", "polling-fallback");
+        }, POLLING_REFRESH_MS);
+      }
+      scheduleReconnect(reason);
+    };
+
+    const subscribeRealtime = async (source: "initial" | "fallback-retry") => {
+      if (!supabase) {
+        warn(
+          "supabase client unavailable; realtime disabled",
+          {
+            hasUrl: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
+            hasAnonKey: Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+            source,
+          },
+          "polling"
+        );
+        startPollingFallback("supabase client unavailable", "UNAVAILABLE");
+        return;
+      }
+      cleanupChannel();
       const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
       if (anonKey) {
         try {
           await supabase.realtime.setAuth(anonKey);
-          log("realtime auth set");
+          log("realtime auth set", { source });
         } catch (error) {
           warn("realtime auth failed", {
             error: error instanceof Error ? error.message : String(error),
+            source,
           });
         }
       }
       if (disposed) return;
 
-      const refreshChannel = supabase.channel(REALTIME_CHANNELS.broadcastRefresh[stage]);
-      activeChannels.push(refreshChannel);
+      const refreshChannel = supabase.channel(channelName);
+      activeChannel = refreshChannel;
       refreshChannel.on(
         "broadcast",
         { event: REALTIME_EVENTS.BROADCAST_REFRESH_REQUIRED },
@@ -203,7 +304,7 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
               ? payload.payload.changeType
               : null;
           setLastRealtimeEvent({
-            channel: REALTIME_CHANNELS.broadcastRefresh[stage],
+            channel: channelName,
             event: payload.event,
             source,
             reason,
@@ -213,13 +314,13 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
           });
           log("realtime event", {
             eventType: payload.event,
-            channel: REALTIME_CHANNELS.broadcastRefresh[stage],
+            channel: channelName,
             source,
             reason,
             changeType,
             eventCount,
           });
-          scheduleRefresh();
+          scheduleRefresh("realtime", "realtime-event");
         }
       );
 
@@ -235,32 +336,47 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
         setSubscriptionStatus(nextStatus);
         log("channel status", {
           status,
-          channel: REALTIME_CHANNELS.broadcastRefresh[stage],
+          channel: channelName,
           error: err?.message ?? null,
         });
         if (status === "SUBSCRIBED") {
-          log("realtime connected", { channel: REALTIME_CHANNELS.broadcastRefresh[stage] });
+          log("realtime connected", { channel: channelName });
+          stopPollingFallback();
           return;
         }
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           log("realtime unavailable", {
             status,
-            channel: REALTIME_CHANNELS.broadcastRefresh[stage],
+            channel: channelName,
             error: err?.message ?? null,
           });
+          startPollingFallback(
+            `realtime ${status.toLowerCase()}`,
+            nextStatus,
+            err?.message ?? null
+          );
         }
       });
     };
 
-    void start();
+    void subscribeRealtime("initial");
 
     return () => {
       disposed = true;
-      log("cleanup", { eventCount });
+      log(
+        "cleanup",
+        {
+          eventCount,
+          fallbackActive,
+          fallbackReason: fallbackReasonValue,
+          reconnectAttempts: reconnectAttemptCount,
+        },
+        fallbackActive ? "polling" : "realtime"
+      );
       if (refreshTimer) clearTimeout(refreshTimer);
-      activeChannels.forEach((channel) => {
-        void supabase.removeChannel(channel);
-      });
+      if (pollingTimer) clearInterval(pollingTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      cleanupChannel();
     };
   }, [broadcastDebug, router, stage]);
 
@@ -296,6 +412,9 @@ export function BroadcastClient({ state }: { state: ScheduleState }) {
           </div>
           <div>Reason: {lastRealtimeEvent?.reason ?? "-"}</div>
           <div>Change: {lastRealtimeEvent?.changeType ?? "-"}</div>
+          <div>Fallback: {isPollingFallback ? "polling" : "realtime"}</div>
+          <div>Fallback reason: {pollingReason ?? "-"}</div>
+          <div>Reconnect attempts: {reconnectAttempts}</div>
           <div>
             Received:{" "}
             {lastRealtimeEvent

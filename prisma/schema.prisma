@@ -65,6 +65,7 @@ model Player {
   id        String       @id @default(cuid())
   name      String
   gender    Gender
+  checkedIn Boolean      @default(false)
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
   teams     TeamMember[]
@@ -193,6 +194,7 @@ model TournamentSettings {
   groupAssignmentMode GroupAssignmentMode @default(MANUAL)
   secondChanceEnabled Boolean             @default(false)
   scoringMode         ScoringMode         @default(SINGLE_GAME_21)
+  autoScheduleFunctionEnabled Boolean     @default(true)
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
 }

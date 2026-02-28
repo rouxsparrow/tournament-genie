@@ -424,6 +424,14 @@ function buildRefereeSubmissionWhere(filters: {
   return where;
 }
 
+async function readAutoScheduleFunctionEnabledValue() {
+  const settings = await prisma.tournamentSettings.findFirst({
+    orderBy: { createdAt: "desc" },
+    select: { autoScheduleFunctionEnabled: true },
+  });
+  return settings?.autoScheduleFunctionEnabled ?? true;
+}
+
 export async function checkDuplicateAssignments() {
   const guard = await requireAdmin({ onFail: "return" });
   if (guard) return guard;
@@ -540,6 +548,51 @@ export async function clearRefereeSubmissions(filters: {
 
 export async function clearMdGroupRefereeSubmissions() {
   return clearRefereeSubmissions({ matchType: "GROUP", categoryCode: "MD" });
+}
+
+export async function getAutoScheduleFunctionState() {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
+  const enabled = await readAutoScheduleFunctionEnabledValue();
+  return { ok: true as const, enabled };
+}
+
+export async function setAutoScheduleFunctionEnabled(enabled: boolean) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
+  if (typeof enabled !== "boolean") {
+    return { error: "Invalid enabled value." } as const;
+  }
+
+  const existingSettingsCount = await prisma.tournamentSettings.count();
+  if (existingSettingsCount === 0) {
+    await prisma.tournamentSettings.create({
+      data: { autoScheduleFunctionEnabled: enabled },
+    });
+  } else {
+    await prisma.tournamentSettings.updateMany({
+      data: { autoScheduleFunctionEnabled: enabled },
+    });
+  }
+
+  if (!enabled) {
+    await prisma.scheduleConfig.updateMany({
+      where: { stage: { in: ["GROUP", "KNOCKOUT"] } },
+      data: { autoScheduleEnabled: false },
+    });
+  }
+
+  await prisma.scheduleActionLog.create({
+    data: {
+      action: "AUTO_SCHEDULE_FUNCTION",
+      payload: { enabled, source: "utilities" },
+    },
+  });
+
+  revalidatePath("/utilities");
+  revalidatePath("/schedule");
+
+  return { ok: true as const, enabled };
 }
 
 async function readLegacyCourtSummary(): Promise<LegacyCourtSummary> {

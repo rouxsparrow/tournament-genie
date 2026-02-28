@@ -66,14 +66,19 @@ function renderTeamLineWithRestHighlight(params: {
   favouritePlayerName: string | null;
   inPlayPlayerIds: Set<string>;
   notRestedPlayerIds: Set<string>;
+  pendingCheckInPlayerIds?: Set<string>;
 }): ReactNode {
   const sideHasInPlay = params.playerIds.some((id) => params.inPlayPlayerIds.has(id));
   const sideHasNotRested = params.playerIds.some((id) => params.notRestedPlayerIds.has(id));
+  const sideHasPendingCheckIn = params.playerIds.some((id) =>
+    params.pendingCheckInPlayerIds?.has(id)
+  );
   if (params.players.length === 0) {
     const fallbackLabel = highlightName(params.fallback, params.favouritePlayerName);
     const fallbackClassName = [
       sideHasNotRested ? "rounded-sm bg-red-500/15 px-1 dark:bg-red-400/30" : "",
       sideHasInPlay ? "text-orange-500" : "",
+      sideHasPendingCheckIn ? "text-red-600 dark:text-red-400" : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -86,9 +91,13 @@ function renderTeamLineWithRestHighlight(params: {
         const playerId = params.playerIds[index];
         const isInPlayPlayer = playerId ? params.inPlayPlayerIds.has(playerId) : false;
         const isNotRestedPlayer = playerId ? params.notRestedPlayerIds.has(playerId) : false;
+        const isPendingCheckInPlayer = playerId
+          ? params.pendingCheckInPlayerIds?.has(playerId)
+          : false;
         const playerClassName = [
           isNotRestedPlayer ? "rounded-sm bg-red-500/15 px-1 dark:bg-red-400/30" : "",
           isInPlayPlayer ? "text-orange-500" : "",
+          isPendingCheckInPlayer ? "text-red-600 dark:text-red-400" : "",
         ]
           .filter(Boolean)
           .join(" ");
@@ -209,10 +218,13 @@ export function ScheduleClient({
     return union;
   }, [initialState.inPlayPlayerIds, initialState.recentlyPlayedPlayerIds]);
   const scheduleDebug = process.env.NEXT_PUBLIC_SCHEDULE_DEBUG === "1";
-  const autoSchedule =
+  const autoScheduleFunctionEnabled =
+    initialState.config.autoScheduleFunctionEnabled ?? true;
+  const autoScheduleStageValue =
     autoScheduleOverride?.stage === stage
       ? autoScheduleOverride.value
       : initialState.config.autoScheduleEnabled;
+  const autoSchedule = autoScheduleFunctionEnabled && autoScheduleStageValue;
 
   if (scheduleDebug) {
     console.log(
@@ -374,6 +386,8 @@ export function ScheduleClient({
       return true;
     });
   }, [initialState.blockedMatches, category, search]);
+  const queueMatchCount =
+    statusFilter === "ELIGIBLE" ? eligibleFiltered.length : blockedFiltered.length;
 
   const upcomingFiltered = useMemo(() => {
     return initialState.upcomingMatches.filter((match) => {
@@ -434,7 +448,7 @@ export function ScheduleClient({
           <section className="rounded-xl border border-border bg-card p-4 xl:col-span-7">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-foreground">Playing</h2>
-              {isAdmin ? (
+              {isAdmin && autoScheduleFunctionEnabled ? (
                 <Button
                   type="button"
                   size="sm"
@@ -614,7 +628,7 @@ export function ScheduleClient({
             <section className="rounded-xl border border-border bg-card p-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold text-foreground">Upcoming</h2>
-                {isAdmin ? (
+                {isAdmin && autoScheduleFunctionEnabled ? (
                   <div className="text-xs text-muted-foreground">
                     {autoSchedule ? "Auto Schedule ON" : "Auto Schedule OFF"}
                   </div>
@@ -815,6 +829,9 @@ export function ScheduleClient({
               <Button type="button" variant="outline" onClick={() => setSearch("")} size="sm">
                 Clear
               </Button>
+              <span className="text-xs text-muted-foreground">
+                {queueMatchCount} {queueMatchCount === 1 ? "match" : "matches"}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <Button
@@ -944,7 +961,9 @@ export function ScheduleClient({
             ) : blockedFiltered.length === 0 ? (
               <div className="text-sm text-muted-foreground">No blocked matches.</div>
             ) : (
-              blockedFiltered.map((match) => (
+              blockedFiltered.map((match) => {
+                const pendingCheckInPlayerIds = new Set(match.pendingCheckInPlayerIds ?? []);
+                return (
                 <div
                   key={match.key}
                   className="rounded-lg border border-border bg-muted/40 p-3"
@@ -959,7 +978,15 @@ export function ScheduleClient({
                       </div>
                       <div className="text-xs text-muted-foreground">{match.detail}</div>
                     </div>
-                    <div className="text-xs text-muted-foreground">injury / absent</div>
+                    {match.blockReason === "PENDING_CHECKIN" ? (
+                      <Badge className="border-red-600 bg-red-600 text-white">
+                        pending checked in
+                      </Badge>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">
+                        {match.blockReasonLabel ?? "injury / absent"}
+                      </div>
+                    )}
                   </div>
                   <div className="mt-2 text-sm text-foreground">
                     {renderTeamLineWithRestHighlight({
@@ -969,6 +996,7 @@ export function ScheduleClient({
                       favouritePlayerName,
                       inPlayPlayerIds,
                       notRestedPlayerIds,
+                      pendingCheckInPlayerIds,
                     })}
                     <span className="text-muted-foreground"> vs </span>
                     {renderTeamLineWithRestHighlight({
@@ -978,10 +1006,12 @@ export function ScheduleClient({
                       favouritePlayerName,
                       inPlayPlayerIds,
                       notRestedPlayerIds,
+                      pendingCheckInPlayerIds,
                     })}
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
+                  {match.canUnblock ?? true ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
                         type="button"
                         size="sm"
                         onClick={() =>
@@ -992,9 +1022,11 @@ export function ScheduleClient({
                       >
                         Unblock
                       </Button>
-                  </div>
+                    </div>
+                  ) : null}
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

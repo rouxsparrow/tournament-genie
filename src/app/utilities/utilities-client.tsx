@@ -10,15 +10,18 @@ import {
   clearDuplicateAssignments,
   type DuplicateAssignmentSummary,
   fixLegacyCourtIds,
+  setAutoScheduleFunctionEnabled as setAutoScheduleFunctionEnabledAction,
   type LegacyCourtSummary,
   previewTestDataCleanup,
   removeTestDataCleanup,
   type TestDataCleanupPreview,
 } from "@/app/utilities/actions";
+import { checkInAllPlayers, uncheckInAllPlayers } from "@/app/player-checkin/actions";
 
 type UtilitiesClientProps = {
   initialSummary: DuplicateAssignmentSummary;
   initialLegacySummary: LegacyCourtSummary;
+  initialAutoScheduleFunctionEnabled: boolean;
 };
 
 function totalDuplicates(summary: DuplicateAssignmentSummary) {
@@ -58,6 +61,7 @@ function SectionShell({
 export function UtilitiesClient({
   initialSummary,
   initialLegacySummary,
+  initialAutoScheduleFunctionEnabled,
 }: UtilitiesClientProps) {
   const [refereeMatchType, setRefereeMatchType] = useState<"ALL" | "GROUP" | "KNOCKOUT">("ALL");
   const [refereeCategory, setRefereeCategory] = useState<"ALL" | "MD" | "WD" | "XD">("ALL");
@@ -65,6 +69,9 @@ export function UtilitiesClient({
   const [confirmToken, setConfirmToken] = useState("");
   const [summary, setSummary] = useState(initialSummary);
   const [legacySummary, setLegacySummary] = useState(initialLegacySummary);
+  const [autoScheduleFunctionEnabled, setAutoScheduleFunctionEnabledState] = useState(
+    initialAutoScheduleFunctionEnabled
+  );
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -153,6 +160,47 @@ export function UtilitiesClient({
     });
   };
 
+  const runCheckInAllPlayers = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await checkInAllPlayers();
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to check in all players.");
+        return;
+      }
+      setMessage(`All players checked in: ${result.updatedCount}.`);
+    });
+  };
+
+  const runUncheckInAllPlayers = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await uncheckInAllPlayers();
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to uncheck all players.");
+        return;
+      }
+      setMessage(`All players unchecked: ${result.updatedCount}.`);
+    });
+  };
+
+  const runSetAutoScheduleFunctionEnabled = (enabled: boolean) => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await setAutoScheduleFunctionEnabledAction(enabled);
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to update Auto Schedule function.");
+        return;
+      }
+      setAutoScheduleFunctionEnabledState(result.enabled);
+      setMessage(
+        result.enabled
+          ? "Auto Schedule function enabled."
+          : "Auto Schedule function disabled. Group and Knockout auto schedule were turned off."
+      );
+    });
+  };
+
   const runTestPreview = () => {
     setMessage(null);
     startTransition(async () => {
@@ -200,6 +248,44 @@ export function UtilitiesClient({
         <div className="flex justify-end">
           <Button type="button" variant="destructive" onClick={runClearMdGroupRefereeSubmissions} disabled={pending}>
             Clear MD Group Referee Submissions
+          </Button>
+        </div>
+      </SectionShell>
+
+      <SectionShell
+        title="Player Check-in"
+        subtitle="Bulk operations for player arrival status."
+      >
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={runCheckInAllPlayers} disabled={pending}>
+            Check in all players
+          </Button>
+          <Button type="button" variant="destructive" onClick={runUncheckInAllPlayers} disabled={pending}>
+            Un checkin all players
+          </Button>
+        </div>
+      </SectionShell>
+
+      <SectionShell
+        title="Auto Schedule Function"
+        subtitle="Global toggle for Auto Schedule controls across Group and Knockout."
+      >
+        <div className="rounded-md border border-border bg-muted/30 p-3">
+          <div className="text-xs text-muted-foreground">Current status</div>
+          <div className="text-lg font-semibold text-foreground">
+            {autoScheduleFunctionEnabled ? "Enabled" : "Disabled"}
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant={autoScheduleFunctionEnabled ? "destructive" : "outline"}
+            onClick={() => runSetAutoScheduleFunctionEnabled(!autoScheduleFunctionEnabled)}
+            disabled={pending}
+          >
+            {autoScheduleFunctionEnabled
+              ? "Disable Auto Schedule Function"
+              : "Enable Auto Schedule Function"}
           </Button>
         </div>
       </SectionShell>
