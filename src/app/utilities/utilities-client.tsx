@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import {
   checkDuplicateAssignments,
   checkLegacyCourtIds,
+  clearMdGroupRefereeSubmissions,
+  clearRefereeSubmissions,
   clearDuplicateAssignments,
   type DuplicateAssignmentSummary,
   fixLegacyCourtIds,
@@ -57,6 +59,8 @@ export function UtilitiesClient({
   initialSummary,
   initialLegacySummary,
 }: UtilitiesClientProps) {
+  const [refereeMatchType, setRefereeMatchType] = useState<"ALL" | "GROUP" | "KNOCKOUT">("ALL");
+  const [refereeCategory, setRefereeCategory] = useState<"ALL" | "MD" | "WD" | "XD">("ALL");
   const [testPreview, setTestPreview] = useState<TestDataCleanupPreview | null>(null);
   const [confirmToken, setConfirmToken] = useState("");
   const [summary, setSummary] = useState(initialSummary);
@@ -118,6 +122,37 @@ export function UtilitiesClient({
     });
   };
 
+  const runClearRefereeSubmissions = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await clearRefereeSubmissions({
+        matchType: refereeMatchType,
+        categoryCode: refereeCategory,
+      });
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to clear referee submissions.");
+        return;
+      }
+      setMessage(
+        `Referee submissions cleared: ${result.deletedCount}. Remaining with same filters: ${result.remainingCount}.`
+      );
+    });
+  };
+
+  const runClearMdGroupRefereeSubmissions = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await clearMdGroupRefereeSubmissions();
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to clear MD group referee submissions.");
+        return;
+      }
+      setMessage(
+        `MD group referee submissions cleared: ${result.deletedCount}. Remaining with same filters: ${result.remainingCount}.`
+      );
+    });
+  };
+
   const runTestPreview = () => {
     setMessage(null);
     startTransition(async () => {
@@ -158,9 +193,20 @@ export function UtilitiesClient({
       ) : null}
 
       <SectionShell
+        title="Quick Fix: MD Clear Matches"
+        subtitle="Use this before clearing MD group matches if you hit referee submission constraint errors."
+        defaultOpen
+      >
+        <div className="flex justify-end">
+          <Button type="button" variant="destructive" onClick={runClearMdGroupRefereeSubmissions} disabled={pending}>
+            Clear MD Group Referee Submissions
+          </Button>
+        </div>
+      </SectionShell>
+
+      <SectionShell
         title="Duplicate Assignments"
         subtitle="One bucket means one duplicated key (for example same stage + same courtId)."
-        defaultOpen
       >
         <div className="flex flex-wrap items-start justify-end gap-3">
           <div className="flex flex-wrap gap-2">
@@ -388,6 +434,54 @@ export function UtilitiesClient({
             </div>
           </>
         )}
+      </SectionShell>
+
+      <SectionShell
+        title="Referee Submissions"
+        subtitle="Delete referee submissions to unblock group/knockout match cleanup."
+      >
+        <div className="grid gap-2 sm:grid-cols-[180px_1fr] sm:items-center">
+          <label htmlFor="referee-match-type" className="text-sm text-muted-foreground">
+            Match type
+          </label>
+          <select
+            id="referee-match-type"
+            value={refereeMatchType}
+            onChange={(event) =>
+              setRefereeMatchType(event.target.value as "ALL" | "GROUP" | "KNOCKOUT")
+            }
+            className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="ALL">All</option>
+            <option value="GROUP">Group</option>
+            <option value="KNOCKOUT">Knockout</option>
+          </select>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-[180px_1fr] sm:items-center">
+          <label htmlFor="referee-category" className="text-sm text-muted-foreground">
+            Category
+          </label>
+          <select
+            id="referee-category"
+            value={refereeCategory}
+            onChange={(event) =>
+              setRefereeCategory(event.target.value as "ALL" | "MD" | "WD" | "XD")
+            }
+            className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="ALL">All</option>
+            <option value="MD">MD</option>
+            <option value="WD">WD</option>
+            <option value="XD">XD</option>
+          </select>
+        </div>
+
+        <div className="flex justify-end">
+          <Button type="button" variant="destructive" onClick={runClearRefereeSubmissions} disabled={pending}>
+            Clear referee submissions
+          </Button>
+        </div>
       </SectionShell>
     </div>
   );

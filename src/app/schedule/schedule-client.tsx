@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Eye, EyeOff, X } from "lucide-react";
@@ -69,6 +69,14 @@ function roundLabel(match: ScheduleState["eligibleMatches"][number]) {
   return match.round ? `R${match.round}` : "Round";
 }
 
+function stripMatchNumber(detail: string) {
+  return detail
+    .split("•")
+    .map((part) => part.trim())
+    .filter((part) => !/^Match\s+\d+/i.test(part))
+    .join(" • ");
+}
+
 function assignPlayersLabel(match: ScheduleState["eligibleMatches"][number]) {
   const home =
     match.teams.homePlayers.length > 0
@@ -79,6 +87,52 @@ function assignPlayersLabel(match: ScheduleState["eligibleMatches"][number]) {
       ? match.teams.awayPlayers.join(" + ")
       : match.teams.awayName;
   return `${home} vs ${away}`;
+}
+
+function renderTeamLineWithRestHighlight(params: {
+  players: string[];
+  playerIds: string[];
+  fallback: string;
+  favouritePlayerName: string | null;
+  inPlayPlayerIds: Set<string>;
+  notRestedPlayerIds: Set<string>;
+}): ReactNode {
+  const sideHasInPlay = params.playerIds.some((id) => params.inPlayPlayerIds.has(id));
+  const sideHasNotRested = params.playerIds.some((id) => params.notRestedPlayerIds.has(id));
+  if (params.players.length === 0) {
+    const fallbackLabel = highlightName(params.fallback, params.favouritePlayerName);
+    const fallbackClassName = [
+      sideHasNotRested ? "rounded-sm bg-red-500/15 px-1 dark:bg-red-400/30" : "",
+      sideHasInPlay ? "text-orange-500" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return fallbackClassName ? <span className={fallbackClassName}>{fallbackLabel}</span> : fallbackLabel;
+  }
+
+  return (
+    <>
+      {params.players.map((playerName, index) => {
+        const playerId = params.playerIds[index];
+        const isInPlayPlayer = playerId ? params.inPlayPlayerIds.has(playerId) : false;
+        const isNotRestedPlayer = playerId ? params.notRestedPlayerIds.has(playerId) : false;
+        const playerClassName = [
+          isNotRestedPlayer ? "rounded-sm bg-red-500/15 px-1 dark:bg-red-400/30" : "",
+          isInPlayPlayer ? "text-orange-500" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return (
+          <span key={`${playerName}-${playerId ?? index}`}>
+            {index > 0 ? <span className="text-muted-foreground"> + </span> : null}
+            <span className={playerClassName || undefined}>
+              {highlightName(playerName, params.favouritePlayerName)}
+            </span>
+          </span>
+        );
+      })}
+    </>
+  );
 }
 
 function assignOptionLabel(match: ScheduleState["eligibleMatches"][number]) {
@@ -122,6 +176,14 @@ function highlightName(label: string, favouriteName: string | null) {
   );
 }
 
+function splitTeamNameLines(label: string) {
+  const parts = label
+    .split(/\s+\+\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : [label];
+}
+
 function hasInPlayConflict(
   playerIds: string[],
   inPlayPlayerIds: Set<string>
@@ -144,16 +206,17 @@ export function ScheduleClient({
   initialState,
   role,
   favouritePlayerName,
+  initialView,
 }: {
   initialState: ScheduleState;
   role: UserRole;
   favouritePlayerName: string | null;
+  initialView: "courts" | "queue";
 }) {
   const isAdmin = role === "admin";
   const router = useRouter();
   const stage = initialState.stage as ScheduleStage;
-  const [view, setView] = useState<"courts" | "queue">("courts");
-  const effectiveView = isAdmin ? view : "courts";
+  const effectiveView = isAdmin ? initialView : "courts";
   const [category, setCategory] = useState<CategoryFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<QueueStatus>("ELIGIBLE");
   const [search, setSearch] = useState("");
@@ -173,6 +236,13 @@ export function ScheduleClient({
     () => new Set(initialState.inPlayPlayerIds ?? []),
     [initialState.inPlayPlayerIds]
   );
+  const notRestedPlayerIds = useMemo(() => {
+    const union = new Set(initialState.inPlayPlayerIds ?? []);
+    for (const id of initialState.recentlyPlayedPlayerIds ?? []) {
+      union.add(id);
+    }
+    return union;
+  }, [initialState.inPlayPlayerIds, initialState.recentlyPlayedPlayerIds]);
   const scheduleDebug = process.env.NEXT_PUBLIC_SCHEDULE_DEBUG === "1";
   const autoSchedule =
     autoScheduleOverride?.stage === stage
@@ -356,93 +426,6 @@ export function ScheduleClient({
 
   return (
     <div className="space-y-6">
-      {isAdmin ? (
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="grid gap-3 lg:grid-cols-[1fr,auto] lg:items-center">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-muted-foreground">Category</span>
-                <select
-                  className="rounded-md border border-border bg-background px-2 py-1 text-sm"
-                  value={category}
-                  onChange={(event) => setCategory(event.target.value as CategoryFilter)}
-                >
-                  <option value="ALL">All</option>
-                  <option value="MD">MD</option>
-                  <option value="WD">WD</option>
-                  <option value="XD">XD</option>
-                </select>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={view === "courts" ? "default" : "outline"}
-                  onClick={() => setView("courts")}
-                >
-                  Live Courts
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={view === "queue" ? "default" : "outline"}
-                  onClick={() => setView("queue")}
-                >
-                  Queue
-                </Button>
-              </div>
-
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className={
-                  autoSchedule
-                    ? "border-lime-300 bg-lime-300 text-slate-950 hover:bg-lime-400 hover:text-slate-950 dark:!border-lime-300 dark:!bg-lime-300 dark:!text-slate-950 dark:hover:!bg-lime-400"
-                    : undefined
-                }
-                disabled={isPending || isAutoScheduleSubmitting}
-                onClick={async () => {
-                  if (isAutoScheduleSubmitting) return;
-                  const next = !autoSchedule;
-                  setAutoScheduleOverride({ stage, value: next });
-                  setError(null);
-                  setIsAutoScheduleSubmitting(true);
-                  try {
-                    const result = (await toggleAutoSchedule(stage, next)) as
-                      | { error?: string }
-                      | undefined;
-                    if (result?.error) {
-                      setError(result.error);
-                      setAutoScheduleOverride(null);
-                      return;
-                    }
-                    router.refresh();
-                  } finally {
-                    setIsAutoScheduleSubmitting(false);
-                  }
-                }}
-              >
-                Auto Schedule {autoSchedule ? "ON" : "OFF"}
-              </Button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm lg:w-64"
-                placeholder="Search player name"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-              <Button type="button" variant="outline" onClick={() => setSearch("")} size="sm">
-                Clear
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
       {error ? (
         <div className="flex items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           <span>{error}</span>
@@ -466,10 +449,46 @@ export function ScheduleClient({
       ) : null}
 
       {effectiveView === "courts" ? (
-        <div className="space-y-6">
-          <section className="rounded-xl border border-border bg-card p-4">
+        <div className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-10">
+          <section className="rounded-xl border border-border bg-card p-4 xl:col-span-7">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-foreground">Playing</h2>
+              {isAdmin ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className={
+                    autoSchedule
+                      ? "border-lime-300 bg-lime-300 text-slate-950 hover:bg-lime-400 hover:text-slate-950 dark:!border-lime-300 dark:!bg-lime-300 dark:!text-slate-950 dark:hover:!bg-lime-400"
+                      : undefined
+                  }
+                  disabled={isPending || isAutoScheduleSubmitting}
+                  onClick={async () => {
+                    if (isAutoScheduleSubmitting) return;
+                    const next = !autoSchedule;
+                    setAutoScheduleOverride({ stage, value: next });
+                    setError(null);
+                    setIsAutoScheduleSubmitting(true);
+                    try {
+                      const result = (await toggleAutoSchedule(stage, next)) as
+                        | { error?: string }
+                        | undefined;
+                      if (result?.error) {
+                        setError(result.error);
+                        setAutoScheduleOverride(null);
+                        return;
+                      }
+                      router.refresh();
+                    } finally {
+                      setIsAutoScheduleSubmitting(false);
+                    }
+                  }}
+                >
+                  Auto Schedule {autoSchedule ? "ON" : "OFF"}
+                </Button>
+              ) : null}
             </div>
             <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {initialState.courts.map((court) => {
@@ -483,111 +502,121 @@ export function ScheduleClient({
                 return (
                   <div
                     key={court.id}
-                    className="rounded-xl border border-border bg-card p-4 shadow-sm"
+                    className="flex h-full flex-col rounded-xl border border-border bg-card p-4 shadow-sm"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <h3 className="text-lg font-semibold text-foreground">
                           {courtLabel(court.id)}
                         </h3>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {court.isLocked ? "Locked" : "Unlocked"}
-                        </div>
                       </div>
                       {isAdmin ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={court.isLocked ? "outline" : "default"}
-                          onClick={() =>
-                            handleAction(() =>
-                              lockCourt(court.id, !court.isLocked, stage)
-                            )
-                          }
-                        >
-                          {court.isLocked ? "Unlock" : "Lock"}
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => {
+                              if (!playing) return;
+                              const matchId = playing.matchKey.split(":")[1] ?? "";
+                              if (!matchId) return;
+                              handleAction(() =>
+                                blockMatch(playing.matchType, matchId, stage)
+                              );
+                            }}
+                            disabled={!playing || isPending}
+                          >
+                            Block Match
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={court.isLocked ? "outline" : "default"}
+                            onClick={() =>
+                              handleAction(() =>
+                                lockCourt(court.id, !court.isLocked, stage)
+                              )
+                            }
+                          >
+                            {court.isLocked ? "Unlock Court" : "Lock Court"}
+                          </Button>
+                        </div>
                       ) : null}
                     </div>
 
-                    <div className="mt-4 rounded-lg border border-border bg-muted/40 p-3 text-sm">
+                    <div className="mt-4 min-h-[190px] rounded-lg border border-border bg-muted/40 p-3 text-sm">
                       {playing ? (
-                        <div className="space-y-2">
+                        <div className="flex min-h-[166px] flex-col">
                           <div className="text-xs text-muted-foreground">
-                            {matchTypeLabel(playing.matchType)} • {playing.categoryCode}
+                            {playing.categoryCode}
+                            {playing.detail ? ` • ${stripMatchNumber(playing.detail)}` : ""}
                           </div>
-                          <div className="font-medium text-foreground">
-                            {playing.detail}
-                          </div>
-                          <div className="text-sm text-foreground">
-                            {highlightName(
-                              playing.homeTeam?.name ?? "TBD",
-                              favouritePlayerName
-                            )}{" "}
-                            vs{" "}
-                            {highlightName(
-                              playing.awayTeam?.name ?? "TBD",
-                              favouritePlayerName
-                            )}
+                          <div className="mt-1 space-y-2 text-sm text-center text-foreground">
+                            <div className="space-y-1 break-words font-medium">
+                              {splitTeamNameLines(playing.homeTeam?.name ?? "TBD").map((line, index) => (
+                                <div key={`home-${line}-${index}`}>
+                                  {highlightName(line, favouritePlayerName)}
+                                </div>
+                              ))}
+                            </div>
+                            <div className="py-0.5 text-center text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                              ----vs----
+                            </div>
+                            <div className="space-y-1 break-words font-medium translate-y-2">
+                              {splitTeamNameLines(playing.awayTeam?.name ?? "TBD").map((line, index) => (
+                                <div key={`away-${line}-${index}`}>
+                                  {highlightName(line, favouritePlayerName)}
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       ) : (
-                        <div className="text-xs text-muted-foreground">No match assigned.</div>
+                        <div className="flex min-h-[166px] w-full items-center justify-center text-xs text-muted-foreground">
+                          No match assigned.
+                        </div>
                       )}
                     </div>
-                    {showNoAssignable ? (
-                      <div className="mt-2 text-xs text-muted-foreground">
-                        No assignable match (players currently playing)
-                      </div>
-                    ) : null}
+                    <div className="mt-1 min-h-3 text-xs text-muted-foreground">
+                      {showNoAssignable
+                        ? "No assignable match (players currently playing)"
+                        : null}
+                    </div>
 
                     {isAdmin ? (
-                      <div className="mt-4 flex flex-wrap gap-2">
+                      <div className="space-y-2">
                         <Button
                           type="button"
                           size="sm"
-                          variant="outline"
-                          onClick={() => handleAction(() => backToQueue(court.id, stage))}
-                          disabled={!playing || isPending}
-                        >
-                          Back to Queue
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            if (!playing) return;
-                            const matchId = playing.matchKey.split(":")[1] ?? "";
-                            if (!matchId) return;
-                            handleAction(() =>
-                              blockMatch(playing.matchType, matchId, stage)
-                            );
-                          }}
-                          disabled={!playing || isPending}
-                        >
-                          Block
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleAction(() => markCompleted(court.id, stage))}
-                          disabled={!playing || isPending}
-                        >
-                          Completed
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
+                          className="w-full"
                           onClick={() => {
                             setSelectedMatchKey(eligibleForModal[0]?.key ?? "");
                             setModal({ type: "assign", courtId: court.id });
                           }}
-                          disabled={isPending}
+                          disabled={isPending || court.isLocked}
                         >
-                          Assign Next
+                          Assign
                         </Button>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="w-full border-orange-500 bg-orange-500 text-white hover:bg-orange-600"
+                            onClick={() => handleAction(() => backToQueue(court.id, stage))}
+                            disabled={!playing || isPending}
+                          >
+                            Back to Q
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="w-full border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+                            onClick={() => handleAction(() => markCompleted(court.id, stage))}
+                            disabled={!playing || isPending}
+                          >
+                            Completed
+                          </Button>
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -596,8 +625,8 @@ export function ScheduleClient({
             </div>
           </section>
 
-          <div className="grid gap-4 xl:grid-cols-3">
-            <section className="rounded-xl border border-border bg-card p-4 xl:col-span-2">
+          <div className="space-y-4 xl:col-span-3">
+            <section className="rounded-xl border border-border bg-card p-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold text-foreground">Upcoming</h2>
                 {isAdmin ? (
@@ -618,12 +647,10 @@ export function ScheduleClient({
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
                           <div className="text-xs text-muted-foreground">
-                            {matchTypeLabel(match.matchType)} • {match.categoryCode}
+                            {match.categoryCode}
+                            {match.label ? ` • ${match.label}` : ""}
+                            {match.detail ? ` • ${stripMatchNumber(match.detail)}` : ""}
                           </div>
-                          <div className="text-sm font-semibold text-foreground">
-                            {match.label}
-                          </div>
-                          <div className="text-xs text-muted-foreground">{match.detail}</div>
                         </div>
                         <div className="flex items-center gap-2">
                           {isAdmin ? (
@@ -632,7 +659,10 @@ export function ScheduleClient({
                                 match.restScore
                               )}`}
                             >
-                              {match.restScore}/4 rest
+                              <span className="rounded-sm bg-red-500/15 px-1 dark:bg-red-400/30">
+                                {match.restScore}
+                              </span>{" "}
+                              / 4 rest
                               {match.restScore === 0 ? " (warning)" : ""}
                             </div>
                           ) : null}
@@ -643,9 +673,30 @@ export function ScheduleClient({
                           ) : null}
                         </div>
                       </div>
-                      <div className="mt-2 text-sm text-foreground">
-                        {highlightName(match.teams.homeName, favouritePlayerName)} vs{" "}
-                        {highlightName(match.teams.awayName, favouritePlayerName)}
+                      <div className="mt-2 space-y-1 text-center text-sm text-foreground">
+                        <div className="font-medium">
+                          {renderTeamLineWithRestHighlight({
+                            players: match.teams.homePlayers,
+                            playerIds: match.teams.homePlayerIds,
+                            fallback: match.teams.homeName,
+                            favouritePlayerName,
+                            inPlayPlayerIds,
+                            notRestedPlayerIds,
+                          })}
+                        </div>
+                        <div className="text-center text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          ----vs----
+                        </div>
+                        <div className="font-medium">
+                          {renderTeamLineWithRestHighlight({
+                            players: match.teams.awayPlayers,
+                            playerIds: match.teams.awayPlayerIds,
+                            fallback: match.teams.awayName,
+                            favouritePlayerName,
+                            inPlayPlayerIds,
+                            notRestedPlayerIds,
+                          })}
+                        </div>
                       </div>
                       {match.isForced ? (
                         <div className="mt-2">
@@ -655,106 +706,131 @@ export function ScheduleClient({
                         </div>
                       ) : null}
                       {isAdmin && hasInPlayConflict(match.teams.playerIds, inPlayPlayerIds) ? (
-                        <div className="mt-2 text-xs text-amber-600">
-                          Waiting (players currently playing)
+                        <div className="mt-2">
+                          <Badge className="border-orange-500 bg-orange-500 text-white">
+                            Waiting
+                          </Badge>
                         </div>
                       ) : null}
                   </div>
                 ))}
               </div>
             </section>
-            {isAdmin ? (
-              <section className="rounded-xl border border-border bg-card p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h2 className="text-base font-semibold text-foreground">Notifications</h2>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      Referee submissions
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={isPending || refereeNotifications.length === 0}
-                    onClick={() =>
-                      handleAction(async () => {
-                        const result = await clearRefereeNotifications(stage);
-                        if (!result || "error" in result) return result;
-                        setRefereeNotifications([]);
-                        return result;
-                      })
-                    }
-                  >
-                    Clear all
-                  </Button>
-                </div>
-                <div className="mt-4 max-h-[26rem] space-y-2 overflow-y-auto pr-1">
-                  {refereeNotifications.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">
-                      No referee notifications yet.
-                    </div>
-                  ) : (
-                    refereeNotifications.map((item) => (
-                      <div
-                        key={item.id}
-                        className={`rounded-lg border p-3 ${
-                          item.isRead
-                            ? "border-border bg-muted/30"
-                            : "border-amber-500/50 bg-amber-500/10"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="text-xs text-foreground">{item.message}</div>
-                          <button
-                            type="button"
-                            className="inline-flex h-6 w-6 items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground"
-                            onClick={() =>
-                              handleAction(async () => {
-                                const nextIsRead = !item.isRead;
-                                const result = await toggleRefereeNotificationRead(
-                                  stage,
-                                  item.id,
-                                  nextIsRead
-                                );
-                                if (!result || "error" in result) return result;
-                                setRefereeNotifications((prev) => {
-                                  const updated = prev.map((entry) =>
-                                    entry.id === item.id
-                                      ? { ...entry, isRead: nextIsRead }
-                                      : entry
-                                  );
-                                  const unread = updated.filter((entry) => !entry.isRead);
-                                  const read = updated.filter((entry) => entry.isRead);
-                                  return [...unread, ...read];
-                                });
-                                return result;
-                              })
-                            }
-                            aria-label={item.isRead ? "Mark as unread" : "Mark as read"}
-                          >
-                            {item.isRead ? (
-                              <EyeOff className="h-3.5 w-3.5" />
-                            ) : (
-                              <Eye className="h-3.5 w-3.5" />
-                            )}
-                          </button>
-                        </div>
-                        <div className="mt-1 text-[11px] text-muted-foreground">
-                          {formatNotificationTime(item.createdAt)}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
-            ) : null}
           </div>
+          </div>
+          {isAdmin ? (
+            <section className="rounded-xl border border-border bg-card p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h2 className="text-base font-semibold text-foreground">Notifications</h2>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Referee submissions
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={isPending || refereeNotifications.length === 0}
+                  onClick={() =>
+                    handleAction(async () => {
+                      const result = await clearRefereeNotifications(stage);
+                      if (!result || "error" in result) return result;
+                      setRefereeNotifications([]);
+                      return result;
+                    })
+                  }
+                >
+                  Clear all
+                </Button>
+              </div>
+              <div className="mt-4 max-h-[26rem] space-y-2 overflow-y-auto pr-1">
+                {refereeNotifications.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">
+                    No referee notifications yet.
+                  </div>
+                ) : (
+                  refereeNotifications.map((item) => (
+                    <div
+                      key={item.id}
+                      className={`rounded-lg border p-3 ${
+                        item.isRead
+                          ? "border-border bg-muted/30"
+                          : "border-amber-500/50 bg-amber-500/10"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-xs text-foreground">{item.message}</div>
+                        <button
+                          type="button"
+                          className="inline-flex h-6 w-6 items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground"
+                          onClick={() =>
+                            handleAction(async () => {
+                              const nextIsRead = !item.isRead;
+                              const result = await toggleRefereeNotificationRead(
+                                stage,
+                                item.id,
+                                nextIsRead
+                              );
+                              if (!result || "error" in result) return result;
+                              setRefereeNotifications((prev) => {
+                                const updated = prev.map((entry) =>
+                                  entry.id === item.id
+                                    ? { ...entry, isRead: nextIsRead }
+                                    : entry
+                                );
+                                const unread = updated.filter((entry) => !entry.isRead);
+                                const read = updated.filter((entry) => entry.isRead);
+                                return [...unread, ...read];
+                              });
+                              return result;
+                            })
+                          }
+                          aria-label={item.isRead ? "Mark as unread" : "Mark as read"}
+                        >
+                          {item.isRead ? (
+                            <EyeOff className="h-3.5 w-3.5" />
+                          ) : (
+                            <Eye className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        {formatNotificationTime(item.createdAt)}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          ) : null}
         </div>
       ) : (
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-base font-semibold text-foreground">Queue</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold text-foreground">Queue</h2>
+              <span className="text-xs font-medium text-muted-foreground">Category</span>
+              <select
+                className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+                value={category}
+                onChange={(event) => setCategory(event.target.value as CategoryFilter)}
+              >
+                <option value="ALL">All</option>
+                <option value="MD">MD</option>
+                <option value="WD">WD</option>
+                <option value="XD">XD</option>
+              </select>
+              <input
+                className="h-9 w-56 rounded-md border border-border bg-background px-3 py-2 text-sm"
+                placeholder="Search player name"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              <Button type="button" variant="outline" onClick={() => setSearch("")} size="sm">
+                Clear
+              </Button>
+            </div>
             <div className="flex items-center gap-2">
               <Button
                 type="button"
@@ -802,7 +878,10 @@ export function ScheduleClient({
                             match.restScore
                           )}`}
                         >
-                          {match.restScore}/4 rest
+                          <span className="rounded-sm bg-red-500/15 px-1 dark:bg-red-400/30">
+                            {match.restScore}
+                          </span>{" "}
+                          / 4 rest
                           {match.restScore === 0 ? " (warning)" : ""}
                         </div>
                         {match.isForced ? (
@@ -813,7 +892,23 @@ export function ScheduleClient({
                       </div>
                     </div>
                     <div className="mt-2 text-sm text-foreground">
-                      {match.teams.homeName} vs {match.teams.awayName}
+                      {renderTeamLineWithRestHighlight({
+                        players: match.teams.homePlayers,
+                        playerIds: match.teams.homePlayerIds,
+                        fallback: match.teams.homeName,
+                        favouritePlayerName,
+                        inPlayPlayerIds,
+                        notRestedPlayerIds,
+                      })}
+                      <span className="text-muted-foreground"> vs </span>
+                      {renderTeamLineWithRestHighlight({
+                        players: match.teams.awayPlayers,
+                        playerIds: match.teams.awayPlayerIds,
+                        fallback: match.teams.awayName,
+                        favouritePlayerName,
+                        inPlayPlayerIds,
+                        notRestedPlayerIds,
+                      })}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button
@@ -882,7 +977,23 @@ export function ScheduleClient({
                     <div className="text-xs text-muted-foreground">injury / absent</div>
                   </div>
                   <div className="mt-2 text-sm text-foreground">
-                    {match.teams.homeName} vs {match.teams.awayName}
+                    {renderTeamLineWithRestHighlight({
+                      players: match.teams.homePlayers,
+                      playerIds: match.teams.homePlayerIds,
+                      fallback: match.teams.homeName,
+                      favouritePlayerName,
+                      inPlayPlayerIds,
+                      notRestedPlayerIds,
+                    })}
+                    <span className="text-muted-foreground"> vs </span>
+                    {renderTeamLineWithRestHighlight({
+                      players: match.teams.awayPlayers,
+                      playerIds: match.teams.awayPlayerIds,
+                      fallback: match.teams.awayName,
+                      favouritePlayerName,
+                      inPlayPlayerIds,
+                      notRestedPlayerIds,
+                    })}
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button

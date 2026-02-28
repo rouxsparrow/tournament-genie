@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { getScheduledMatches } from "@/lib/matches/getScheduledMatches";
 import {
   upsertKnockoutMatchScore,
   upsertMatchScoreNoRedirect,
@@ -40,6 +41,10 @@ function getConfiguredRefereePasscode() {
   const configuredPasscode = process.env.Referee_code ?? process.env.REFEREE_CODE ?? "";
   if (!/^\d{4}$/.test(configuredPasscode)) return null;
   return configuredPasscode;
+}
+
+export async function fetchRefereeScheduledMatches() {
+  return getScheduledMatches();
 }
 
 export async function verifyRefereePasscode(passcode: string) {

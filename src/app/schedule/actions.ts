@@ -56,6 +56,8 @@ type ScheduleMatchItem = {
     awayName: string;
     homePlayers: string[];
     awayPlayers: string[];
+    homePlayerIds: string[];
+    awayPlayerIds: string[];
     playerNames: string[];
     playerIds: string[];
   };
@@ -364,6 +366,8 @@ function buildMatchItem(params: {
       awayName: params.awayTeam?.name ?? "TBD",
       homePlayers: home.playerNames,
       awayPlayers: away.playerNames,
+      homePlayerIds: home.playerIds,
+      awayPlayerIds: away.playerIds,
       playerNames: [...home.playerNames, ...away.playerNames],
       playerIds: [...home.playerIds, ...away.playerIds],
     },
@@ -408,6 +412,8 @@ function buildMatchItemLite(params: {
       awayName: params.awayTeam?.name ?? "TBD",
       homePlayers: [],
       awayPlayers: [],
+      homePlayerIds: homeIds,
+      awayPlayerIds: awayIds,
       playerNames: [],
       playerIds: [...homeIds, ...awayIds],
     },
@@ -2022,6 +2028,7 @@ export async function getScheduleState(
     refereeNotifications,
     blockedMatches: blockedList.filter(Boolean) as ScheduleMatchItem[],
     inPlayPlayerIds: Array.from(inPlayPlayerIds),
+    recentlyPlayedPlayerIds: Array.from(recentlyPlayedSet),
     assignableCount,
     upcomingAssignableCount,
     debug:
@@ -2331,6 +2338,7 @@ export async function getPresentingState(filters?: {
     refereeNotifications: [],
     blockedMatches: [],
     inPlayPlayerIds: Array.from(inPlayPlayerIds),
+    recentlyPlayedPlayerIds: [],
     assignableCount: 0,
     upcomingAssignableCount: 0,
     debug: {
@@ -2661,6 +2669,7 @@ export async function unblockMatch(
   if (!parsed.success) return { error: "Invalid match type." };
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (matchType !== stage) return { error: "Stage mismatch." };
+  const before = await getBroadcastViewSignature(stage);
 
   await prisma.blockedMatch.deleteMany({
     where:
@@ -2670,6 +2679,11 @@ export async function unblockMatch(
   });
   await prisma.scheduleActionLog.create({
     data: { action: "UNBLOCK_MATCH", payload: { stage, matchType, matchId } },
+  });
+  await publishBroadcastRefreshIfViewChanged({
+    stage,
+    source: "schedule-action",
+    before,
   });
   revalidatePath("/schedule");
   return { ok: true };

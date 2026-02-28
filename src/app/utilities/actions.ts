@@ -43,6 +43,9 @@ type LegacyCourtRow = {
   assignmentCount: number;
 };
 
+type RefereeSubmissionMatchFilter = "ALL" | "GROUP" | "KNOCKOUT";
+type RefereeSubmissionCategoryFilter = "ALL" | "MD" | "WD" | "XD";
+
 export type LegacyCourtSummary = {
   legacyCourtRows: number;
   legacyStageLockRows: number;
@@ -407,6 +410,20 @@ async function readDuplicateSummary(): Promise<DuplicateAssignmentSummary> {
   return { byCourt, byGroupMatch, byKnockoutMatch };
 }
 
+function buildRefereeSubmissionWhere(filters: {
+  matchType: RefereeSubmissionMatchFilter;
+  categoryCode: RefereeSubmissionCategoryFilter;
+}): Prisma.RefereeSubmissionWhereInput {
+  const where: Prisma.RefereeSubmissionWhereInput = {};
+  if (filters.matchType !== "ALL") {
+    where.matchType = filters.matchType;
+  }
+  if (filters.categoryCode !== "ALL") {
+    where.categoryCode = filters.categoryCode;
+  }
+  return where;
+}
+
 export async function checkDuplicateAssignments() {
   const guard = await requireAdmin({ onFail: "return" });
   if (guard) return guard;
@@ -494,6 +511,35 @@ export async function clearDuplicateAssignments() {
     },
     summary,
   };
+}
+
+export async function clearRefereeSubmissions(filters: {
+  matchType: RefereeSubmissionMatchFilter;
+  categoryCode: RefereeSubmissionCategoryFilter;
+}) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
+
+  const where = buildRefereeSubmissionWhere(filters);
+  const deleted = await prisma.refereeSubmission.deleteMany({ where });
+  const remaining = await prisma.refereeSubmission.count({ where });
+
+  revalidatePath("/utilities");
+  revalidatePath("/schedule");
+  revalidatePath("/referee");
+  revalidatePath("/groups");
+  revalidatePath("/matches");
+
+  return {
+    ok: true as const,
+    deletedCount: deleted.count,
+    remainingCount: remaining,
+    filters,
+  };
+}
+
+export async function clearMdGroupRefereeSubmissions() {
+  return clearRefereeSubmissions({ matchType: "GROUP", categoryCode: "MD" });
 }
 
 async function readLegacyCourtSummary(): Promise<LegacyCourtSummary> {

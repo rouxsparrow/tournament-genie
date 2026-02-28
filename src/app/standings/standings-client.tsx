@@ -98,7 +98,7 @@ export function StandingsClient({
   const storageKey = `standings:filters:${categoryCode}`;
   const [groupId, setGroupId] = useState(initialGroupId || "");
   const [collapsedMatchesByGroup, setCollapsedMatchesByGroup] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(groupData.map((entry) => [entry.group.id, false]))
+    () => Object.fromEntries(groupData.map((entry) => [entry.group.id, true]))
   );
 
   useEffect(() => {
@@ -128,13 +128,6 @@ export function StandingsClient({
             ))}
           </select>
         </div>
-        <div className="flex flex-wrap gap-1.5 text-[11px] leading-5 text-muted-foreground sm:text-xs">
-          <span className="rounded-md bg-muted/60 px-2 py-0.5">W = Wins</span>
-          <span className="rounded-md bg-muted/60 px-2 py-0.5">L = Losses</span>
-          <span className="rounded-md bg-muted/60 px-2 py-0.5">PF = Points For</span>
-          <span className="rounded-md bg-muted/60 px-2 py-0.5">PA = Points Against</span>
-          <span className="rounded-md bg-muted/60 px-2 py-0.5">PD = Point Diff</span>
-        </div>
       </div>
 
       {filteredGroups.length === 0 ? (
@@ -157,13 +150,18 @@ export function StandingsClient({
 
             return (
               <div key={group.id} className="rounded-xl border border-border p-5">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">Group {group.name}</h2>
-                    <p className="text-sm text-muted-foreground">
-                      {teams.length} team{teams.length === 1 ? "" : "s"}
-                    </p>
-                  </div>
+                <div className="flex w-full items-center gap-3">
+                  <h2 className="text-lg font-semibold text-foreground">Group {group.name}</h2>
+                  <p className="ml-auto text-right text-sm text-muted-foreground">
+                    {teams.length} team{teams.length === 1 ? "" : "s"}
+                  </p>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] leading-5 text-muted-foreground sm:text-xs">
+                  <span className="rounded-md bg-muted/60 px-2 py-0.5">W = Wins</span>
+                  <span className="rounded-md bg-muted/60 px-2 py-0.5">L = Losses</span>
+                  <span className="rounded-md bg-muted/60 px-2 py-0.5">PF = Points For</span>
+                  <span className="rounded-md bg-muted/60 px-2 py-0.5">PA = Points Against</span>
+                  <span className="rounded-md bg-muted/60 px-2 py-0.5">PD = Point Diff</span>
                 </div>
 
                 <div className="mt-4 hidden overflow-x-auto md:block">
