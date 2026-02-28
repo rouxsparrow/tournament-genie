@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import { Eye, EyeOff, X } from "lucide-react";
+import { Check, Eye, EyeOff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useGlobalTransition } from "@/components/use-global-transition";
@@ -51,42 +51,12 @@ function courtLabel(courtId: string) {
   return COURT_LABELS[courtId] ?? courtId;
 }
 
-function seriesLabel(match: ScheduleState["eligibleMatches"][number]) {
-  if (match.matchType === "KNOCKOUT") {
-    const normalized = match.label.replace(/^Series\s+/i, "").trim();
-    return normalized || match.label;
-  }
-  return match.label;
-}
-
-function roundLabel(match: ScheduleState["eligibleMatches"][number]) {
-  if (match.matchType !== "KNOCKOUT") return match.detail || "Group";
-  if (match.round === 1) return "PI";
-  if (match.round === 2) return "QF";
-  if (match.round === 3) return "SF";
-  if (match.round === 4 && match.matchNo === 2) return "Bronze";
-  if (match.round === 4) return "Final";
-  return match.round ? `R${match.round}` : "Round";
-}
-
 function stripMatchNumber(detail: string) {
   return detail
     .split("•")
     .map((part) => part.trim())
     .filter((part) => !/^Match\s+\d+/i.test(part))
     .join(" • ");
-}
-
-function assignPlayersLabel(match: ScheduleState["eligibleMatches"][number]) {
-  const home =
-    match.teams.homePlayers.length > 0
-      ? match.teams.homePlayers.join(" + ")
-      : match.teams.homeName;
-  const away =
-    match.teams.awayPlayers.length > 0
-      ? match.teams.awayPlayers.join(" + ")
-      : match.teams.awayName;
-  return `${home} vs ${away}`;
 }
 
 function renderTeamLineWithRestHighlight(params: {
@@ -133,12 +103,6 @@ function renderTeamLineWithRestHighlight(params: {
       })}
     </>
   );
-}
-
-function assignOptionLabel(match: ScheduleState["eligibleMatches"][number]) {
-  return `${match.categoryCode}·${seriesLabel(match)}·${roundLabel(match)}·${assignPlayersLabel(
-    match
-  )}`;
 }
 
 function matchTypeLabel(matchType: MatchType) {
@@ -220,6 +184,7 @@ export function ScheduleClient({
   const [category, setCategory] = useState<CategoryFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<QueueStatus>("ELIGIBLE");
   const [search, setSearch] = useState("");
+  const [assignSearch, setAssignSearch] = useState("");
   const [autoScheduleOverride, setAutoScheduleOverride] = useState<{
     stage: ScheduleStage;
     value: boolean;
@@ -423,6 +388,21 @@ export function ScheduleClient({
   }, [initialState.upcomingMatches, category, search]);
 
   const eligibleForModal = eligibleFiltered;
+  const eligibleForModalFiltered = useMemo(() => {
+    if (!assignSearch.trim()) return eligibleForModal;
+    const needle = assignSearch.trim().toLowerCase();
+    return eligibleForModal.filter((match) =>
+      match.teams.playerNames.join(" ").toLowerCase().includes(needle)
+    );
+  }, [assignSearch, eligibleForModal]);
+  const selectedMatchForModal =
+    eligibleForModal.find((entry) => entry.key === selectedMatchKey) ?? null;
+  const selectedMatchHasConflict = selectedMatchForModal
+    ? hasInPlayConflict(selectedMatchForModal.teams.playerIds, inPlayPlayerIds)
+    : false;
+  const isSelectedHiddenByFilter =
+    Boolean(selectedMatchForModal) &&
+    !eligibleForModalFiltered.some((match) => match.key === selectedMatchKey);
 
   return (
     <div className="space-y-6">
@@ -590,7 +570,12 @@ export function ScheduleClient({
                           size="sm"
                           className="w-full"
                           onClick={() => {
-                            setSelectedMatchKey(eligibleForModal[0]?.key ?? "");
+                            const firstAssignable = eligibleForModal.find(
+                              (match) =>
+                                !hasInPlayConflict(match.teams.playerIds, inPlayPlayerIds)
+                            );
+                            setAssignSearch("");
+                            setSelectedMatchKey(firstAssignable?.key ?? "");
                             setModal({ type: "assign", courtId: court.id });
                           }}
                           disabled={isPending || court.isLocked}
@@ -1017,7 +1002,7 @@ export function ScheduleClient({
 
       {modal && isAdmin ? (
         <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg">
+          <div className="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-xl border border-border bg-card p-5 shadow-lg">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-foreground">
                 Assign match to {courtLabel(modal.courtId)}
@@ -1031,56 +1016,138 @@ export function ScheduleClient({
                 Close
               </Button>
             </div>
-            <div className="mt-4 space-y-4">
-              <div>
-                <label className="text-xs text-muted-foreground">Match</label>
-                <select
-                  className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                  value={selectedMatchKey}
-                  onChange={(event) => setSelectedMatchKey(event.target.value)}
-                >
-                  {eligibleForModal.length === 0 ? (
-                    <option value="">No eligible matches</option>
-                  ) : (
-                    eligibleForModal.map((match) => {
-                      const isConflict = hasInPlayConflict(
-                        match.teams.playerIds,
-                        inPlayPlayerIds
-                      );
-                      return (
-                        <option
-                          key={match.key}
-                          value={match.key}
-                          disabled={isConflict}
-                        >
-                          {assignOptionLabel(match)}
-                        {isConflict ? " (players currently playing)" : ""}
-                        </option>
-                      );
-                    })
-                  )}
-                </select>
+            <div className="mt-4 flex min-h-0 flex-1 flex-col space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">
+                  Select one match card to assign to this court.
+                </div>
+                <input
+                  className="h-9 w-full rounded-md border border-border bg-background px-3 py-2 text-sm sm:w-64"
+                  placeholder="Search player name"
+                  value={assignSearch}
+                  onChange={(event) => setAssignSearch(event.target.value)}
+                />
               </div>
-              <div className="flex justify-end gap-2">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                {eligibleForModalFiltered.length === 0 ? (
+                  <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                    No eligible matches.
+                  </div>
+                ) : (
+                  eligibleForModalFiltered.map((match) => {
+                    const isConflict = hasInPlayConflict(
+                      match.teams.playerIds,
+                      inPlayPlayerIds
+                    );
+                    const isSelected = match.key === selectedMatchKey;
+                    return (
+                      <button
+                        key={match.key}
+                        type="button"
+                        aria-pressed={isSelected}
+                        onClick={() => {
+                          if (isConflict) return;
+                          setSelectedMatchKey(match.key);
+                        }}
+                        disabled={isConflict}
+                        className={`w-full rounded-lg border p-3 text-left transition ${
+                          isSelected
+                            ? "border-lime-400 bg-lime-500/10 ring-1 ring-lime-400/30"
+                            : "border-border bg-muted/30"
+                        } ${
+                          isConflict
+                            ? "cursor-not-allowed opacity-60"
+                            : isSelected
+                              ? ""
+                              : "hover:border-border/70 hover:bg-muted/50"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="text-xs text-muted-foreground">
+                            {match.categoryCode} • {match.label} • {match.detail}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={`rounded-full border px-2 py-1 text-xs ${restBadgeClass(
+                                match.restScore
+                              )}`}
+                            >
+                              <span className="rounded-sm bg-red-500/15 px-1 dark:bg-red-400/30">
+                                {match.restScore}
+                              </span>{" "}
+                              / 4 rest
+                              {match.restScore === 0 ? " (warning)" : ""}
+                            </div>
+                            {match.isForced ? (
+                              <Badge variant="outline" className="border-red-600 text-red-600">
+                                Forced
+                              </Badge>
+                            ) : null}
+                            {isSelected ? (
+                              <Badge className="border-lime-500 bg-lime-500 text-slate-950">
+                                <Check className="mr-1 h-3.5 w-3.5" />
+                                Selected
+                              </Badge>
+                            ) : null}
+                            {isConflict ? (
+                              <Badge className="border-orange-500 bg-orange-500 text-white">
+                                Waiting
+                              </Badge>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="mt-2 space-y-1 text-sm text-foreground">
+                          <div className="font-medium">
+                            {renderTeamLineWithRestHighlight({
+                              players: match.teams.homePlayers,
+                              playerIds: match.teams.homePlayerIds,
+                              fallback: match.teams.homeName,
+                              favouritePlayerName,
+                              inPlayPlayerIds,
+                              notRestedPlayerIds,
+                            })}
+                          </div>
+                          <div className="text-center text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            ----vs----
+                          </div>
+                          <div className="font-medium">
+                            {renderTeamLineWithRestHighlight({
+                              players: match.teams.awayPlayers,
+                              playerIds: match.teams.awayPlayerIds,
+                              fallback: match.teams.awayName,
+                              favouritePlayerName,
+                              inPlayPlayerIds,
+                              notRestedPlayerIds,
+                            })}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              {isSelectedHiddenByFilter ? (
+                <div className="text-xs text-muted-foreground">
+                  Selected match hidden by filter.
+                </div>
+              ) : null}
+              <div className="flex justify-center gap-2 border-t border-border pt-3">
                 <Button
                   type="button"
                   onClick={() => {
-                      const match = eligibleForModal.find(
-                        (entry) => entry.key === selectedMatchKey
-                      );
-                      if (!match) return;
+                      if (!selectedMatchForModal) return;
                       handleAction(async () => {
                         const result = await assignNext({
                           courtId: modal.courtId,
-                          matchType: match.matchType,
-                          matchId: match.matchId,
+                          matchType: selectedMatchForModal.matchType,
+                          matchId: selectedMatchForModal.matchId,
                           stage,
                         });
                         setModal(null);
                         return result;
                       });
                   }}
-                  disabled={isPending}
+                  disabled={isPending || !selectedMatchForModal || selectedMatchHasConflict}
                 >
                   Confirm assignment
                 </Button>
