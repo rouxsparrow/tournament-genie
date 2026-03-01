@@ -1,12 +1,27 @@
 import { prisma } from "@/lib/prisma";
 
-export async function getScheduledMatches() {
+type GetScheduledMatchesOptions = {
+  onlyWithActiveCourtAssignment?: boolean;
+};
+
+export async function getScheduledMatches(options?: GetScheduledMatchesOptions) {
+  const onlyWithActiveCourtAssignment = options?.onlyWithActiveCourtAssignment ?? false;
   const groupMatches = await prisma.match.findMany({
     where: {
       status: "SCHEDULED",
       stage: "GROUP",
       homeTeamId: { not: null },
       awayTeamId: { not: null },
+      ...(onlyWithActiveCourtAssignment
+        ? {
+            courtAssignments: {
+              some: {
+                status: "ACTIVE",
+                stage: "GROUP",
+              },
+            },
+          }
+        : {}),
     },
     include: {
       group: { include: { category: true } },
@@ -28,6 +43,16 @@ export async function getScheduledMatches() {
       isPublished: true,
       homeTeamId: { not: null },
       awayTeamId: { not: null },
+      ...(onlyWithActiveCourtAssignment
+        ? {
+            courtAssignments: {
+              some: {
+                status: "ACTIVE",
+                stage: "KNOCKOUT",
+              },
+            },
+          }
+        : {}),
     },
     include: {
       homeTeam: { include: { members: { include: { player: true } } } },
@@ -47,10 +72,5 @@ export async function getScheduledMatches() {
     ],
   });
 
-  const groups = await prisma.group.findMany({
-    include: { category: true },
-    orderBy: [{ category: { code: "asc" } }, { name: "asc" }],
-  });
-
-  return { groupMatches, knockoutMatches, groups };
+  return { groupMatches, knockoutMatches };
 }

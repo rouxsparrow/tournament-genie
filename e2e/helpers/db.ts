@@ -1,6 +1,9 @@
+import { createHash, randomBytes, scrypt as scryptCallback } from "crypto";
+import { promisify } from "util";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+const scrypt = promisify(scryptCallback);
 
 export async function markAllActiveGroupAssignmentsCompleted() {
   const active = await prisma.courtAssignment.findMany({
@@ -633,6 +636,132 @@ export async function setSecondChanceEnabled(
     where: { categoryCode },
     create: { categoryCode, secondChanceEnabled: enabled },
     update: { secondChanceEnabled: enabled },
+  });
+}
+
+async function hashRefereeTestPassword(password: string) {
+  const salt = randomBytes(16).toString("base64url");
+  const derived = (await scrypt(password, salt, 64)) as Buffer;
+  return `scrypt$${salt}$${derived.toString("base64url")}`;
+}
+
+function hashRefereeSessionToken(token: string) {
+  return createHash("sha256").update(token).digest("base64url");
+}
+
+export async function createTestRefereeAccount(params: {
+  prefix: string;
+  password: string;
+  username?: string;
+  displayName?: string;
+}) {
+  const randomSuffix = randomBytes(4).toString("hex");
+  const generatedUsername = `${params.prefix}_${Date.now()}_${randomSuffix}`.toLowerCase();
+  const username = (params.username ?? generatedUsername).trim();
+  const usernameNormalized = username.toLowerCase();
+  const displayName = params.displayName?.trim() || `Referee ${username}`;
+  const passwordHash = await hashRefereeTestPassword(params.password);
+
+  return prisma.refereeAccount.create({
+    data: {
+      username,
+      usernameNormalized,
+      displayName,
+      passwordHash,
+      isActive: true,
+    },
+    select: {
+      id: true,
+      username: true,
+      displayName: true,
+    },
+  });
+}
+
+export async function createRefereeSessionToken(refereeAccountId: string, ttlSeconds = 60 * 60 * 24) {
+  const token = randomBytes(32).toString("base64url");
+  await prisma.refereeSession.create({
+    data: {
+      refereeAccountId,
+      sessionTokenHash: hashRefereeSessionToken(token),
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000),
+    },
+  });
+  return token;
+}
+
+export async function setRefereeAccountActive(refereeAccountId: string, isActive: boolean) {
+  await prisma.refereeAccount.update({
+    where: { id: refereeAccountId },
+    data: { isActive },
+  });
+}
+
+export async function deleteRefereeSessionsByAccountIds(refereeAccountIds: string[]) {
+  if (refereeAccountIds.length === 0) return 0;
+  const deleted = await prisma.refereeSession.deleteMany({
+    where: {
+      refereeAccountId: { in: refereeAccountIds },
+    },
+  });
+  return deleted.count;
+}
+
+export async function deleteTestRefereeSubmissionsByAccountIds(refereeAccountIds: string[]) {
+  if (refereeAccountIds.length === 0) return 0;
+  const deleted = await prisma.refereeSubmission.deleteMany({
+    where: {
+      refereeAccountId: { in: refereeAccountIds },
+    },
+  });
+  return deleted.count;
+}
+
+export async function deleteTestRefereeAccountsByPrefix(prefix: string) {
+  const normalizedPrefix = prefix.trim().toLowerCase();
+  if (!normalizedPrefix) {
+    return {
+      deletedAccounts: 0,
+      deletedSessions: 0,
+      deletedSubmissions: 0,
+      accountIds: [] as string[],
+    };
+  }
+
+  const accounts = await prisma.refereeAccount.findMany({
+    where: {
+      usernameNormalized: {
+        startsWith: normalizedPrefix,
+      },
+    },
+    select: { id: true },
+  });
+  const accountIds = accounts.map((account) => account.id);
+  const deletedSubmissions = await deleteTestRefereeSubmissionsByAccountIds(accountIds);
+  const deletedSessions = await deleteRefereeSessionsByAccountIds(accountIds);
+  const deletedAccounts = await prisma.refereeAccount.deleteMany({
+    where: {
+      id: { in: accountIds },
+    },
+  });
+
+  return {
+    deletedAccounts: deletedAccounts.count,
+    deletedSessions,
+    deletedSubmissions,
+    accountIds,
+  };
+}
+
+export async function countTestRefereeAccountsByPrefix(prefix: string) {
+  const normalizedPrefix = prefix.trim().toLowerCase();
+  if (!normalizedPrefix) return 0;
+  return prisma.refereeAccount.count({
+    where: {
+      usernameNormalized: {
+        startsWith: normalizedPrefix,
+      },
+    },
   });
 }
 

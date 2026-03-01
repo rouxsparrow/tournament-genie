@@ -21,6 +21,8 @@ const ADMIN_LINKS = [
   { href: "/groups", label: "Groups", icon: FolderKanban },
   { href: "/knockout", label: "Knockout", icon: Trophy },
   { href: "/broadcast", label: "Broadcast", icon: Radio },
+  { href: "/referees", label: "Referees", icon: UserCheck },
+  { href: "/referee-submissions", label: "Referee Submissions", icon: UserCheck },
   { href: "/player-checkin", label: "Player Check-in", icon: UserCheck },
   { href: "/utilities", label: "Utilities", icon: Wrench },
   { href: "/schedule-overview", label: "Schedule Overview", icon: CalendarRange },

@@ -8,15 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-type CategoryCode = "MD" | "WD" | "XD";
-
 type Stage = "GROUP" | "KNOCKOUT";
-
-type GroupOption = {
-  id: string;
-  name: string;
-  categoryCode: CategoryCode;
-};
 
 type MatchOption = {
   id: string;
@@ -26,31 +18,23 @@ type MatchOption = {
 type MatchContextBarProps = {
   stage: Stage;
   onStageChange: (value: Stage) => void;
-  groups: GroupOption[];
-  selectedGroupId: string;
-  onGroupChange: (value: string) => void;
-  selectedSeries: "ALL" | "A" | "B";
-  onSeriesChange: (value: "ALL" | "A" | "B") => void;
   selectedCourt: "P5" | "P6" | "P7" | "P8" | "P9" | "";
   onCourtChange: (value: "P5" | "P6" | "P7" | "P8" | "P9" | "") => void;
   matches: MatchOption[];
   selectedMatchId: string;
   onMatchChange: (value: string) => void;
+  disabled?: boolean;
 };
 
 export function MatchContextBar({
   stage,
   onStageChange,
-  groups,
-  selectedGroupId,
-  onGroupChange,
-  selectedSeries,
-  onSeriesChange,
   selectedCourt,
   onCourtChange,
   matches,
   selectedMatchId,
   onMatchChange,
+  disabled = false,
 }: MatchContextBarProps) {
   const hasMatches = matches.length > 0;
 
@@ -65,15 +49,14 @@ export function MatchContextBar({
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <div className="col-span-2 md:col-span-1">
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div>
           <label className="text-xs font-medium text-muted-foreground">Court</label>
           <select
             value={selectedCourt}
+            disabled={disabled}
             onChange={(event) =>
-              onCourtChange(
-                event.target.value as "P5" | "P6" | "P7" | "P8" | "P9" | ""
-              )
+              onCourtChange(event.target.value as "P5" | "P6" | "P7" | "P8" | "P9" | "")
             }
             className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
           >
@@ -90,6 +73,7 @@ export function MatchContextBar({
           <label className="text-xs font-medium text-muted-foreground">Stage</label>
           <select
             value={stage}
+            disabled={disabled}
             onChange={(event) => onStageChange(event.target.value as Stage)}
             className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
           >
@@ -98,47 +82,10 @@ export function MatchContextBar({
           </select>
         </div>
 
-        {stage === "GROUP" ? (
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Group</label>
-            <select
-              value={selectedGroupId}
-              onChange={(event) => onGroupChange(event.target.value)}
-              className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
-            >
-              <option value="">All groups</option>
-              {groups.map((group) => (
-                <option key={group.id} value={group.id}>
-                  Group {group.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : (
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Series</label>
-            <select
-              value={selectedSeries}
-              onChange={(event) =>
-                onSeriesChange(event.target.value as "ALL" | "A" | "B")
-              }
-              className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
-            >
-              <option value="ALL">All Series</option>
-              <option value="A">Series A</option>
-              <option value="B">Series B</option>
-            </select>
-          </div>
-        )}
-
-        <div className="col-span-2 min-w-0 md:col-span-2">
+        <div className="col-span-2 min-w-0">
           <label className="text-xs font-medium text-muted-foreground">Match</label>
           <div className="mt-1">
-              <Select
-                value={selectedMatchId}
-                onValueChange={onMatchChange}
-                disabled={!hasMatches}
-              >
+            <Select value={selectedMatchId} onValueChange={onMatchChange} disabled={!hasMatches || disabled}>
               <SelectTrigger className="h-14 w-full min-w-0 md:h-10 [&>span]:block [&>span]:max-w-full [&>span]:text-left [&>span]:whitespace-pre-line md:[&>span]:truncate md:[&>span]:whitespace-nowrap">
                 <SelectValue
                   placeholder={hasMatches ? "Select match" : "No scheduled matches"}

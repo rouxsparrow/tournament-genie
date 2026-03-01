@@ -3,11 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { getScheduledMatches } from "@/lib/matches/getScheduledMatches";
 import {
   upsertKnockoutMatchScore,
   upsertMatchScoreNoRedirect,
 } from "@/app/matches/actions";
+import { requireReferee } from "@/lib/referee-auth";
 
 const COURT_LABELS: Record<string, "P5" | "P6" | "P7" | "P8" | "P9"> = {
   C1: "P5",
@@ -22,9 +22,6 @@ const scoreValueSchema = z.number().int().min(0).max(30);
 const submitRefereeScoreSchema = z.object({
   stage: z.enum(["GROUP", "KNOCKOUT"]),
   matchId: z.string().min(1, "Match is required."),
-  passcode: z
-    .string()
-    .regex(/^\d{4}$/, "Passcode must be a 4 digit number."),
   lockState: z.literal(true),
   notes: z.string().max(500).optional(),
   bestOf3Enabled: z.boolean().optional(),
@@ -35,54 +32,28 @@ const submitRefereeScoreSchema = z.object({
   }),
 });
 
+const REFEREE_SUBMISSION_LIMIT = 20;
+const REFEREE_SUBMISSION_WINDOW_MS = 60_000;
+
 type SubmitRefereeScoreInput = z.infer<typeof submitRefereeScoreSchema>;
 
-function getConfiguredRefereePasscode() {
-  const configuredPasscode = process.env.Referee_code ?? process.env.REFEREE_CODE ?? "";
-  if (!/^\d{4}$/.test(configuredPasscode)) return null;
-  return configuredPasscode;
+async function isRateLimited(refereeAccountId: string) {
+  const windowStart = new Date(Date.now() - REFEREE_SUBMISSION_WINDOW_MS);
+  const recentCount = await prisma.refereeSubmission.count({
+    where: {
+      refereeAccountId,
+      submittedAt: {
+        gte: windowStart,
+      },
+    },
+  });
+
+  return recentCount >= REFEREE_SUBMISSION_LIMIT;
 }
 
-export async function fetchRefereeScheduledMatches() {
-  return getScheduledMatches();
-}
-
-export async function verifyRefereePasscode(passcode: string) {
-  const configuredPasscode = getConfiguredRefereePasscode();
-  if (!configuredPasscode) {
-    return { error: "Referee passcode is not configured correctly." };
-  }
-  if (!/^\d{4}$/.test(passcode)) {
-    return { error: "Passcode must be a 4 digit number." };
-  }
-  if (passcode !== configuredPasscode) {
-    return { error: "Invalid referee passcode." };
-  }
-  return { ok: true as const };
-}
-
-export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
-  const parsed = submitRefereeScoreSchema.safeParse(input);
-  if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? "Invalid submission." };
-  }
-
-  const payload = parsed.data;
-  if (payload.scores.game1.home === 0 && payload.scores.game1.away === 0) {
-    return { error: "Score cannot be 0-0" };
-  }
-
-  const configuredPasscode = getConfiguredRefereePasscode();
-  if (!configuredPasscode) {
-    return { error: "Referee passcode is not configured correctly." };
-  }
-  if (payload.passcode !== configuredPasscode) {
-    return { error: "Invalid referee passcode." };
-  }
-
+function buildRefereeScoreFormData(payload: SubmitRefereeScoreInput) {
   const scoreFormData = new FormData();
   scoreFormData.set("matchId", payload.matchId);
-  scoreFormData.set("refereePasscode", payload.passcode);
   scoreFormData.set("game1Home", String(payload.scores.game1.home));
   scoreFormData.set("game1Away", String(payload.scores.game1.away));
 
@@ -94,6 +65,31 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
     scoreFormData.set("game3Home", String(payload.scores.game3.home));
     scoreFormData.set("game3Away", String(payload.scores.game3.away));
   }
+
+  return scoreFormData;
+}
+
+export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
+  const parsed = submitRefereeScoreSchema.safeParse(input);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid submission." };
+  }
+
+  const referee = await requireReferee({ onFail: "return" });
+  if ("error" in referee) {
+    return referee;
+  }
+
+  if (await isRateLimited(referee.id)) {
+    return { error: "Too many submissions. Please wait and try again." };
+  }
+
+  const payload = parsed.data;
+  if (payload.scores.game1.home === 0 && payload.scores.game1.away === 0) {
+    return { error: "Score cannot be 0-0" };
+  }
+
+  const scoreFormData = buildRefereeScoreFormData(payload);
 
   if (payload.stage === "GROUP") {
     const match = await prisma.match.findUnique({
@@ -109,8 +105,29 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
       return { error: "Match not found." };
     }
 
+    if (match.status !== "SCHEDULED") {
+      return { error: "Only scheduled matches can be submitted by referee." };
+    }
+
+    const assignment = await prisma.courtAssignment.findFirst({
+      where: {
+        stage: "GROUP",
+        status: "ACTIVE",
+        matchType: "GROUP",
+        groupMatchId: payload.matchId,
+      },
+      orderBy: { assignedAt: "desc" },
+      select: { courtId: true },
+    });
+
+    if (!assignment) {
+      return { error: "Match is not assigned to an active court." };
+    }
+
     scoreFormData.set("category", match.group.category.code);
-    const result = await upsertMatchScoreNoRedirect(scoreFormData);
+    const result = await upsertMatchScoreNoRedirect(scoreFormData, {
+      actor: "referee",
+    });
     if ("error" in result && result.error) {
       return { error: result.error };
     }
@@ -121,6 +138,7 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
         categoryCode: match.group.category.code,
         lockState: payload.lockState,
         submittedBy: "referee",
+        refereeAccountId: referee.id,
         scores: {
           game1: payload.scores.game1,
           game2: payload.scores.game2 ?? null,
@@ -131,16 +149,6 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
       },
     });
 
-    const assignment = await prisma.courtAssignment.findFirst({
-      where: {
-        stage: "GROUP",
-        matchType: "GROUP",
-        groupMatchId: payload.matchId,
-      },
-      orderBy: { assignedAt: "desc" },
-      select: { courtId: true },
-    });
-
     await prisma.scheduleActionLog.create({
       data: {
         action: "REFEREE_SCORE_SUBMITTED",
@@ -148,7 +156,7 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
           stage: "GROUP",
           matchType: "GROUP",
           matchId: payload.matchId,
-          courtLabel: assignment ? COURT_LABELS[assignment.courtId] ?? null : null,
+          courtLabel: COURT_LABELS[assignment.courtId] ?? null,
           categoryCode: match.group.category.code,
           series: null,
           round: null,
@@ -157,6 +165,8 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
           homeTeamName: match.homeTeam?.name ?? "TBD",
           awayTeamName: match.awayTeam?.name ?? "TBD",
           submittedAt: new Date().toISOString(),
+          submittedByRefereeId: referee.id,
+          submittedByRefereeName: referee.displayName,
           isRead: false,
         },
       },
@@ -171,6 +181,7 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
         round: true,
         matchNo: true,
         isBestOf3: true,
+        status: true,
         homeTeam: { select: { name: true } },
         awayTeam: { select: { name: true } },
       },
@@ -180,7 +191,28 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
       return { error: "Match not found." };
     }
 
-    const result = await upsertKnockoutMatchScore(scoreFormData);
+    if (match.status !== "SCHEDULED") {
+      return { error: "Only scheduled matches can be submitted by referee." };
+    }
+
+    const assignment = await prisma.courtAssignment.findFirst({
+      where: {
+        stage: "KNOCKOUT",
+        status: "ACTIVE",
+        matchType: "KNOCKOUT",
+        knockoutMatchId: payload.matchId,
+      },
+      orderBy: { assignedAt: "desc" },
+      select: { courtId: true },
+    });
+
+    if (!assignment) {
+      return { error: "Match is not assigned to an active court." };
+    }
+
+    const result = await upsertKnockoutMatchScore(scoreFormData, {
+      actor: "referee",
+    });
     if (result?.error) {
       return { error: result.error };
     }
@@ -191,6 +223,7 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
         categoryCode: match.categoryCode,
         lockState: payload.lockState,
         submittedBy: "referee",
+        refereeAccountId: referee.id,
         scores: {
           game1: payload.scores.game1,
           game2: payload.scores.game2 ?? null,
@@ -205,16 +238,6 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
       },
     });
 
-    const assignment = await prisma.courtAssignment.findFirst({
-      where: {
-        stage: "KNOCKOUT",
-        matchType: "KNOCKOUT",
-        knockoutMatchId: payload.matchId,
-      },
-      orderBy: { assignedAt: "desc" },
-      select: { courtId: true },
-    });
-
     await prisma.scheduleActionLog.create({
       data: {
         action: "REFEREE_SCORE_SUBMITTED",
@@ -222,7 +245,7 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
           stage: "KNOCKOUT",
           matchType: "KNOCKOUT",
           matchId: payload.matchId,
-          courtLabel: assignment ? COURT_LABELS[assignment.courtId] ?? null : null,
+          courtLabel: COURT_LABELS[assignment.courtId] ?? null,
           categoryCode: match.categoryCode,
           series: match.series,
           round: match.round,
@@ -231,6 +254,8 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
           homeTeamName: match.homeTeam?.name ?? "TBD",
           awayTeamName: match.awayTeam?.name ?? "TBD",
           submittedAt: new Date().toISOString(),
+          submittedByRefereeId: referee.id,
+          submittedByRefereeName: referee.displayName,
           isRead: false,
         },
       },
