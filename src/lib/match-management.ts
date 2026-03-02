@@ -83,12 +83,31 @@ export async function generateGroupStageMatchesForCategory(categoryCode: Categor
 }
 
 export async function clearGroupStageMatchesForCategory(categoryCode: CategoryCode) {
-  const result = await prisma.match.deleteMany({
+  const groupMatches = await prisma.match.findMany({
     where: {
       stage: "GROUP",
       group: { category: { code: categoryCode } },
     },
+    select: { id: true },
   });
+
+  if (groupMatches.length === 0) {
+    return { deletedCount: 0 };
+  }
+
+  const groupMatchIds = groupMatches.map((match) => match.id);
+
+  const [, result] = await prisma.$transaction([
+    prisma.refereeSubmission.deleteMany({
+      where: {
+        matchType: "GROUP",
+        groupMatchId: { in: groupMatchIds },
+      },
+    }),
+    prisma.match.deleteMany({
+      where: { id: { in: groupMatchIds } },
+    }),
+  ]);
 
   return { deletedCount: result.count };
 }

@@ -15,10 +15,15 @@ const PUBLIC_PREFIXES = ["/_next", "/favicon.ico", "/assets", "/images"];
 const PUBLIC_API = new Set(["/api/favourite"]);
 
 function isPublicPath(pathname: string) {
-  if (PUBLIC_PATHS.has(pathname)) return true;
-  if (PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return true;
-  if (pathname.startsWith("/api")) {
-    return PUBLIC_API.has(pathname);
+  const normalizedPath =
+    pathname !== "/" && pathname.endsWith("/")
+      ? pathname.slice(0, -1)
+      : pathname;
+
+  if (PUBLIC_PATHS.has(normalizedPath)) return true;
+  if (PUBLIC_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix))) return true;
+  if (normalizedPath.startsWith("/api")) {
+    return PUBLIC_API.has(normalizedPath);
   }
   return false;
 }

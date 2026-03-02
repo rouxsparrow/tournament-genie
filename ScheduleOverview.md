@@ -9,8 +9,9 @@ This document defines the static overview schedule generation for
 - Ignores match completion status (includes all generated group matches)
 
 ## Slot Model
-- 20-minute slots
-- Start time: 12:30 PM
+- Configurable query params: `slotMinutes`, `startTime`, `bufferMinutes`
+- Defaults: `slotMinutes=20`, `startTime=12:30 PM`, `bufferMinutes=0`
+- Slot timeline spacing: `slotMinutes + bufferMinutes`
 - 5 courts per slot (P5–P9)
 - Generate slots until all matches are placed or a safety cap is reached
 

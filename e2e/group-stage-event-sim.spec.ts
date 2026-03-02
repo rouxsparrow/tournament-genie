@@ -11,6 +11,9 @@ import {
 import { loginAsAdmin } from "./helpers/auth";
 import {
   closeDb,
+  countTestRefereeAccountsByPrefix,
+  createTestRefereeAccount,
+  deleteTestRefereeAccountsByPrefix,
   getGroupSimulationCourtLabels,
   getGeneratedGroupMatchesByCategory,
   getGroupProgress,
@@ -23,6 +26,8 @@ const MAX_REFEREE_LANES = 5;
 const MAX_ITERATIONS = 200;
 const MAX_STALLED_ITERATIONS = 20;
 const STEP_ACTION_TIMEOUT_MS = 15_000;
+const TEST_REF_PREFIX = `test_ref_event_${Date.now()}`;
+const TEST_REF_PASSWORD = "TestRefPass123!";
 const COURT_LABELS: Record<string, string> = {
   C1: "P5",
   C2: "P6",
@@ -37,6 +42,11 @@ type RefereeLane = {
   context: BrowserContext;
   page: Page;
   courtLabel: string;
+};
+
+type RefereeCredentials = {
+  username: string;
+  password: string;
 };
 
 function escapeRegExp(value: string) {
@@ -204,16 +214,16 @@ async function submitScoreFromReferee(page: Page, teams: TeamPair, courtLabel: s
 async function createRefereeLane(
   browser: Browser,
   courtLabel: string,
-  passcode: string
+  credentials: RefereeCredentials
 ) {
   const context = await browser.newContext();
-  await context.addInitScript(
-    ({ code }) => {
-      window.localStorage.setItem("referee:passcode", code);
-    },
-    { code: passcode }
-  );
   const page = await context.newPage();
+  await page.goto("/referee", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Referee Login" })).toBeVisible();
+  await page.getByLabel("Username").fill(credentials.username);
+  await page.getByLabel("Password").fill(credentials.password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Referee Scoresheet" })).toBeVisible();
   return { context, page, courtLabel } satisfies RefereeLane;
 }
 
@@ -231,7 +241,14 @@ async function saveDeadlockDiagnostics(adminPage: Page, refereeLanes: RefereeLan
 
 test.describe.configure({ mode: "serial" });
 
+test.afterEach(async () => {
+  await deleteTestRefereeAccountsByPrefix(TEST_REF_PREFIX);
+  const remaining = await countTestRefereeAccountsByPrefix(TEST_REF_PREFIX);
+  expect(remaining).toBe(0);
+});
+
 test.afterAll(async () => {
+  await deleteTestRefereeAccountsByPrefix(TEST_REF_PREFIX);
   await closeDb();
 });
 
@@ -242,11 +259,14 @@ test("Group stage real-life event simulation (admin + 5 referees, auto off) @eve
   test.setTimeout(20 * 60_000);
 
   const metrics = new MetricsCollector();
-  const passcode =
-    process.env.E2E_REFEREE_CODE ??
-    process.env.Referee_code ??
-    process.env.REFEREE_CODE ??
-    "1234";
+  const refereeAccount = await createTestRefereeAccount({
+    prefix: TEST_REF_PREFIX,
+    password: TEST_REF_PASSWORD,
+  });
+  const refereeCredentials: RefereeCredentials = {
+    username: refereeAccount.username,
+    password: TEST_REF_PASSWORD,
+  };
 
   const preconditions = await getGroupStagePreconditions();
   expect(preconditions.schedulableGroupMatches).toBeGreaterThan(0);
@@ -280,18 +300,12 @@ test("Group stage real-life event simulation (admin + 5 referees, auto off) @eve
 
   const refereeLanes: RefereeLane[] = [];
   for (const courtLabel of laneLabels) {
-    const refereeLane = await createRefereeLane(browser, courtLabel, passcode);
-    refereeLanes.push(refereeLane);
-    await metrics.time(
+    const refereeLane = await metrics.time(
       "T_referee_nav",
-      async () => {
-        await refereeLane.page.goto("/referee", { waitUntil: "domcontentloaded" });
-        await expect(
-          refereeLane.page.getByRole("heading", { name: "Referee Scoresheet" })
-        ).toBeVisible();
-      },
+      async () => createRefereeLane(browser, courtLabel, refereeCredentials),
       { court: courtLabel }
     );
+    refereeLanes.push(refereeLane);
     refereeLane.page.setDefaultTimeout(STEP_ACTION_TIMEOUT_MS);
   }
 

@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { deleteTeam, toggleKnockOutSeed } from "@/app/teams/actions";
+import { Badge } from "@/components/ui/badge";
+import { deleteTeam } from "@/app/teams/actions";
 import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
 type TeamMember = {
@@ -15,7 +16,7 @@ type Team = {
   name: string;
   category: { code: "MD" | "WD" | "XD" };
   members: TeamMember[];
-  flags: { isKnockOutSeed: boolean } | null;
+  flags: { isGroupSeed: boolean } | null;
 };
 
 type TeamsTableProps = {
@@ -73,24 +74,41 @@ export function TeamsTable({ teams }: TeamsTableProps) {
               <th className="px-4 py-3">Category</th>
               <th className="px-4 py-3">Player 1</th>
               <th className="px-4 py-3">Player 2</th>
-              <th className="px-4 py-3">KO Seed</th>
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredTeams.length === 0 ? (
               <tr>
-                <td className="px-4 py-6 text-muted-foreground" colSpan={6}>
+                <td className="px-4 py-6 text-muted-foreground" colSpan={5}>
                   No teams found.
                 </td>
               </tr>
             ) : (
               filteredTeams.map((team) => {
                 const [member1, member2] = team.members;
+                const isGroupSeed = team.flags?.isGroupSeed ?? false;
                 return (
-                  <tr key={team.id} className="border-t border-border">
-                    <td className="px-4 py-4 font-medium text-foreground">
-                      {teamLabel(team)}
+                  <tr
+                    key={team.id}
+                    className={`border-t border-border ${
+                      isGroupSeed ? "bg-amber-50/40 dark:bg-amber-500/10" : ""
+                    }`}
+                  >
+                    <td className="px-4 py-4">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 flex-1 break-words font-medium text-foreground">
+                          {teamLabel(team)}
+                        </span>
+                        {isGroupSeed ? (
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 whitespace-nowrap border-amber-400 text-amber-700 dark:text-amber-300"
+                          >
+                            Group Seed
+                          </Badge>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="px-4 py-4 text-muted-foreground">
                       {team.category.code}
@@ -100,22 +118,6 @@ export function TeamsTable({ teams }: TeamsTableProps) {
                     </td>
                     <td className="px-4 py-4 text-muted-foreground">
                       {member2?.player.name ?? "-"}
-                    </td>
-                    <td className="px-4 py-4 text-muted-foreground">
-                      <form
-                        action={toggleKnockOutSeed.bind(null, team.id)}
-                        className="flex items-center gap-2"
-                      >
-                        <GlobalFormPendingBridge />
-                        <input
-                          type="checkbox"
-                          name="isKnockOutSeed"
-                          defaultChecked={team.flags?.isKnockOutSeed ?? false}
-                        />
-                        <Button type="submit" size="sm" variant="outline">
-                          Save
-                        </Button>
-                      </form>
                     </td>
                     <td className="px-4 py-4">
                       <div className="flex justify-end gap-2">

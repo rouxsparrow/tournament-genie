@@ -1,6 +1,9 @@
+import { createHash, randomBytes, scrypt as scryptCallback } from "crypto";
+import { promisify } from "util";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+const scrypt = promisify(scryptCallback);
 
 export async function markAllActiveGroupAssignmentsCompleted() {
   const active = await prisma.courtAssignment.findMany({
@@ -12,6 +15,30 @@ export async function markAllActiveGroupAssignmentsCompleted() {
   await prisma.match.updateMany({
     where: { id: { in: ids } },
     data: { status: "COMPLETED", completedAt: new Date() },
+  });
+}
+
+export async function clearActiveGroupAssignments() {
+  await prisma.courtAssignment.updateMany({
+    where: { stage: "GROUP", status: "ACTIVE" },
+    data: { status: "CLEARED", clearedAt: new Date() },
+  });
+}
+
+export async function countActiveGroupAssignmentsWithUncheckedPlayers() {
+  return prisma.courtAssignment.count({
+    where: {
+      stage: "GROUP",
+      status: "ACTIVE",
+      matchType: "GROUP",
+      groupMatchId: { not: null },
+      groupMatch: {
+        OR: [
+          { homeTeam: { members: { some: { player: { checkedIn: false } } } } },
+          { awayTeam: { members: { some: { player: { checkedIn: false } } } } },
+        ],
+      },
+    },
   });
 }
 
@@ -542,9 +569,23 @@ export async function getTop8GlobalRankingTeamIds(categoryCode: "MD" | "WD" | "X
   return ranking.slice(0, 8).map((row) => row.teamId);
 }
 
+export async function getTop16GlobalRankingTeamIds(categoryCode: "MD" | "WD" | "XD") {
+  const ranking = await getGlobalRankingEntries(categoryCode);
+  return ranking.slice(0, 16).map((row) => row.teamId);
+}
+
 export async function getSeriesAQualifierTeamIds(categoryCode: "MD" | "WD" | "XD") {
   const qualifiers = await prisma.seriesQualifier.findMany({
     where: { categoryCode, series: "A" },
+    select: { teamId: true },
+    orderBy: { teamId: "asc" },
+  });
+  return qualifiers.map((entry) => entry.teamId);
+}
+
+export async function getSeriesBQualifierTeamIds(categoryCode: "MD" | "WD" | "XD") {
+  const qualifiers = await prisma.seriesQualifier.findMany({
+    where: { categoryCode, series: "B" },
     select: { teamId: true },
     orderBy: { teamId: "asc" },
   });
@@ -567,16 +608,56 @@ export async function setGroupStageLock(categoryCode: "MD" | "WD" | "XD", locked
   });
 }
 
-export async function seedSeriesAQualifiersFromTop8(categoryCode: "MD" | "WD" | "XD") {
+export async function seedSeriesQualifiersFromCurrentRules(categoryCode: "MD" | "WD" | "XD") {
   const ranking = await getGlobalRankingEntries(categoryCode);
-  const top8 = ranking.slice(0, 8);
   await prisma.seriesQualifier.deleteMany({ where: { categoryCode } });
-  if (top8.length === 0) {
-    return { seriesACount: 0, seriesBCount: 0 };
+
+  if (ranking.length === 0) {
+    return { seriesACount: 0, seriesBCount: 0, eliminatedCount: 0 };
   }
 
+  if (categoryCode === "WD") {
+    if (ranking.length < 4) {
+      return {
+        seriesACount: 0,
+        seriesBCount: 0,
+        eliminatedCount: ranking.length,
+      };
+    }
+
+    const qualifiedCount = ranking.length >= 8 ? 8 : 4;
+    const seriesA = ranking.slice(0, qualifiedCount);
+    await prisma.seriesQualifier.createMany({
+      data: seriesA.map((entry) => ({
+        categoryCode,
+        series: "A",
+        groupId: entry.groupId,
+        teamId: entry.teamId,
+        groupRank: entry.groupRank,
+      })),
+    });
+
+    return {
+      seriesACount: seriesA.length,
+      seriesBCount: 0,
+      eliminatedCount: Math.max(0, ranking.length - seriesA.length),
+    };
+  }
+
+  if (ranking.length < 8) {
+    return {
+      seriesACount: 0,
+      seriesBCount: 0,
+      eliminatedCount: ranking.length,
+    };
+  }
+
+  const eligible = ranking.slice(0, 16);
+  const seriesA = eligible.slice(0, 8);
+  const seriesB = eligible.slice(8);
+
   await prisma.seriesQualifier.createMany({
-    data: top8.map((entry) => ({
+    data: seriesA.map((entry) => ({
       categoryCode,
       series: "A",
       groupId: entry.groupId,
@@ -585,10 +666,9 @@ export async function seedSeriesAQualifiersFromTop8(categoryCode: "MD" | "WD" | 
     })),
   });
 
-  const rest = ranking.slice(8);
-  if (rest.length > 0) {
+  if (seriesB.length > 0) {
     await prisma.seriesQualifier.createMany({
-      data: rest.map((entry) => ({
+      data: seriesB.map((entry) => ({
         categoryCode,
         series: "B",
         groupId: entry.groupId,
@@ -598,7 +678,51 @@ export async function seedSeriesAQualifiersFromTop8(categoryCode: "MD" | "WD" | 
     });
   }
 
-  return { seriesACount: top8.length, seriesBCount: rest.length };
+  return {
+    seriesACount: seriesA.length,
+    seriesBCount: seriesB.length,
+    eliminatedCount: Math.max(0, ranking.length - eligible.length),
+  };
+}
+
+export async function seedMdXdSeriesQualifiersWithSeriesBCount(
+  categoryCode: "MD" | "XD",
+  seriesBCount: number
+) {
+  const ranking = await getGlobalRankingEntries(categoryCode);
+  const needed = 8 + seriesBCount;
+  await prisma.seriesQualifier.deleteMany({ where: { categoryCode } });
+
+  if (seriesBCount < 0 || ranking.length < needed || ranking.length < 8) {
+    return { ok: false as const, rankingCount: ranking.length, needed };
+  }
+
+  const seriesA = ranking.slice(0, 8);
+  const seriesB = ranking.slice(8, needed);
+
+  await prisma.seriesQualifier.createMany({
+    data: seriesA.map((entry) => ({
+      categoryCode,
+      series: "A",
+      groupId: entry.groupId,
+      teamId: entry.teamId,
+      groupRank: entry.groupRank,
+    })),
+  });
+
+  if (seriesB.length > 0) {
+    await prisma.seriesQualifier.createMany({
+      data: seriesB.map((entry) => ({
+        categoryCode,
+        series: "B",
+        groupId: entry.groupId,
+        teamId: entry.teamId,
+        groupRank: entry.groupRank,
+      })),
+    });
+  }
+
+  return { ok: true as const, seriesACount: seriesA.length, seriesBCount: seriesB.length };
 }
 
 export async function setSecondChanceEnabled(
@@ -609,6 +733,132 @@ export async function setSecondChanceEnabled(
     where: { categoryCode },
     create: { categoryCode, secondChanceEnabled: enabled },
     update: { secondChanceEnabled: enabled },
+  });
+}
+
+async function hashRefereeTestPassword(password: string) {
+  const salt = randomBytes(16).toString("base64url");
+  const derived = (await scrypt(password, salt, 64)) as Buffer;
+  return `scrypt$${salt}$${derived.toString("base64url")}`;
+}
+
+function hashRefereeSessionToken(token: string) {
+  return createHash("sha256").update(token).digest("base64url");
+}
+
+export async function createTestRefereeAccount(params: {
+  prefix: string;
+  password: string;
+  username?: string;
+  displayName?: string;
+}) {
+  const randomSuffix = randomBytes(4).toString("hex");
+  const generatedUsername = `${params.prefix}_${Date.now()}_${randomSuffix}`.toLowerCase();
+  const username = (params.username ?? generatedUsername).trim();
+  const usernameNormalized = username.toLowerCase();
+  const displayName = params.displayName?.trim() || `Referee ${username}`;
+  const passwordHash = await hashRefereeTestPassword(params.password);
+
+  return prisma.refereeAccount.create({
+    data: {
+      username,
+      usernameNormalized,
+      displayName,
+      passwordHash,
+      isActive: true,
+    },
+    select: {
+      id: true,
+      username: true,
+      displayName: true,
+    },
+  });
+}
+
+export async function createRefereeSessionToken(refereeAccountId: string, ttlSeconds = 60 * 60 * 24) {
+  const token = randomBytes(32).toString("base64url");
+  await prisma.refereeSession.create({
+    data: {
+      refereeAccountId,
+      sessionTokenHash: hashRefereeSessionToken(token),
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000),
+    },
+  });
+  return token;
+}
+
+export async function setRefereeAccountActive(refereeAccountId: string, isActive: boolean) {
+  await prisma.refereeAccount.update({
+    where: { id: refereeAccountId },
+    data: { isActive },
+  });
+}
+
+export async function deleteRefereeSessionsByAccountIds(refereeAccountIds: string[]) {
+  if (refereeAccountIds.length === 0) return 0;
+  const deleted = await prisma.refereeSession.deleteMany({
+    where: {
+      refereeAccountId: { in: refereeAccountIds },
+    },
+  });
+  return deleted.count;
+}
+
+export async function deleteTestRefereeSubmissionsByAccountIds(refereeAccountIds: string[]) {
+  if (refereeAccountIds.length === 0) return 0;
+  const deleted = await prisma.refereeSubmission.deleteMany({
+    where: {
+      refereeAccountId: { in: refereeAccountIds },
+    },
+  });
+  return deleted.count;
+}
+
+export async function deleteTestRefereeAccountsByPrefix(prefix: string) {
+  const normalizedPrefix = prefix.trim().toLowerCase();
+  if (!normalizedPrefix) {
+    return {
+      deletedAccounts: 0,
+      deletedSessions: 0,
+      deletedSubmissions: 0,
+      accountIds: [] as string[],
+    };
+  }
+
+  const accounts = await prisma.refereeAccount.findMany({
+    where: {
+      usernameNormalized: {
+        startsWith: normalizedPrefix,
+      },
+    },
+    select: { id: true },
+  });
+  const accountIds = accounts.map((account) => account.id);
+  const deletedSubmissions = await deleteTestRefereeSubmissionsByAccountIds(accountIds);
+  const deletedSessions = await deleteRefereeSessionsByAccountIds(accountIds);
+  const deletedAccounts = await prisma.refereeAccount.deleteMany({
+    where: {
+      id: { in: accountIds },
+    },
+  });
+
+  return {
+    deletedAccounts: deletedAccounts.count,
+    deletedSessions,
+    deletedSubmissions,
+    accountIds,
+  };
+}
+
+export async function countTestRefereeAccountsByPrefix(prefix: string) {
+  const normalizedPrefix = prefix.trim().toLowerCase();
+  if (!normalizedPrefix) return 0;
+  return prisma.refereeAccount.count({
+    where: {
+      usernameNormalized: {
+        startsWith: normalizedPrefix,
+      },
+    },
   });
 }
 

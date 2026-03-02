@@ -5,18 +5,36 @@ import { Button } from "@/components/ui/button";
 import {
   checkDuplicateAssignments,
   checkLegacyCourtIds,
+  deleteAllPlayersWithRelatedData,
+  deleteAllTeamsWithRelatedData,
+  clearMdGroupRefereeSubmissions,
+  clearRefereeSubmissions,
   clearDuplicateAssignments,
   type DuplicateAssignmentSummary,
   fixLegacyCourtIds,
+  setAutoScheduleFunctionEnabled as setAutoScheduleFunctionEnabledAction,
   type LegacyCourtSummary,
   previewTestDataCleanup,
   removeTestDataCleanup,
   type TestDataCleanupPreview,
 } from "@/app/utilities/actions";
+import { checkInAllPlayers, uncheckInAllPlayers } from "@/app/player-checkin/actions";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 type UtilitiesClientProps = {
   initialSummary: DuplicateAssignmentSummary;
   initialLegacySummary: LegacyCourtSummary;
+  initialAutoScheduleFunctionEnabled: boolean;
 };
 
 function totalDuplicates(summary: DuplicateAssignmentSummary) {
@@ -56,11 +74,17 @@ function SectionShell({
 export function UtilitiesClient({
   initialSummary,
   initialLegacySummary,
+  initialAutoScheduleFunctionEnabled,
 }: UtilitiesClientProps) {
+  const [refereeMatchType, setRefereeMatchType] = useState<"ALL" | "GROUP" | "KNOCKOUT">("ALL");
+  const [refereeCategory, setRefereeCategory] = useState<"ALL" | "MD" | "WD" | "XD">("ALL");
   const [testPreview, setTestPreview] = useState<TestDataCleanupPreview | null>(null);
   const [confirmToken, setConfirmToken] = useState("");
   const [summary, setSummary] = useState(initialSummary);
   const [legacySummary, setLegacySummary] = useState(initialLegacySummary);
+  const [autoScheduleFunctionEnabled, setAutoScheduleFunctionEnabledState] = useState(
+    initialAutoScheduleFunctionEnabled
+  );
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -118,6 +142,78 @@ export function UtilitiesClient({
     });
   };
 
+  const runClearRefereeSubmissions = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await clearRefereeSubmissions({
+        matchType: refereeMatchType,
+        categoryCode: refereeCategory,
+      });
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to clear referee submissions.");
+        return;
+      }
+      setMessage(
+        `Referee submissions cleared: ${result.deletedCount}. Remaining with same filters: ${result.remainingCount}.`
+      );
+    });
+  };
+
+  const runClearMdGroupRefereeSubmissions = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await clearMdGroupRefereeSubmissions();
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to clear MD group referee submissions.");
+        return;
+      }
+      setMessage(
+        `MD group referee submissions cleared: ${result.deletedCount}. Remaining with same filters: ${result.remainingCount}.`
+      );
+    });
+  };
+
+  const runCheckInAllPlayers = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await checkInAllPlayers();
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to check in all players.");
+        return;
+      }
+      setMessage(`All players checked in: ${result.updatedCount}.`);
+    });
+  };
+
+  const runUncheckInAllPlayers = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await uncheckInAllPlayers();
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to uncheck all players.");
+        return;
+      }
+      setMessage(`All players unchecked: ${result.updatedCount}.`);
+    });
+  };
+
+  const runSetAutoScheduleFunctionEnabled = (enabled: boolean) => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await setAutoScheduleFunctionEnabledAction(enabled);
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to update Auto Schedule function.");
+        return;
+      }
+      setAutoScheduleFunctionEnabledState(result.enabled);
+      setMessage(
+        result.enabled
+          ? "Auto Schedule function enabled."
+          : "Auto Schedule function disabled. Group and Knockout auto schedule were turned off."
+      );
+    });
+  };
+
   const runTestPreview = () => {
     setMessage(null);
     startTransition(async () => {
@@ -145,6 +241,34 @@ export function UtilitiesClient({
     });
   };
 
+  const runDeleteAllTeams = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await deleteAllTeamsWithRelatedData();
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to delete all teams.");
+        return;
+      }
+      setMessage(
+        `All teams cleanup complete. Deleted teams: ${result.deleted.teams}; deleted group matches: ${result.deleted.groupMatches}; deleted knockout matches: ${result.deleted.knockoutMatches}; remaining players: ${result.remaining.players}.`
+      );
+    });
+  };
+
+  const runDeleteAllPlayers = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await deleteAllPlayersWithRelatedData();
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to delete all players.");
+        return;
+      }
+      setMessage(
+        `All players cleanup complete. Deleted players: ${result.deleted.players}; deleted teams: ${result.deleted.teams}; remaining teams: ${result.remaining.teams}.`
+      );
+    });
+  };
+
   const canRunTestCleanup = Boolean(
     testPreview && testPreview.totalRows > 0 && confirmToken === "CONFIRM_TEST_DELETE"
   );
@@ -158,9 +282,118 @@ export function UtilitiesClient({
       ) : null}
 
       <SectionShell
+        title="Quick Fix: MD Clear Matches"
+        subtitle="Use this before clearing MD group matches if you hit referee submission constraint errors."
+        defaultOpen
+      >
+        <div className="flex justify-end">
+          <Button type="button" variant="destructive" onClick={runClearMdGroupRefereeSubmissions} disabled={pending}>
+            Clear MD Group Referee Submissions
+          </Button>
+        </div>
+      </SectionShell>
+
+      <SectionShell
+        title="Player Check-in"
+        subtitle="Bulk operations for player arrival status."
+      >
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={runCheckInAllPlayers} disabled={pending}>
+            Check in all players
+          </Button>
+          <Button type="button" variant="destructive" onClick={runUncheckInAllPlayers} disabled={pending}>
+            Un checkin all players
+          </Button>
+        </div>
+      </SectionShell>
+
+      <SectionShell
+        title="Tournament Data Cleanup"
+        subtitle="Delete all teams or players with full related cleanup."
+      >
+        <p className="text-sm text-muted-foreground">
+          These actions are irreversible and will remove related matches, qualifiers, seeds, and schedule queue artifacts.
+        </p>
+        <div className="flex flex-wrap justify-end gap-2">
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button type="button" variant="destructive" disabled={pending}>
+                Delete all teams
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete all teams?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will delete all teams and related tournament data including groups, group matches, knockout brackets, and queue artifacts. Players will remain. This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={runDeleteAllTeams}
+                  className="bg-destructive text-white hover:bg-destructive/90"
+                >
+                  Delete all teams
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button type="button" variant="destructive" disabled={pending}>
+                Delete all players
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete all players?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will delete all players and all team-related tournament data including groups, group matches, knockout brackets, and queue artifacts. This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={runDeleteAllPlayers}
+                  className="bg-destructive text-white hover:bg-destructive/90"
+                >
+                  Delete all players
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </SectionShell>
+
+      <SectionShell
+        title="Auto Schedule Function"
+        subtitle="Global toggle for Auto Schedule controls across Group and Knockout."
+      >
+        <div className="rounded-md border border-border bg-muted/30 p-3">
+          <div className="text-xs text-muted-foreground">Current status</div>
+          <div className="text-lg font-semibold text-foreground">
+            {autoScheduleFunctionEnabled ? "Enabled" : "Disabled"}
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant={autoScheduleFunctionEnabled ? "destructive" : "outline"}
+            onClick={() => runSetAutoScheduleFunctionEnabled(!autoScheduleFunctionEnabled)}
+            disabled={pending}
+          >
+            {autoScheduleFunctionEnabled
+              ? "Disable Auto Schedule Function"
+              : "Enable Auto Schedule Function"}
+          </Button>
+        </div>
+      </SectionShell>
+
+      <SectionShell
         title="Duplicate Assignments"
         subtitle="One bucket means one duplicated key (for example same stage + same courtId)."
-        defaultOpen
       >
         <div className="flex flex-wrap items-start justify-end gap-3">
           <div className="flex flex-wrap gap-2">
@@ -388,6 +621,54 @@ export function UtilitiesClient({
             </div>
           </>
         )}
+      </SectionShell>
+
+      <SectionShell
+        title="Referee Submissions"
+        subtitle="Delete referee submissions to unblock group/knockout match cleanup."
+      >
+        <div className="grid gap-2 sm:grid-cols-[180px_1fr] sm:items-center">
+          <label htmlFor="referee-match-type" className="text-sm text-muted-foreground">
+            Match type
+          </label>
+          <select
+            id="referee-match-type"
+            value={refereeMatchType}
+            onChange={(event) =>
+              setRefereeMatchType(event.target.value as "ALL" | "GROUP" | "KNOCKOUT")
+            }
+            className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="ALL">All</option>
+            <option value="GROUP">Group</option>
+            <option value="KNOCKOUT">Knockout</option>
+          </select>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-[180px_1fr] sm:items-center">
+          <label htmlFor="referee-category" className="text-sm text-muted-foreground">
+            Category
+          </label>
+          <select
+            id="referee-category"
+            value={refereeCategory}
+            onChange={(event) =>
+              setRefereeCategory(event.target.value as "ALL" | "MD" | "WD" | "XD")
+            }
+            className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="ALL">All</option>
+            <option value="MD">MD</option>
+            <option value="WD">WD</option>
+            <option value="XD">XD</option>
+          </select>
+        </div>
+
+        <div className="flex justify-end">
+          <Button type="button" variant="destructive" onClick={runClearRefereeSubmissions} disabled={pending}>
+            Clear referee submissions
+          </Button>
+        </div>
       </SectionShell>
     </div>
   );

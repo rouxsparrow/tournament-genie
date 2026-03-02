@@ -132,6 +132,7 @@ async function createStandardCategories() {
       groupAssignmentMode: "MANUAL",
       secondChanceEnabled: false,
       scoringMode: "SINGLE_GAME_21",
+      autoScheduleFunctionEnabled: true,
     },
   });
 
@@ -195,6 +196,7 @@ async function createPlayers({ count, gender, prefix }) {
       data: {
         name: `${prefix} ${i.toString().padStart(2, "0")}`,
         gender,
+        checkedIn: true,
       },
     });
     players.push(player);
@@ -622,6 +624,7 @@ async function seedExistingGroup() {
       groupAssignmentMode: "MANUAL",
       secondChanceEnabled: false,
       scoringMode: "SINGLE_GAME_21",
+      autoScheduleFunctionEnabled: true,
     },
   });
 

@@ -59,6 +59,63 @@ export async function POST(request: Request) {
     );
   }
 
+  const seriesACount = await prisma.seriesQualifier.count({
+    where: { categoryCode: category, series: "A" },
+  });
+  if (seriesACount === 0) {
+    return NextResponse.json(
+      {
+        error: "MISSING_SERIES_SPLIT",
+        message: "Compute series split first.",
+      },
+      { status: 400 }
+    );
+  }
+  if (category === "WD" && seriesACount !== 4 && seriesACount !== 8) {
+    return NextResponse.json(
+      {
+        error: "SERIES_A_TEAM_COUNT",
+        message: "Women's Doubles Series A requires 4 or 8 qualified teams.",
+      },
+      { status: 400 }
+    );
+  }
+  if (category !== "WD" && seriesACount !== 8) {
+    return NextResponse.json(
+      {
+        error: "SERIES_A_TEAM_COUNT",
+        message: "Series A requires exactly 8 qualified teams.",
+      },
+      { status: 400 }
+    );
+  }
+
+  if (category !== "WD") {
+    const seriesBCount = await prisma.seriesQualifier.count({
+      where: { categoryCode: category, series: "B" },
+    });
+    if (seriesBCount < 4) {
+      return NextResponse.json(
+        {
+          error: "SERIES_B_MIN_TEAMS",
+          message:
+            "Series B requires at least 4 qualified teams before generating brackets.",
+        },
+        { status: 400 }
+      );
+    }
+    if (seriesBCount > 8) {
+      return NextResponse.json(
+        {
+          error: "SERIES_B_TEAM_COUNT",
+          message:
+            "Series B supports at most 8 qualified teams. Recompute series split.",
+        },
+        { status: 400 }
+      );
+    }
+  }
+
   try {
     await generateKnockoutBracketInternal({ categoryCode: category, series: "A" });
     if (category !== "WD") {

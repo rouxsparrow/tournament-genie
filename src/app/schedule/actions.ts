@@ -17,6 +17,7 @@ type MatchType = "GROUP" | "KNOCKOUT";
 type ScheduleStage = "GROUP" | "KNOCKOUT";
 type AssignmentStatus = "ACTIVE" | "CLEARED" | "CANCELED";
 type CategoryCode = "MD" | "WD" | "XD";
+type BlockReason = "PENDING_CHECKIN" | "MANUAL_ABSENT";
 
 type RefereeNotificationItem = {
   id: string;
@@ -56,12 +57,18 @@ type ScheduleMatchItem = {
     awayName: string;
     homePlayers: string[];
     awayPlayers: string[];
+    homePlayerIds: string[];
+    awayPlayerIds: string[];
     playerNames: string[];
     playerIds: string[];
   };
   restScore: number;
   forcedRank?: number;
   isForced?: boolean;
+  blockReason?: BlockReason;
+  blockReasonLabel?: string;
+  canUnblock?: boolean;
+  pendingCheckInPlayerIds?: string[];
 };
 
 type LastBatchPayload = {
@@ -217,6 +224,14 @@ async function ensureScheduleSetup(stage: ScheduleStage) {
   return config;
 }
 
+async function loadAutoScheduleFunctionEnabled() {
+  const settings = await prisma.tournamentSettings.findFirst({
+    orderBy: { createdAt: "desc" },
+    select: { autoScheduleFunctionEnabled: true },
+  });
+  return settings?.autoScheduleFunctionEnabled ?? true;
+}
+
 const scheduleSetupCache = new Map<ScheduleStage, { at: number }>();
 const scheduleSetupInflight = new Map<ScheduleStage, Promise<void>>();
 const SCHEDULE_SETUP_CACHE_TTL_MS = 60_000;
@@ -324,8 +339,21 @@ function hasInPlayPlayers(playerIds: string[], inPlayPlayerIds: Set<string>) {
   return playerIds.some((playerId) => inPlayPlayerIds.has(playerId));
 }
 
+function hasUncheckedPlayers(playerIds: string[], uncheckedPlayerIds: Set<string>) {
+  if (uncheckedPlayerIds.size === 0) return false;
+  return playerIds.some((playerId) => uncheckedPlayerIds.has(playerId));
+}
+
 function isAssignableNow(playerIds: string[], inPlayPlayerIds: Set<string>) {
   return !hasInPlayPlayers(playerIds, inPlayPlayerIds);
+}
+
+async function loadUncheckedPlayerIds() {
+  const uncheckedPlayers = await prisma.player.findMany({
+    where: { checkedIn: false },
+    select: { id: true },
+  });
+  return new Set(uncheckedPlayers.map((player) => player.id));
 }
 
 function buildMatchItem(params: {
@@ -342,6 +370,10 @@ function buildMatchItem(params: {
   restScore: number;
   forcedRank?: number;
   isForced?: boolean;
+  blockReason?: BlockReason;
+  blockReasonLabel?: string;
+  canUnblock?: boolean;
+  pendingCheckInPlayerIds?: string[];
 }): ScheduleMatchItem {
   const home = params.homeTeam
     ? extractTeamPlayers(params.homeTeam)
@@ -364,6 +396,8 @@ function buildMatchItem(params: {
       awayName: params.awayTeam?.name ?? "TBD",
       homePlayers: home.playerNames,
       awayPlayers: away.playerNames,
+      homePlayerIds: home.playerIds,
+      awayPlayerIds: away.playerIds,
       playerNames: [...home.playerNames, ...away.playerNames],
       playerIds: [...home.playerIds, ...away.playerIds],
     },
@@ -373,6 +407,10 @@ function buildMatchItem(params: {
       typeof params.isForced === "boolean"
         ? params.isForced
         : typeof params.forcedRank === "number",
+    blockReason: params.blockReason,
+    blockReasonLabel: params.blockReasonLabel,
+    canUnblock: params.canUnblock,
+    pendingCheckInPlayerIds: params.pendingCheckInPlayerIds,
   };
 }
 
@@ -390,6 +428,10 @@ function buildMatchItemLite(params: {
   restScore: number;
   forcedRank?: number;
   isForced?: boolean;
+  blockReason?: BlockReason;
+  blockReasonLabel?: string;
+  canUnblock?: boolean;
+  pendingCheckInPlayerIds?: string[];
 }) {
   const homeIds = params.homeTeam?.members.map((member) => member.playerId) ?? [];
   const awayIds = params.awayTeam?.members.map((member) => member.playerId) ?? [];
@@ -408,6 +450,8 @@ function buildMatchItemLite(params: {
       awayName: params.awayTeam?.name ?? "TBD",
       homePlayers: [],
       awayPlayers: [],
+      homePlayerIds: homeIds,
+      awayPlayerIds: awayIds,
       playerNames: [],
       playerIds: [...homeIds, ...awayIds],
     },
@@ -417,6 +461,10 @@ function buildMatchItemLite(params: {
       typeof params.isForced === "boolean"
         ? params.isForced
         : typeof params.forcedRank === "number",
+    blockReason: params.blockReason,
+    blockReasonLabel: params.blockReasonLabel,
+    canUnblock: params.canUnblock,
+    pendingCheckInPlayerIds: params.pendingCheckInPlayerIds,
   } satisfies ScheduleMatchItem;
 }
 
@@ -1020,6 +1068,7 @@ async function buildListEligibleMatches(params: {
   excludeAssigned: boolean;
   playingSet: Set<string>;
   recentlyPlayedSet: Set<string>;
+  uncheckedPlayerIds?: Set<string>;
   preloaded?: {
     groupMatches: LoadedGroupMatch[];
     knockoutMatches: LoadedKnockoutMatch[];
@@ -1050,6 +1099,7 @@ async function buildListEligibleMatches(params: {
   const forcedData = params.preloaded
     ? params.preloaded.forcedData
     : await loadForcedPriorities(params.stage);
+  const uncheckedPlayerIds = params.uncheckedPlayerIds ?? (await loadUncheckedPlayerIds());
   const playingSet = params.playingSet;
   const recentlyPlayedSet = params.recentlyPlayedSet;
 
@@ -1075,6 +1125,8 @@ async function buildListEligibleMatches(params: {
       if (assignedMatchKeys.has(matchKey)) continue;
       if (blockedKeys.has(matchKey)) continue;
       if (!isListEligibleGroupMatch(match)) continue;
+      const playerIds = getPlayersForGroupMatch(match);
+      if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) continue;
       eligible.push(
         buildMatchItem({
           matchType: "GROUP",
@@ -1084,11 +1136,7 @@ async function buildListEligibleMatches(params: {
           detail: "Group Match",
           homeTeam: match.homeTeam,
           awayTeam: match.awayTeam,
-          restScore: computeRestScore(
-            getPlayersForGroupMatch(match),
-            playingSet,
-            recentlyPlayedSet
-          ),
+          restScore: computeRestScore(playerIds, playingSet, recentlyPlayedSet),
           forcedRank: forcedData.rankMap.get(matchKey),
           isForced: forcedData.forcedSet.has(matchKey),
         })
@@ -1102,6 +1150,8 @@ async function buildListEligibleMatches(params: {
       if (assignedMatchKeys.has(matchKey)) continue;
       if (blockedKeys.has(matchKey)) continue;
       if (!isListEligibleKnockoutMatch(match)) continue;
+      const playerIds = getPlayersForKnockoutMatch(match);
+      if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) continue;
       eligible.push(
         buildMatchItem({
           matchType: "KNOCKOUT",
@@ -1114,11 +1164,7 @@ async function buildListEligibleMatches(params: {
           matchNo: match.matchNo,
           homeTeam: match.homeTeam,
           awayTeam: match.awayTeam,
-          restScore: computeRestScore(
-            getPlayersForKnockoutMatch(match),
-            playingSet,
-            recentlyPlayedSet
-          ),
+          restScore: computeRestScore(playerIds, playingSet, recentlyPlayedSet),
           forcedRank: forcedData.rankMap.get(matchKey),
           isForced: forcedData.forcedSet.has(matchKey),
         })
@@ -1218,6 +1264,7 @@ async function loadScheduleSnapshot(params: {
   });
   const inPlayPlayerIds = await getInPlayPlayerIds(params.stage);
   const recentlyPlayedSet = await getRecentCompletedPlayerIds(params.stage);
+  const uncheckedPlayerIds = await loadUncheckedPlayerIds();
   const eligibleSource = await loadScheduleMatches(params.stage, "ALL");
   const blocked = await prisma.blockedMatch.findMany({
     where: { matchType: stageMatchType },
@@ -1230,6 +1277,7 @@ async function loadScheduleSnapshot(params: {
     assignments,
     inPlayPlayerIds,
     recentlyPlayedSet,
+    uncheckedPlayerIds,
     eligibleSource,
     blocked,
     forcedData,
@@ -1319,8 +1367,16 @@ async function applyAutoSchedule(params: {
     while (loopGuard < 10) {
       loopGuard += 1;
 
-      const { courts, locks, assignments, recentlyPlayedSet, eligibleSource, blocked, forcedData } =
-        snapshot;
+      const {
+        courts,
+        locks,
+        assignments,
+        recentlyPlayedSet,
+        uncheckedPlayerIds,
+        eligibleSource,
+        blocked,
+        forcedData,
+      } = snapshot;
 
       if (SCHEDULE_DEBUG) {
         console.log("[schedule] active assignments", {
@@ -1386,6 +1442,8 @@ async function applyAutoSchedule(params: {
           if (assignedMatchKeys.has(matchKey)) continue;
           if (blockedKeys.has(matchKey)) continue;
           if (!isListEligibleGroupMatch(match)) continue;
+          const playerIds = getPlayersForGroupMatch(match);
+          if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) continue;
           eligible.push(
             buildMatchItem({
               matchType: "GROUP",
@@ -1395,11 +1453,7 @@ async function applyAutoSchedule(params: {
               detail: "Group Match",
               homeTeam: match.homeTeam,
               awayTeam: match.awayTeam,
-              restScore: computeRestScore(
-                getPlayersForGroupMatch(match),
-                inPlayPlayerIds,
-                lastBatchPlayerIds
-              ),
+              restScore: computeRestScore(playerIds, inPlayPlayerIds, lastBatchPlayerIds),
               forcedRank: forcedData.rankMap.get(matchKey),
             })
           );
@@ -1412,6 +1466,8 @@ async function applyAutoSchedule(params: {
           if (assignedMatchKeys.has(matchKey)) continue;
           if (blockedKeys.has(matchKey)) continue;
           if (!isListEligibleKnockoutMatch(match)) continue;
+          const playerIds = getPlayersForKnockoutMatch(match);
+          if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) continue;
           eligible.push(
             buildMatchItem({
               matchType: "KNOCKOUT",
@@ -1424,11 +1480,7 @@ async function applyAutoSchedule(params: {
               matchNo: match.matchNo,
               homeTeam: match.homeTeam,
               awayTeam: match.awayTeam,
-              restScore: computeRestScore(
-                getPlayersForKnockoutMatch(match),
-                inPlayPlayerIds,
-                lastBatchPlayerIds
-              ),
+              restScore: computeRestScore(playerIds, inPlayPlayerIds, lastBatchPlayerIds),
               forcedRank: forcedData.rankMap.get(matchKey),
             })
           );
@@ -1474,6 +1526,21 @@ async function applyAutoSchedule(params: {
       const targetCourt = freeCourts[0];
       const next = assignableNow[0];
       if (!next) break;
+
+      const blockedNow = await tx.blockedMatch.findFirst({
+        where:
+          next.matchType === "GROUP"
+            ? { matchType: "GROUP", groupMatchId: next.matchId }
+            : { matchType: "KNOCKOUT", knockoutMatchId: next.matchId },
+        select: { id: true },
+      });
+      if (blockedNow) {
+        snapshot.blocked = await tx.blockedMatch.findMany({
+          where: { matchType: params.stage === "GROUP" ? "GROUP" : "KNOCKOUT" },
+        });
+        continue;
+      }
+
       const assignment = {
         courtId: targetCourt.id,
         stage: params.stage,
@@ -1612,10 +1679,19 @@ export async function getScheduleState(
 
   const stageMatchType = stage === "GROUP" ? "GROUP" : "KNOCKOUT";
   const initialReadsStartedAt = startPerfTimer();
-  const [courts, locks, assignmentIds, blocked, forcedData, matchPool] = await Promise.all([
-    prisma.court.findMany({ orderBy: { id: "asc" } }),
-    prisma.courtStageLock.findMany({ where: { stage } }),
-    prisma.courtAssignment.findMany({
+  const [
+    courts,
+    locks,
+    assignmentIds,
+    blocked,
+    forcedData,
+    matchPool,
+    uncheckedPlayerIds,
+    autoScheduleFunctionEnabled,
+  ] = await Promise.all([
+      prisma.court.findMany({ orderBy: { id: "asc" } }),
+      prisma.courtStageLock.findMany({ where: { stage } }),
+      prisma.courtAssignment.findMany({
       where: { status: "ACTIVE", stage },
       select: {
         id: true,
@@ -1624,13 +1700,17 @@ export async function getScheduleState(
         knockoutMatchId: true,
       },
     }),
-    prisma.blockedMatch.findMany({
-      where: { matchType: stageMatchType },
-    }),
-    loadForcedPriorities(stage),
-    loadScheduleMatches(stage, "ALL"),
-  ]);
+      prisma.blockedMatch.findMany({
+        where: { matchType: stageMatchType },
+      }),
+      loadForcedPriorities(stage),
+      loadScheduleMatches(stage, "ALL"),
+      loadUncheckedPlayerIds(),
+      loadAutoScheduleFunctionEnabled(),
+    ]);
   stopPerfTimer(initialReadsStartedAt, perfEntries, "initialReadBundle");
+  const effectiveAutoScheduleEnabled =
+    config.autoScheduleEnabled && autoScheduleFunctionEnabled;
 
   const blockedKeys = buildBlockedKeys(blocked);
   const matchPoolCount =
@@ -1686,6 +1766,7 @@ export async function getScheduleState(
     excludeAssigned: true,
     playingSet: inPlayPlayerIds,
     recentlyPlayedSet,
+    uncheckedPlayerIds,
     ...(category === "ALL"
       ? {
           preloaded: {
@@ -1720,7 +1801,7 @@ export async function getScheduleState(
   const autoScheduleTelemetry = await applyAutoSchedule({
     stage,
     configId: config.id,
-    autoEnabled: config.autoScheduleEnabled,
+    autoEnabled: effectiveAutoScheduleEnabled,
     eligible: eligibleSorted,
     activeCourtIds,
     snapshot: ({
@@ -1740,6 +1821,7 @@ export async function getScheduleState(
       })),
       inPlayPlayerIds,
       recentlyPlayedSet,
+      uncheckedPlayerIds,
       eligibleSource: {
         groupMatches: matchPool.groupMatches,
         knockoutMatches: matchPool.knockoutMatches,
@@ -1751,7 +1833,7 @@ export async function getScheduleState(
   stopPerfTimer(autoScheduleStartedAt, perfEntries, "applyAutoSchedule");
 
   const refreshedAssignments =
-    config.autoScheduleEnabled
+    effectiveAutoScheduleEnabled
       ? await prisma.courtAssignment.findMany({
           where: { status: "ACTIVE", stage },
           include: {
@@ -1882,6 +1964,69 @@ export async function getScheduleState(
   const includeBlockedDetails = options?.mode !== "presenting";
   const blockedList = includeBlockedDetails
     ? await (async () => {
+        const pendingBlockedByKey = new Map<string, ScheduleMatchItem>();
+        if (stage === "GROUP") {
+          for (const match of matchPool.groupMatches) {
+            if (!match.group || !match.group.category) continue;
+            if (!isListEligibleGroupMatch(match)) continue;
+            const matchKey = buildMatchKey("GROUP", match.id);
+            if (assignedAfterAuto.has(matchKey)) continue;
+            const playerIds = getPlayersForGroupMatch(match);
+            if (!hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) continue;
+            const pendingCheckInPlayerIds = playerIds.filter((id) =>
+              uncheckedPlayerIds.has(id)
+            );
+            pendingBlockedByKey.set(
+              matchKey,
+              buildMatchItem({
+                matchType: "GROUP",
+                matchId: match.id,
+                categoryCode: match.group.category.code,
+                label: `Group ${match.group.name}`,
+                detail: "Group Match",
+                homeTeam: match.homeTeam,
+                awayTeam: match.awayTeam,
+                restScore: 0,
+                blockReason: "PENDING_CHECKIN",
+                blockReasonLabel: "pending checked in",
+                canUnblock: false,
+                pendingCheckInPlayerIds,
+              })
+            );
+          }
+        } else {
+          for (const match of matchPool.knockoutMatches) {
+            if (!isListEligibleKnockoutMatch(match)) continue;
+            const matchKey = buildMatchKey("KNOCKOUT", match.id);
+            if (assignedAfterAuto.has(matchKey)) continue;
+            const playerIds = getPlayersForKnockoutMatch(match);
+            if (!hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) continue;
+            const pendingCheckInPlayerIds = playerIds.filter((id) =>
+              uncheckedPlayerIds.has(id)
+            );
+            pendingBlockedByKey.set(
+              matchKey,
+              buildMatchItem({
+                matchType: "KNOCKOUT",
+                matchId: match.id,
+                categoryCode: match.categoryCode,
+                label: `Series ${match.series}`,
+                detail: `${formatKoRoundLabel(match.round, match.matchNo)} • Match ${match.matchNo}`,
+                series: match.series,
+                round: match.round,
+                matchNo: match.matchNo,
+                homeTeam: match.homeTeam,
+                awayTeam: match.awayTeam,
+                restScore: 0,
+                blockReason: "PENDING_CHECKIN",
+                blockReasonLabel: "pending checked in",
+                canUnblock: false,
+                pendingCheckInPlayerIds,
+              })
+            );
+          }
+        }
+
         const blockedGroupIds = blocked
           .filter((entry) => entry.matchType === "GROUP" && entry.groupMatchId)
           .map((entry) => entry.groupMatchId as string);
@@ -1913,11 +2058,17 @@ export async function getScheduleState(
         const blockedKnockoutById = new Map(
           blockedKnockoutMatches.map((match) => [match.id, match])
         );
-        return blocked.map((entry) => {
+
+        const blockedByKey = new Map<string, ScheduleMatchItem>(pendingBlockedByKey);
+        for (const entry of blocked) {
           if (entry.matchType === "GROUP" && entry.groupMatchId) {
             const match = blockedGroupById.get(entry.groupMatchId);
-            if (!match || !match.group || !match.group.category) return null;
-            return buildMatchItem({
+            if (!match || !match.group || !match.group.category) continue;
+            const key = buildMatchKey("GROUP", match.id);
+            if (blockedByKey.has(key)) continue;
+            blockedByKey.set(
+              key,
+              buildMatchItem({
               matchType: "GROUP",
               matchId: match.id,
               categoryCode: match.group.category.code,
@@ -1926,12 +2077,21 @@ export async function getScheduleState(
               homeTeam: match.homeTeam,
               awayTeam: match.awayTeam,
               restScore: 0,
-            });
+                blockReason: "MANUAL_ABSENT",
+                blockReasonLabel: "injury / absent",
+                canUnblock: true,
+              })
+            );
+            continue;
           }
           if (entry.matchType === "KNOCKOUT" && entry.knockoutMatchId) {
             const match = blockedKnockoutById.get(entry.knockoutMatchId);
-            if (!match) return null;
-            return buildMatchItem({
+            if (!match) continue;
+            const key = buildMatchKey("KNOCKOUT", match.id);
+            if (blockedByKey.has(key)) continue;
+            blockedByKey.set(
+              key,
+              buildMatchItem({
               matchType: "KNOCKOUT",
               matchId: match.id,
               categoryCode: match.categoryCode,
@@ -1943,10 +2103,16 @@ export async function getScheduleState(
               homeTeam: match.homeTeam,
               awayTeam: match.awayTeam,
               restScore: 0,
-            });
+                blockReason: "MANUAL_ABSENT",
+                blockReasonLabel: "injury / absent",
+                canUnblock: true,
+              })
+            );
+            continue;
           }
-          return null;
-        });
+        }
+
+        return sortEligible([...blockedByKey.values()]);
       })()
     : [];
 
@@ -2006,6 +2172,7 @@ export async function getScheduleState(
     config: {
       id: config.id,
       autoScheduleEnabled: config.autoScheduleEnabled,
+      autoScheduleFunctionEnabled,
       lastBatch: lastBatch ?? { matchKeys: [], playerIds: [], updatedAt: "" },
     },
     courts: courts.map((court) => {
@@ -2022,6 +2189,7 @@ export async function getScheduleState(
     refereeNotifications,
     blockedMatches: blockedList.filter(Boolean) as ScheduleMatchItem[],
     inPlayPlayerIds: Array.from(inPlayPlayerIds),
+    recentlyPlayedPlayerIds: Array.from(recentlyPlayedSet),
     assignableCount,
     upcomingAssignableCount,
     debug:
@@ -2068,9 +2236,10 @@ export async function getPresentingState(filters?: {
 
   const stageMatchType = stage === "GROUP" ? "GROUP" : "KNOCKOUT";
 
-  const [courts, assignments, blocked, matchPoolCount, forcedData] = await Promise.all([
-    prisma.court.findMany({ orderBy: { id: "asc" } }),
-    prisma.courtAssignment.findMany({
+  const [courts, assignments, blocked, matchPoolCount, forcedData, uncheckedPlayerIds] =
+    await Promise.all([
+      prisma.court.findMany({ orderBy: { id: "asc" } }),
+      prisma.courtAssignment.findMany({
       where: { status: "ACTIVE", stage },
       include: {
         groupMatch: {
@@ -2111,7 +2280,8 @@ export async function getPresentingState(filters?: {
           },
         }),
     loadForcedPriorities(stage),
-  ]);
+      loadUncheckedPlayerIds(),
+    ]);
 
   const blockedKeys = new Set(
     blocked
@@ -2253,6 +2423,7 @@ export async function getPresentingState(filters?: {
         ...getLitePlayerIds(match.homeTeam),
         ...getLitePlayerIds(match.awayTeam),
       ];
+      if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) return [];
       return [
         buildMatchItemLite({
           matchType: "GROUP",
@@ -2289,6 +2460,7 @@ export async function getPresentingState(filters?: {
         ...getLitePlayerIds(match.homeTeam),
         ...getLitePlayerIds(match.awayTeam),
       ];
+      if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) return [];
       return [
         buildMatchItemLite({
           matchType: "KNOCKOUT",
@@ -2331,6 +2503,7 @@ export async function getPresentingState(filters?: {
     refereeNotifications: [],
     blockedMatches: [],
     inPlayPlayerIds: Array.from(inPlayPlayerIds),
+    recentlyPlayedPlayerIds: [],
     assignableCount: 0,
     upcomingAssignableCount: 0,
     debug: {
@@ -2426,6 +2599,10 @@ export async function toggleAutoSchedule(stage: ScheduleStage, enabled: boolean)
   if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
+  const autoScheduleFunctionEnabled = await loadAutoScheduleFunctionEnabled();
+  if (!autoScheduleFunctionEnabled) {
+    return { error: "Auto Schedule function is disabled in Utilities." };
+  }
 
   const before = await getBroadcastViewSignature(stage);
   const config = await ensureScheduleSetup(stage);
@@ -2661,6 +2838,31 @@ export async function unblockMatch(
   if (!parsed.success) return { error: "Invalid match type." };
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (matchType !== stage) return { error: "Stage mismatch." };
+  const uncheckedPlayerIds = await loadUncheckedPlayerIds();
+  if (matchType === "GROUP") {
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      include: {
+        homeTeam: { include: { members: { include: { player: true } } } },
+        awayTeam: { include: { members: { include: { player: true } } } },
+      },
+    });
+    if (match && hasUncheckedPlayers(getPlayersForGroupMatch(match), uncheckedPlayerIds)) {
+      return { error: "Match is pending checked in." };
+    }
+  } else {
+    const match = await prisma.knockoutMatch.findUnique({
+      where: { id: matchId },
+      include: {
+        homeTeam: { include: { members: { include: { player: true } } } },
+        awayTeam: { include: { members: { include: { player: true } } } },
+      },
+    });
+    if (match && hasUncheckedPlayers(getPlayersForKnockoutMatch(match), uncheckedPlayerIds)) {
+      return { error: "Match is pending checked in." };
+    }
+  }
+  const before = await getBroadcastViewSignature(stage);
 
   await prisma.blockedMatch.deleteMany({
     where:
@@ -2670,6 +2872,11 @@ export async function unblockMatch(
   });
   await prisma.scheduleActionLog.create({
     data: { action: "UNBLOCK_MATCH", payload: { stage, matchType, matchId } },
+  });
+  await publishBroadcastRefreshIfViewChanged({
+    stage,
+    source: "schedule-action",
+    before,
   });
   revalidatePath("/schedule");
   return { ok: true };
@@ -2754,6 +2961,7 @@ export async function assignNext(params: {
   });
 
   const inPlayPlayerIds = await getInPlayPlayerIds(params.stage);
+  const uncheckedPlayerIds = await loadUncheckedPlayerIds();
 
   const blocked = await prisma.blockedMatch.findFirst({
     where:
@@ -2772,10 +2980,14 @@ export async function assignNext(params: {
       },
     });
     if (!match || !isListEligibleGroupMatch(match)) return { error: "Match not eligible." };
-    if (!isAssignableNow(getPlayersForGroupMatch(match), inPlayPlayerIds)) {
+    const playerIds = getPlayersForGroupMatch(match);
+    if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
+      return { error: "Match is pending checked in." };
+    }
+    if (!isAssignableNow(playerIds, inPlayPlayerIds)) {
       return { error: "Match has players already on court." };
     }
-    if (hasInPlayPlayers(getPlayersForGroupMatch(match), inPlayPlayerIds)) {
+    if (hasInPlayPlayers(playerIds, inPlayPlayerIds)) {
       return { error: "Match has players already on court." };
     }
   } else {
@@ -2787,10 +2999,14 @@ export async function assignNext(params: {
       },
     });
     if (!match || !isListEligibleKnockoutMatch(match)) return { error: "Match not eligible." };
-    if (!isAssignableNow(getPlayersForKnockoutMatch(match), inPlayPlayerIds)) {
+    const playerIds = getPlayersForKnockoutMatch(match);
+    if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
+      return { error: "Match is pending checked in." };
+    }
+    if (!isAssignableNow(playerIds, inPlayPlayerIds)) {
       return { error: "Match has players already on court." };
     }
-    if (hasInPlayPlayers(getPlayersForKnockoutMatch(match), inPlayPlayerIds)) {
+    if (hasInPlayPlayers(playerIds, inPlayPlayerIds)) {
       return { error: "Match has players already on court." };
     }
   }
@@ -2850,6 +3066,7 @@ export async function forceNext(
   if (!parsed.success) return { error: "Invalid match type." };
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (matchType !== stage) return { error: "Stage mismatch." };
+  const uncheckedPlayerIds = await loadUncheckedPlayerIds();
   const before = await getBroadcastViewSignature(stage);
 
   if (matchType === "GROUP") {
@@ -2863,6 +3080,9 @@ export async function forceNext(
     if (!match || !isListEligibleGroupMatch(match)) {
       return { error: "Match not eligible." };
     }
+    if (hasUncheckedPlayers(getPlayersForGroupMatch(match), uncheckedPlayerIds)) {
+      return { error: "Match is pending checked in." };
+    }
   } else {
     const match = await prisma.knockoutMatch.findUnique({
       where: { id: matchId },
@@ -2873,6 +3093,9 @@ export async function forceNext(
     });
     if (!match || !isListEligibleKnockoutMatch(match)) {
       return { error: "Match not eligible." };
+    }
+    if (hasUncheckedPlayers(getPlayersForKnockoutMatch(match), uncheckedPlayerIds)) {
+      return { error: "Match is pending checked in." };
     }
   }
 

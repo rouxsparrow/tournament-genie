@@ -27,8 +27,7 @@ export function BottomBar({
     <div className="mt-6 grid grid-cols-2 gap-3 rounded-2xl border border-border bg-card p-4">
       <Button
         size="lg"
-        className="w-full"
-        variant="secondary"
+        className="w-full bg-emerald-600 text-white hover:bg-emerald-700"
         onClick={onSubmit}
         disabled={submitDisabled}
       >

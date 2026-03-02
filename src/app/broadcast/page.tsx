@@ -27,32 +27,34 @@ export default async function BroadcastPage({
   const koHref = "/broadcast?stage=ko";
 
   return (
-    <section className="rounded-2xl border border-border bg-card p-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Broadcast</h1>
+    <div className="lg:relative lg:left-1/2 lg:right-1/2 lg:-mx-[50vw] lg:w-screen lg:px-6 xl:px-10">
+      <section className="rounded-2xl border border-border bg-card px-4 py-6 md:px-6 lg:mx-auto lg:max-w-[1560px] lg:px-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold text-foreground">Broadcast</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              asChild
+              size="sm"
+              variant={stage === "GROUP" ? "default" : "outline"}
+            >
+              <Link href={groupHref}>Group Stage</Link>
+            </Button>
+            <Button
+              asChild
+              size="sm"
+              variant={stage === "KNOCKOUT" ? "default" : "outline"}
+            >
+              <Link href={koHref}>Knockout</Link>
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            asChild
-            size="sm"
-            variant={stage === "GROUP" ? "default" : "outline"}
-          >
-            <Link href={groupHref}>Group Stage</Link>
-          </Button>
-          <Button
-            asChild
-            size="sm"
-            variant={stage === "KNOCKOUT" ? "default" : "outline"}
-          >
-            <Link href={koHref}>Knockout</Link>
-          </Button>
-        </div>
-      </div>
 
-      <div className="mt-6">
-        <BroadcastClient state={state} />
-      </div>
-    </section>
+        <div className="mt-6">
+          <BroadcastClient state={state} />
+        </div>
+      </section>
+    </div>
   );
 }

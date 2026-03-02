@@ -1,6 +1,7 @@
 import { RefereeScoreboard } from "@/app/referee/components/RefereeScoreboard";
 import { getScheduledMatches } from "@/lib/matches/getScheduledMatches";
 import { prisma } from "@/lib/prisma";
+import { getRefereeFromRequest } from "@/lib/referee-auth";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Referee Scoresheet" };
@@ -14,13 +15,17 @@ const COURT_LABELS: Record<string, "P5" | "P6" | "P7" | "P8" | "P9"> = {
 };
 
 export default async function RefereePage() {
-  const [{ groupMatches, knockoutMatches, groups }, settings] = await Promise.all([
-    getScheduledMatches(),
+  const [referee, settings] = await Promise.all([
+    getRefereeFromRequest(),
     prisma.tournamentSettings.findFirst({
       orderBy: { createdAt: "desc" },
       select: { scoringMode: true },
     }),
   ]);
+
+  const { groupMatches, knockoutMatches } = referee
+    ? await getScheduledMatches({ onlyWithActiveCourtAssignment: true })
+    : { groupMatches: [], knockoutMatches: [] };
 
   const groupItems = groupMatches
     .filter((match) => match.group)
@@ -54,18 +59,13 @@ export default async function RefereePage() {
       : null,
   }));
 
-  const groupOptions = groups.map((group) => ({
-    id: group.id,
-    name: group.name,
-    categoryCode: group.category.code,
-  }));
-
   return (
     <section className="rounded-2xl border border-border bg-muted/40 p-6">
       <RefereeScoreboard
         matches={[...groupItems, ...knockoutItems]}
-        groups={groupOptions}
         scoringMode={settings?.scoringMode ?? "SINGLE_GAME_21"}
+        isAuthenticated={!!referee}
+        refereeDisplayName={referee?.displayName ?? null}
       />
     </section>
   );

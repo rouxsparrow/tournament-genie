@@ -4,8 +4,11 @@ import {
   closeDb,
   getKnockoutMatchIds,
   getSeriesAQualifierTeamIds,
+  getSeriesBQualifierTeamIds,
   getTop8GlobalRankingTeamIds,
-  seedSeriesAQualifiersFromTop8,
+  getTop16GlobalRankingTeamIds,
+  seedMdXdSeriesQualifiersWithSeriesBCount,
+  seedSeriesQualifiersFromCurrentRules,
   setGroupStageLock,
   setSecondChanceEnabled,
 } from "./helpers/db";
@@ -29,32 +32,81 @@ test("Group stage lock enforcement @regression", async ({ page }) => {
   expect(body.error).toBe("GROUP_STAGE_UNLOCKED");
 });
 
-test("Group-to-knockout boundary top-8 only @regression", async ({ page }) => {
+test("Group-to-knockout boundary top-16 qualification for MD @regression", async ({ page }) => {
   await loginAsAdmin(page);
   await setGroupStageLock("MD", true);
-  const seeded = await seedSeriesAQualifiersFromTop8("MD");
+  const seeded = await seedSeriesQualifiersFromCurrentRules("MD");
   test.skip(
     seeded.seriesACount < 8,
-    "existing-group dataset needs at least 8 ranked MD teams for top-8 boundary checks."
+    "existing-group dataset needs at least 8 ranked MD teams for qualification boundary checks."
   );
 
   const seriesAIds = await getSeriesAQualifierTeamIds("MD");
+  const seriesBIds = await getSeriesBQualifierTeamIds("MD");
   const top8 = await getTop8GlobalRankingTeamIds("MD");
+  const top16 = await getTop16GlobalRankingTeamIds("MD");
+  const expectedQualified = top16.slice(0, seriesAIds.length + seriesBIds.length);
 
   expect(seriesAIds.length).toBe(8);
   expect([...seriesAIds].sort()).toEqual([...top8].sort());
+  expect([...seriesAIds, ...seriesBIds].sort()).toEqual([...expectedQualified].sort());
+});
+
+test("WD qualification boundary follows top-8/top-4 rule @regression", async ({ page }) => {
+  await loginAsAdmin(page);
+  await setGroupStageLock("WD", true);
+  const seeded = await seedSeriesQualifiersFromCurrentRules("WD");
+  test.skip(
+    seeded.seriesACount < 4,
+    "existing-group dataset needs at least 4 ranked WD teams for boundary checks."
+  );
+
+  const seriesAIds = await getSeriesAQualifierTeamIds("WD");
+  const top8 = await getTop8GlobalRankingTeamIds("WD");
+  const expectedCount = top8.length >= 8 ? 8 : 4;
+  const expected = top8.slice(0, expectedCount);
+
+  expect(seriesAIds.length).toBe(expectedCount);
+  expect([...seriesAIds].sort()).toEqual([...expected].sort());
+});
+
+test("Generate full bracket blocks when Series B has fewer than 4 teams @regression", async ({ page }) => {
+  await loginAsAdmin(page);
+  await setGroupStageLock("MD", true);
+  await setSecondChanceEnabled("MD", true);
+
+  const clearBefore = await page.request.delete("/api/knockout/clear?category=MD");
+  expect(clearBefore.status()).toBe(200);
+
+  const seeded = await seedMdXdSeriesQualifiersWithSeriesBCount("MD", 1);
+  test.skip(
+    !seeded.ok,
+    "existing-group dataset needs at least 9 ranked MD teams for the Series B <4 guard check."
+  );
+
+  const response = await page.request.post("/api/knockout/generate-full", {
+    data: { category: "MD" },
+  });
+  expect(response.status()).toBe(400);
+  const body = await response.json();
+  expect(body.error).toBe("SERIES_B_MIN_TEAMS");
+
+  const knockoutIds = await getKnockoutMatchIds("MD");
+  expect(knockoutIds.length).toBe(0);
 });
 
 test("Knockout generation idempotency @regression", async ({ page }) => {
   await loginAsAdmin(page);
   await setGroupStageLock("MD", true);
   await setSecondChanceEnabled("MD", false);
-  const seeded = await seedSeriesAQualifiersFromTop8("MD");
+  const seeded = await seedSeriesQualifiersFromCurrentRules("MD");
   const seriesBSupportsNoSecondChance =
-    seeded.seriesBCount > 0 && (seeded.seriesBCount & (seeded.seriesBCount - 1)) === 0;
+    seeded.seriesBCount >= 4 &&
+    seeded.seriesBCount > 0 &&
+    (seeded.seriesBCount & (seeded.seriesBCount - 1)) === 0;
   test.skip(
     seeded.seriesACount < 8 || !seriesBSupportsNoSecondChance,
-    "existing-group dataset needs 8 Series A qualifiers and power-of-two Series B qualifiers when second chance is OFF."
+    "existing-group dataset needs 8 Series A qualifiers and Series B (>=4) with power-of-two size when second chance is OFF."
   );
 
   const first = await page.request.post("/api/knockout/generate-full", {

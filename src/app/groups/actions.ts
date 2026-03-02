@@ -128,6 +128,38 @@ export async function deleteGroup(groupId: string) {
   revalidatePath("/groups");
 }
 
+export async function deleteAllGroupsByCategory(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
+  const parsed = categorySchema.safeParse(formData.get("category"));
+  if (!parsed.success) {
+    redirect(`/groups?error=${encodeURIComponent("Invalid category.")}`);
+  }
+
+  await assertAssignmentUnlocked(parsed.data);
+
+  const category = await prisma.category.findUnique({
+    where: { code: parsed.data },
+    select: { id: true },
+  });
+
+  if (!category) {
+    revalidatePath("/groups");
+    redirect(buildGroupsRedirect(parsed.data, { notice: "Deleted 0 groups.", noticeType: "success" }));
+  }
+
+  const deleted = await prisma.group.deleteMany({
+    where: { categoryId: category.id },
+  });
+
+  revalidatePath("/groups");
+  redirect(
+    buildGroupsRedirect(parsed.data, {
+      notice: `Deleted ${deleted.count} group${deleted.count === 1 ? "" : "s"}.`,
+      noticeType: "success",
+    })
+  );
+}
+
 export async function assignTeamToGroup(formData: FormData) {
   await requireAdmin({ onFail: "redirect" });
   const parsed = assignSchema.safeParse({

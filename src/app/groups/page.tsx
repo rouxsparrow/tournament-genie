@@ -4,6 +4,7 @@ import {
   assignTeamToGroup,
   clearGroupStageMatchesFromGroups,
   createGroupsManual,
+  deleteAllGroupsByCategory,
   deleteGroup,
   generateGroupStageMatchesFromGroups,
   lockGroupAssignment,
@@ -12,6 +13,7 @@ import {
   unassignTeam,
 } from "@/app/groups/actions";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 import { DismissibleMessageCard } from "@/components/dismissible-message-card";
 
@@ -36,6 +38,22 @@ function teamLabel(team: {
   if (team.name) return team.name;
   const names = team.members.map((member) => member.player.name);
   return names.length === 2 ? `${names[0]} / ${names[1]}` : "Unnamed team";
+}
+
+function renderTeamLabelWithPlusWrap(label: string) {
+  const parts = label.split(" + ");
+  if (parts.length <= 1) return label;
+  return parts.map((part, index) => (
+    <span key={`${part}-${index}`}>
+      <span className="whitespace-nowrap">{part}</span>
+      {index < parts.length - 1 ? (
+        <>
+          {" + "}
+          <wbr />
+        </>
+      ) : null}
+    </span>
+  ));
 }
 
 export default async function GroupsPage({ searchParams }: GroupsPageProps) {
@@ -73,6 +91,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
               team: {
                 include: {
                   members: { include: { player: true } },
+                  flags: true,
                 },
               },
             },
@@ -87,6 +106,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
         orderBy: { createdAt: "desc" },
         include: {
           members: { include: { player: true } },
+          flags: true,
         },
       })
     : [];
@@ -94,6 +114,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
   const assignedTeamIds = new Set(
     groups.flatMap((group) => group.teams.map((entry) => entry.teamId))
   );
+  const assignedTeamsCount = assignedTeamIds.size;
 
   const unassignedTeams = teams.filter((team) => !assignedTeamIds.has(team.id));
 
@@ -179,14 +200,84 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
         </div>
       ) : null}
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[2fr,1fr]">
+      <div className="mt-6 space-y-6">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="rounded-xl border border-border p-4">
+            <h2 className="text-base font-semibold text-foreground">
+              Create groups
+            </h2>
+            <form action={createGroupsManual} className="mt-3 flex flex-wrap items-end gap-3">
+              <GlobalFormPendingBridge />
+              <input type="hidden" name="category" value={selectedCategory} />
+              <div>
+                <label
+                  htmlFor="groupCount"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  Number of groups
+                </label>
+                <input
+                  id="groupCount"
+                  name="groupCount"
+                  type="number"
+                  min={1}
+                  max={32}
+                  defaultValue={4}
+                  className="mt-1 w-24 rounded-md border border-input px-2 py-1.5 text-sm focus:border-ring focus:outline-none"
+                  required
+                  disabled={isAssignmentLocked}
+                />
+              </div>
+              <Button size="sm" type="submit" disabled={isAssignmentLocked}>
+                Create groups
+              </Button>
+            </form>
+          </div>
+
+          <div className="rounded-xl border border-border p-4">
+            <h2 className="text-base font-semibold text-foreground">
+              Randomize groups
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Uses group seeds only for group placement. Knockout seeding is
+              unaffected.
+            </p>
+            <form action={randomizeGroups} className="mt-3">
+              <GlobalFormPendingBridge />
+              <input type="hidden" name="category" value={selectedCategory} />
+              <Button
+                type="submit"
+                size="sm"
+                variant="outline"
+                disabled={isAssignmentLocked}
+              >
+                Randomize groups
+              </Button>
+            </form>
+          </div>
+        </div>
+
         <div className="space-y-6">
           <div className="rounded-xl border border-border p-5">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-foreground">Groups</h2>
-              <span className="text-sm text-muted-foreground">
-                {groups.length} total
-              </span>
+              <div className="flex items-center gap-3">
+                <form action={deleteAllGroupsByCategory}>
+                  <GlobalFormPendingBridge />
+                  <input type="hidden" name="category" value={selectedCategory} />
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    type="submit"
+                    disabled={isAssignmentLocked || groups.length === 0}
+                  >
+                    Delete all groups
+                  </Button>
+                </form>
+                <span className="text-sm text-muted-foreground">
+                  {groups.length} total
+                </span>
+              </div>
             </div>
             {groups.length === 0 ? (
               <p className="mt-3 text-sm text-muted-foreground">
@@ -232,7 +323,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <div className="rounded-lg border border-border p-4">
                 <h3 className="text-sm font-semibold text-muted-foreground">
-                  Unassigned teams
+                  Unassigned teams ({unassignedTeams.length})
                 </h3>
                 {unassignedTeams.length === 0 ? (
                   <p className="mt-2 text-sm text-muted-foreground">
@@ -244,13 +335,27 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
                       <form
                         key={team.id}
                         action={assignTeamToGroup}
-                        className="rounded-md border border-border p-3"
+                        className={`rounded-md border p-3 ${
+                          team.flags?.isGroupSeed
+                            ? "border-amber-300 bg-amber-50/40 dark:border-amber-500/40 dark:bg-amber-500/10"
+                            : "border-border"
+                        }`}
                       >
                         <GlobalFormPendingBridge />
                         <input type="hidden" name="teamId" value={team.id} />
-                        <p className="text-sm font-medium text-foreground">
-                          {teamLabel(team)}
-                        </p>
+                        <div className="min-w-0 flex flex-col items-start">
+                          <p className="min-w-0 text-sm font-medium text-foreground">
+                            {renderTeamLabelWithPlusWrap(teamLabel(team))}
+                          </p>
+                          {team.flags?.isGroupSeed ? (
+                            <Badge
+                              variant="outline"
+                              className="mt-1 whitespace-nowrap border-amber-400 text-amber-700 dark:text-amber-300"
+                            >
+                              Group Seed
+                            </Badge>
+                          ) : null}
+                        </div>
                         <div className="mt-2 flex gap-2">
                           <select
                             name="groupId"
@@ -279,7 +384,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
               </div>
               <div className="rounded-lg border border-border p-4">
                 <h3 className="text-sm font-semibold text-muted-foreground">
-                  Assigned teams
+                  Assigned teams ({assignedTeamsCount})
                 </h3>
                 {groups.length === 0 ? (
                   <p className="mt-2 text-sm text-muted-foreground">
@@ -301,11 +406,27 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
                             {group.teams.map((entry) => (
                               <li
                                 key={entry.teamId}
-                                className="flex items-center justify-between rounded-md border border-border px-3 py-2"
+                                className={`flex items-center justify-between rounded-md border px-3 py-2 ${
+                                  entry.team.flags?.isGroupSeed
+                                    ? "border-amber-300 bg-amber-50/40 dark:border-amber-500/40 dark:bg-amber-500/10"
+                                    : "border-border"
+                                }`}
                               >
-                                <span className="text-sm text-foreground">
-                                  {teamLabel(entry.team)}
-                                </span>
+                                <div className="min-w-0 flex flex-col items-start">
+                                  <p className="text-sm text-foreground">
+                                    {renderTeamLabelWithPlusWrap(
+                                      teamLabel(entry.team)
+                                    )}
+                                  </p>
+                                  {entry.team.flags?.isGroupSeed ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="mt-1 whitespace-nowrap border-amber-400 text-amber-700 dark:text-amber-300"
+                                    >
+                                      Group Seed
+                                    </Badge>
+                                  ) : null}
+                                </div>
                                 <form
                                   action={unassignTeam.bind(
                                     null,
@@ -332,62 +453,6 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
                 )}
               </div>
             </div>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <div className="rounded-xl border border-border p-5">
-            <h2 className="text-lg font-semibold text-foreground">
-              Create groups
-            </h2>
-            <form action={createGroupsManual} className="mt-4 space-y-3">
-              <GlobalFormPendingBridge />
-              <input type="hidden" name="category" value={selectedCategory} />
-              <div>
-                <label
-                  htmlFor="groupCount"
-                  className="text-sm font-medium text-muted-foreground"
-                >
-                  Number of groups
-                </label>
-                <input
-                  id="groupCount"
-                  name="groupCount"
-                  type="number"
-                  min={1}
-                  max={32}
-                  defaultValue={4}
-                  className="mt-2 w-full rounded-md border border-input px-3 py-2 text-sm focus:border-ring focus:outline-none"
-                  required
-                  disabled={isAssignmentLocked}
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={isAssignmentLocked}>
-                Create groups
-              </Button>
-            </form>
-          </div>
-
-          <div className="rounded-xl border border-border p-5">
-            <h2 className="text-lg font-semibold text-foreground">
-              Randomize groups
-            </h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Uses group seeds only for group placement. Knockout seeding is
-              unaffected.
-            </p>
-            <form action={randomizeGroups} className="mt-4">
-              <GlobalFormPendingBridge />
-              <input type="hidden" name="category" value={selectedCategory} />
-              <Button
-                type="submit"
-                className="w-full"
-                variant="outline"
-                disabled={isAssignmentLocked}
-              >
-                Randomize groups
-              </Button>
-            </form>
           </div>
         </div>
       </div>

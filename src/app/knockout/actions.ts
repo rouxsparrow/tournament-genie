@@ -48,22 +48,20 @@ export async function computeSeriesQualifiers(formData: FormData) {
     redirect(`/knockout?category=${categoryCode}&error=${encodeURIComponent("No groups found.")}`);
   }
   const isWD = categoryCode === "WD";
-  const minSeriesATeams = isWD ? 4 : 8;
-  if (globalRanking.length < minSeriesATeams) {
+  const minRankedTeams = isWD ? 4 : 8;
+  if (globalRanking.length < minRankedTeams) {
     redirect(
       `/knockout?category=${categoryCode}&error=${encodeURIComponent(
         isWD
           ? "Series A requires at least 4 teams for Women's Doubles."
-          : "Series A must have exactly 8 qualified teams. Add more teams or recompute series split."
+          : "Series A requires at least 8 teams for Men's Doubles and Mixed Doubles."
       )}`
     );
   }
 
-  const seriesATeamCount = isWD
-    ? globalRanking.length >= 8
-      ? 8
-      : 4
-    : 8;
+  const eligibleRanking = isWD
+    ? globalRanking.slice(0, globalRanking.length >= 8 ? 8 : 4)
+    : globalRanking.slice(0, 16);
 
   const qualifiers: {
     categoryCode: "MD" | "WD" | "XD";
@@ -71,9 +69,9 @@ export async function computeSeriesQualifiers(formData: FormData) {
     groupId: string;
     teamId: string;
     groupRank: number;
-  }[] = globalRanking.map((entry) => ({
+  }[] = eligibleRanking.map((entry) => ({
     categoryCode,
-    series: entry.globalRank <= seriesATeamCount ? "A" : "B",
+    series: isWD ? "A" : entry.globalRank <= 8 ? "A" : "B",
     groupId: entry.groupId,
     teamId: entry.teamId,
     groupRank: entry.groupRank,
@@ -82,9 +80,7 @@ export async function computeSeriesQualifiers(formData: FormData) {
   await prisma.$transaction([
     prisma.seriesQualifier.deleteMany({ where: { categoryCode } }),
     prisma.seriesQualifier.createMany({
-      data: isWD
-        ? qualifiers.filter((entry) => entry.series === "A")
-        : qualifiers,
+      data: qualifiers,
     }),
   ]);
 

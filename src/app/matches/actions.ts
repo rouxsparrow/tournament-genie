@@ -41,19 +41,6 @@ const finalBestOf3Schema = z.object({
   isBestOf3: z.boolean(),
 });
 
-function getConfiguredRefereePasscode() {
-  const configuredPasscode = process.env.Referee_code ?? process.env.REFEREE_CODE ?? "";
-  if (!/^\d{4}$/.test(configuredPasscode)) return null;
-  return configuredPasscode;
-}
-
-function hasValidRefereePasscode(formData: FormData) {
-  const configured = getConfiguredRefereePasscode();
-  if (!configured) return false;
-  const supplied = String(formData.get("refereePasscode") ?? "");
-  return supplied === configured;
-}
-
 function parseNumber(value: FormDataEntryValue | null) {
   if (value === null || value === "") return undefined;
   const parsed = Number.parseInt(String(value), 10);
@@ -727,10 +714,15 @@ type ScoreUpsertResult =
   | { ok: true; categoryCode: "MD" | "WD" | "XD"; matchId: string }
   | { error: string; categoryCode?: "MD" | "WD" | "XD" };
 
-async function upsertMatchScoreInternal(formData: FormData): Promise<ScoreUpsertResult | void> {
+type ScoreSubmissionActor = "admin" | "referee";
+
+async function upsertMatchScoreInternal(
+  formData: FormData,
+  options?: { actor?: ScoreSubmissionActor }
+): Promise<ScoreUpsertResult | void> {
   const noRedirect = String(formData.get("noRedirect") ?? "") === "true";
-  const refereeAuthorized = hasValidRefereePasscode(formData);
-  if (!refereeAuthorized) {
+  const actor = options?.actor ?? "admin";
+  if (actor !== "referee") {
     const auth = await requireAdmin({ onFail: noRedirect ? "return" : "redirect" });
     if (auth?.error) {
       return { error: auth.error };
@@ -989,7 +981,7 @@ async function upsertMatchScoreInternal(formData: FormData): Promise<ScoreUpsert
 
   await reconcileScheduleAndBroadcastCompletion({
     stage: "GROUP",
-    source: refereeAuthorized ? "referee-score-submit" : "matches-score-save",
+    source: actor === "referee" ? "referee-score-submit" : "matches-score-save",
     matchType: "GROUP",
     matchId: match.id,
     completedAt: completedAt.toISOString(),
@@ -1013,14 +1005,15 @@ export async function upsertMatchScore(formData: FormData): Promise<void> {
 }
 
 export async function upsertMatchScoreNoRedirect(
-  formData: FormData
+  formData: FormData,
+  options?: { actor?: ScoreSubmissionActor }
 ): Promise<ScoreUpsertResult> {
   const working = new FormData();
   formData.forEach((value, key) => {
     working.append(key, value);
   });
   working.set("noRedirect", "true");
-  const result = await upsertMatchScoreInternal(working);
+  const result = await upsertMatchScoreInternal(working, options);
   if (result && ("ok" in result || "error" in result)) {
     return result;
   }
@@ -1181,9 +1174,12 @@ export async function generateMatchesKnockout(formData: FormData) {
   return { ok: true };
 }
 
-export async function upsertKnockoutMatchScore(formData: FormData) {
-  const refereeAuthorized = hasValidRefereePasscode(formData);
-  if (!refereeAuthorized) {
+export async function upsertKnockoutMatchScore(
+  formData: FormData,
+  options?: { actor?: ScoreSubmissionActor }
+) {
+  const actor = options?.actor ?? "admin";
+  if (actor !== "referee") {
     await requireAdmin({ onFail: "redirect" });
   }
   const parsed = scoreSchema.safeParse({
@@ -1331,7 +1327,7 @@ export async function upsertKnockoutMatchScore(formData: FormData) {
 
   await reconcileScheduleAndBroadcastCompletion({
     stage: "KNOCKOUT",
-    source: refereeAuthorized ? "referee-score-submit" : "matches-score-save",
+    source: actor === "referee" ? "referee-score-submit" : "matches-score-save",
     matchType: "KNOCKOUT",
     matchId: match.id,
     completedAt: completedAt.toISOString(),
