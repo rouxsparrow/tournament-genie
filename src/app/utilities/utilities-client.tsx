@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import {
   checkDuplicateAssignments,
   checkLegacyCourtIds,
+  deleteAllPlayersWithRelatedData,
+  deleteAllTeamsWithRelatedData,
   clearMdGroupRefereeSubmissions,
   clearRefereeSubmissions,
   clearDuplicateAssignments,
@@ -17,6 +19,17 @@ import {
   type TestDataCleanupPreview,
 } from "@/app/utilities/actions";
 import { checkInAllPlayers, uncheckInAllPlayers } from "@/app/player-checkin/actions";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 type UtilitiesClientProps = {
   initialSummary: DuplicateAssignmentSummary;
@@ -228,6 +241,34 @@ export function UtilitiesClient({
     });
   };
 
+  const runDeleteAllTeams = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await deleteAllTeamsWithRelatedData();
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to delete all teams.");
+        return;
+      }
+      setMessage(
+        `All teams cleanup complete. Deleted teams: ${result.deleted.teams}; deleted group matches: ${result.deleted.groupMatches}; deleted knockout matches: ${result.deleted.knockoutMatches}; remaining players: ${result.remaining.players}.`
+      );
+    });
+  };
+
+  const runDeleteAllPlayers = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await deleteAllPlayersWithRelatedData();
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to delete all players.");
+        return;
+      }
+      setMessage(
+        `All players cleanup complete. Deleted players: ${result.deleted.players}; deleted teams: ${result.deleted.teams}; remaining teams: ${result.remaining.teams}.`
+      );
+    });
+  };
+
   const canRunTestCleanup = Boolean(
     testPreview && testPreview.totalRows > 0 && confirmToken === "CONFIRM_TEST_DELETE"
   );
@@ -263,6 +304,66 @@ export function UtilitiesClient({
           <Button type="button" variant="destructive" onClick={runUncheckInAllPlayers} disabled={pending}>
             Un checkin all players
           </Button>
+        </div>
+      </SectionShell>
+
+      <SectionShell
+        title="Tournament Data Cleanup"
+        subtitle="Delete all teams or players with full related cleanup."
+      >
+        <p className="text-sm text-muted-foreground">
+          These actions are irreversible and will remove related matches, qualifiers, seeds, and schedule queue artifacts.
+        </p>
+        <div className="flex flex-wrap justify-end gap-2">
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button type="button" variant="destructive" disabled={pending}>
+                Delete all teams
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete all teams?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will delete all teams and related tournament data including groups, group matches, knockout brackets, and queue artifacts. Players will remain. This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={runDeleteAllTeams}
+                  className="bg-destructive text-white hover:bg-destructive/90"
+                >
+                  Delete all teams
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button type="button" variant="destructive" disabled={pending}>
+                Delete all players
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete all players?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will delete all players and all team-related tournament data including groups, group matches, knockout brackets, and queue artifacts. This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={runDeleteAllPlayers}
+                  className="bg-destructive text-white hover:bg-destructive/90"
+                >
+                  Delete all players
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </SectionShell>
 

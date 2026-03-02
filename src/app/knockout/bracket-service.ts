@@ -222,6 +222,24 @@ export async function generateKnockoutBracketInternal(params: {
     throwBracketError("MISSING_SERIES_SPLIT", "Compute series split first.");
   }
 
+  if (categoryCode !== "WD" && series === "A") {
+    const seriesBQualifierCount = await prisma.seriesQualifier.count({
+      where: { categoryCode, series: "B" },
+    });
+    if (seriesBQualifierCount < 4) {
+      throwBracketError(
+        "SERIES_B_MIN_TEAMS",
+        "Series B requires at least 4 qualified teams. Recompute series split or add more teams."
+      );
+    }
+    if (seriesBQualifierCount > 8) {
+      throwBracketError(
+        "SERIES_B_TEAM_COUNT",
+        "Series B supports at most 8 qualified teams. Recompute series split (top-16 boundary)."
+      );
+    }
+  }
+
   let qualifiedTeamIds: Set<string> | null = null;
   let orderedTeamIds: string[] = [];
   let orderedSeedEntries: SeedEntry[] = [];
@@ -283,6 +301,22 @@ export async function generateKnockoutBracketInternal(params: {
       groupRank: seed.groupRank,
       avgPA: seed.avgPA,
     }));
+  }
+
+  if (series === "B") {
+    const teamCount = orderedSeedEntries.length;
+    if (teamCount < 4) {
+      throwBracketError(
+        "SERIES_B_MIN_TEAMS",
+        "Series B requires at least 4 qualified teams. Recompute series split or add more teams."
+      );
+    }
+    if (teamCount > 8) {
+      throwBracketError(
+        "SERIES_B_TEAM_COUNT",
+        "Series B supports at most 8 qualified teams. Recompute series split (top-16 boundary)."
+      );
+    }
   }
 
   if (qualifiedTeamIds) {

@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Schedule Overview" };
@@ -16,11 +17,21 @@ export const metadata = { title: "Schedule Overview" };
 const CATEGORY_ORDER = ["MD", "WD", "XD"] as const;
 const COURT_COUNT = 5;
 const COURT_LABELS = ["P5", "P6", "P7", "P8", "P9"] as const;
-const SLOT_MINUTES = 20;
-const START_MINUTES = 12 * 60 + 30;
+const DEFAULT_SLOT_MINUTES = 20;
+const DEFAULT_START_MINUTES = 12 * 60 + 30;
+const DEFAULT_BUFFER_MINUTES = 0;
 const MAX_SLOTS = 500;
 
 type CategoryCode = (typeof CATEGORY_ORDER)[number];
+type QueryParam = string | string[] | undefined;
+
+type ScheduleOverviewPageProps = {
+  searchParams?: Promise<{
+    slotMinutes?: QueryParam;
+    startTime?: QueryParam;
+    bufferMinutes?: QueryParam;
+  }>;
+};
 
 type Team = {
   name: string;
@@ -43,6 +54,123 @@ function formatTimeLabel(totalMinutes: number) {
   const period = hours24 >= 12 ? "PM" : "AM";
   const hours12 = hours24 % 12 || 12;
   return `${hours12}:${mins.toString().padStart(2, "0")} ${period}`;
+}
+
+function firstQueryValue(value: QueryParam): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return value;
+}
+
+function parseSlotMinutes(input: string | undefined): { value: number; error?: string } {
+  if (input === undefined) {
+    return { value: DEFAULT_SLOT_MINUTES };
+  }
+
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return {
+      value: DEFAULT_SLOT_MINUTES,
+      error: `Slot duration is required. Using default ${DEFAULT_SLOT_MINUTES} minutes.`,
+    };
+  }
+
+  if (!/^\d+$/.test(trimmed)) {
+    return {
+      value: DEFAULT_SLOT_MINUTES,
+      error: `Slot duration must be an integer between 1 and 180. Using default ${DEFAULT_SLOT_MINUTES}.`,
+    };
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (parsed < 1 || parsed > 180) {
+    return {
+      value: DEFAULT_SLOT_MINUTES,
+      error: `Slot duration out of range (1-180). Using default ${DEFAULT_SLOT_MINUTES}.`,
+    };
+  }
+
+  return { value: parsed };
+}
+
+function parseStartTime(input: string | undefined): { value: number; error?: string } {
+  if (input === undefined) {
+    return { value: DEFAULT_START_MINUTES };
+  }
+
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return {
+      value: DEFAULT_START_MINUTES,
+      error: `Start time is required. Using default ${formatTimeLabel(DEFAULT_START_MINUTES)}.`,
+    };
+  }
+
+  const match24 = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) {
+    const hours = Number.parseInt(match24[1], 10);
+    const minutes = Number.parseInt(match24[2], 10);
+    if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+      return { value: hours * 60 + minutes };
+    }
+  }
+
+  const match12 = trimmed.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+  if (match12) {
+    const rawHours = Number.parseInt(match12[1], 10);
+    const minutes = Number.parseInt(match12[2], 10);
+    const meridiem = match12[3].toUpperCase();
+    if (rawHours >= 1 && rawHours <= 12 && minutes >= 0 && minutes <= 59) {
+      const hours =
+        meridiem === "AM"
+          ? rawHours === 12
+            ? 0
+            : rawHours
+          : rawHours === 12
+            ? 12
+            : rawHours + 12;
+      return { value: hours * 60 + minutes };
+    }
+  }
+
+  return {
+    value: DEFAULT_START_MINUTES,
+    error: `Start time must be HH:MM (24h) or H:MM AM/PM. Using default ${formatTimeLabel(
+      DEFAULT_START_MINUTES
+    )}.`,
+  };
+}
+
+function parseBufferMinutes(input: string | undefined): { value: number; error?: string } {
+  if (input === undefined) {
+    return { value: DEFAULT_BUFFER_MINUTES };
+  }
+
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return {
+      value: DEFAULT_BUFFER_MINUTES,
+      error: `Buffer time is required. Using default ${DEFAULT_BUFFER_MINUTES} minutes.`,
+    };
+  }
+
+  if (!/^\d+$/.test(trimmed)) {
+    return {
+      value: DEFAULT_BUFFER_MINUTES,
+      error: `Buffer time must be an integer between 0 and 10. Using default ${DEFAULT_BUFFER_MINUTES}.`,
+    };
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (parsed < 0 || parsed > 10) {
+    return {
+      value: DEFAULT_BUFFER_MINUTES,
+      error: `Buffer time out of range (0-10). Using default ${DEFAULT_BUFFER_MINUTES}.`,
+    };
+  }
+
+  return { value: parsed };
 }
 
 function extractPlayerIdList(match: {
@@ -90,7 +218,30 @@ function streakLenIfPicked(
   return 1;
 }
 
-export default async function ScheduleOverviewPage() {
+export default async function ScheduleOverviewPage({
+  searchParams,
+}: ScheduleOverviewPageProps) {
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+  const rawSlotMinutes = firstQueryValue(resolvedSearchParams?.slotMinutes);
+  const rawStartTime = firstQueryValue(resolvedSearchParams?.startTime);
+  const rawBufferMinutes = firstQueryValue(resolvedSearchParams?.bufferMinutes);
+
+  const slotMinutesResult = parseSlotMinutes(rawSlotMinutes);
+  const startTimeResult = parseStartTime(rawStartTime);
+  const bufferMinutesResult = parseBufferMinutes(rawBufferMinutes);
+  const resolvedSlotMinutes = slotMinutesResult.value;
+  const resolvedStartMinutes = startTimeResult.value;
+  const resolvedBufferMinutes = bufferMinutesResult.value;
+  const slotStepMinutes = resolvedSlotMinutes + resolvedBufferMinutes;
+  const slotMinutesInputValue = rawSlotMinutes ?? String(DEFAULT_SLOT_MINUTES);
+  const startTimeInputValue = rawStartTime ?? formatTimeLabel(DEFAULT_START_MINUTES);
+  const bufferMinutesInputValue = rawBufferMinutes ?? String(DEFAULT_BUFFER_MINUTES);
+  const criteriaWarnings = [
+    slotMinutesResult.error,
+    startTimeResult.error,
+    bufferMinutesResult.error,
+  ].filter((message): message is string => Boolean(message));
+
   const matches = await prisma.match.findMany({
     where: {
       stage: "GROUP",
@@ -368,7 +519,8 @@ export default async function ScheduleOverviewPage() {
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Overview enforces no more than two consecutive slots per player.
-            (20-min slots, Group Stage only)
+            ({resolvedSlotMinutes}-min slots + {resolvedBufferMinutes}-min buffer, starts{" "}
+            {formatTimeLabel(resolvedStartMinutes)}, Group Stage only)
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
             Analytics-only: generated from ALL group stage matches (ignores
@@ -376,6 +528,76 @@ export default async function ScheduleOverviewPage() {
           </p>
         </div>
       </div>
+
+      <form
+        method="GET"
+        className="mt-4 grid gap-3 rounded-xl border border-border bg-muted/30 p-4 md:grid-cols-[minmax(0,220px)_minmax(0,220px)_minmax(0,220px)_auto] md:items-end"
+      >
+        <div>
+          <label
+            htmlFor="slotMinutes"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Slot duration (minutes)
+          </label>
+          <input
+            id="slotMinutes"
+            name="slotMinutes"
+            type="text"
+            defaultValue={slotMinutesInputValue}
+            className="mt-1 h-9 w-full rounded-md border border-input px-3 text-sm focus:border-ring focus:outline-none"
+            placeholder="20"
+          />
+        </div>
+        <div>
+          <label
+            htmlFor="bufferMinutes"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Buffer time between slots (minutes)
+          </label>
+          <input
+            id="bufferMinutes"
+            name="bufferMinutes"
+            type="text"
+            defaultValue={bufferMinutesInputValue}
+            className="mt-1 h-9 w-full rounded-md border border-input px-3 text-sm focus:border-ring focus:outline-none"
+            placeholder="0"
+          />
+        </div>
+        <div>
+          <label
+            htmlFor="startTime"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Start time
+          </label>
+          <input
+            id="startTime"
+            name="startTime"
+            type="text"
+            defaultValue={startTimeInputValue}
+            className="mt-1 h-9 w-full rounded-md border border-input px-3 text-sm focus:border-ring focus:outline-none"
+            placeholder="12:30 PM or 13:10"
+          />
+        </div>
+        <div className="md:pb-[1px]">
+          <Button type="submit" size="sm">
+            Regenerate overview
+          </Button>
+        </div>
+      </form>
+
+      {criteriaWarnings.length > 0 ? (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          <p>Some criteria were invalid and defaults were applied:</p>
+          <ul className="mt-1 list-disc pl-5">
+            {criteriaWarnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {hasOverflow ? (
         <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
@@ -403,7 +625,7 @@ export default async function ScheduleOverviewPage() {
               <TableBody>
                 {scheduledSlots.map((slotMatches, slotIndex) => {
                   const timeLabel = formatTimeLabel(
-                    START_MINUTES + slotIndex * SLOT_MINUTES
+                    resolvedStartMinutes + slotIndex * slotStepMinutes
                   );
 
                   return (

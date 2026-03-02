@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   computeSeriesQualifiers,
 } from "@/app/knockout/actions";
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Knockout" };
 
 type KnockoutPageProps = {
-  searchParams?: Promise<{ category?: string; error?: string; adjusted?: string }>;
+  searchParams?: Promise<{ category?: string; error?: string }>;
 };
 
 const categories = ["MD", "WD", "XD"] as const;
@@ -39,7 +40,6 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
   const errorMessage = resolvedSearchParams?.error
     ? decodeURIComponent(resolvedSearchParams.error)
     : null;
-  const adjusted = resolvedSearchParams?.adjusted === "1";
   const isWD = selectedCategory === "WD";
 
   await syncKnockoutPropagation(selectedCategory);
@@ -81,11 +81,17 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
   );
   const seriesACount = qualifiers.filter((entry) => entry.series === "A").length;
   const seriesBCount = qualifiers.filter((entry) => entry.series === "B").length;
+  const qualifiedSeriesByTeamId = new Map(
+    qualifiers.map((entry) => [entry.teamId, entry.series])
+  );
   const teamById = new Map(qualifiers.map((entry) => [entry.teamId, entry.team]));
 
   const globalRanking = isLocked
     ? await loadGlobalGroupRanking(selectedCategory)
     : [];
+  const eliminatedCount = Math.max(0, globalRanking.length - qualifiers.length);
+  const hasTooFewSeriesBTeams =
+    !isWD && qualifiers.length > 0 && seriesBCount < 4;
   const seriesASeedPreview = globalRanking.slice(
     0,
     isWD ? (globalRanking.length >= 8 ? 8 : 4) : 8
@@ -153,11 +159,14 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
           <span className="text-xs text-muted-foreground">
             Series A: {seriesACount} teams
             {!isWD ? ` · Series B: ${seriesBCount} teams` : ""}
+            {` · Eliminated: ${eliminatedCount} teams`}
           </span>
         ) : null}
-        {adjusted ? (
-          <span className="text-xs text-muted-foreground">
-            Adjusted: moved lowest-ranked team(s) from Series A to Series B to make Series A even.
+        {hasTooFewSeriesBTeams ? (
+          <span className="text-xs text-red-600 dark:text-red-400">
+            Series B has {seriesBCount} qualified team
+            {seriesBCount === 1 ? "" : "s"}.
+            Minimum 4 teams are required to generate knockout brackets.
           </span>
         ) : null}
       </div>
@@ -275,12 +284,14 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
                     <th className="py-2 text-left">Rank</th>
                     <th className="py-2 text-left">Team</th>
                     <th className="py-2 text-left">Group</th>
+                    <th className="py-2 text-left">Status</th>
                     <th className="py-2 text-right">Avg PA</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {globalRanking.map((entry) => {
                     const team = teamById.get(entry.teamId);
+                    const qualifierSeries = qualifiedSeriesByTeamId.get(entry.teamId);
                     return (
                       <tr key={entry.teamId}>
                         <td className="py-2 text-left">{entry.globalRank}</td>
@@ -289,6 +300,17 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
                         </td>
                         <td className="py-2 text-left">
                           {entry.groupName} (#{entry.groupRank})
+                        </td>
+                        <td className="py-2 text-left">
+                          {qualifierSeries === "A" ? (
+                            <Badge variant="default">Series A</Badge>
+                          ) : qualifierSeries === "B" ? (
+                            <Badge variant="secondary">Series B</Badge>
+                          ) : (
+                            <Badge variant="outline" className="border-red-300 text-red-700 dark:border-red-500/50 dark:text-red-300">
+                              Eliminated
+                            </Badge>
+                          )}
                         </td>
                         <td className="py-2 text-right">
                           {entry.avgPA.toFixed(2)}

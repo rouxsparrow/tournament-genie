@@ -243,7 +243,7 @@ export function MatchesListClient({
               className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none"
             />
           </div>
-          <div className="flex min-w-[240px] items-end gap-2">
+          <div className="flex min-w-[240px] flex-1 items-end gap-2">
             <form action={lockGroupStage}>
               <GlobalFormPendingBridge />
               <input type="hidden" name="category" value={categoryFilter} />
@@ -275,6 +275,10 @@ export function MatchesListClient({
                 Unlock
               </Button>
             </form>
+            <span className="ml-auto text-xs text-muted-foreground">
+              {filteredMatches.length} match
+              {filteredMatches.length === 1 ? "" : "es"}
+            </span>
           </div>
           {isDev ? (
             <form action={randomizeFilteredGroupMatchResults}>

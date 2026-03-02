@@ -4,6 +4,7 @@ import {
   assignTeamToGroup,
   clearGroupStageMatchesFromGroups,
   createGroupsManual,
+  deleteAllGroupsByCategory,
   deleteGroup,
   generateGroupStageMatchesFromGroups,
   lockGroupAssignment,
@@ -113,6 +114,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
   const assignedTeamIds = new Set(
     groups.flatMap((group) => group.teams.map((entry) => entry.teamId))
   );
+  const assignedTeamsCount = assignedTeamIds.size;
 
   const unassignedTeams = teams.filter((team) => !assignedTeamIds.has(team.id));
 
@@ -259,9 +261,23 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
           <div className="rounded-xl border border-border p-5">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-foreground">Groups</h2>
-              <span className="text-sm text-muted-foreground">
-                {groups.length} total
-              </span>
+              <div className="flex items-center gap-3">
+                <form action={deleteAllGroupsByCategory}>
+                  <GlobalFormPendingBridge />
+                  <input type="hidden" name="category" value={selectedCategory} />
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    type="submit"
+                    disabled={isAssignmentLocked || groups.length === 0}
+                  >
+                    Delete all groups
+                  </Button>
+                </form>
+                <span className="text-sm text-muted-foreground">
+                  {groups.length} total
+                </span>
+              </div>
             </div>
             {groups.length === 0 ? (
               <p className="mt-3 text-sm text-muted-foreground">
@@ -307,7 +323,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <div className="rounded-lg border border-border p-4">
                 <h3 className="text-sm font-semibold text-muted-foreground">
-                  Unassigned teams
+                  Unassigned teams ({unassignedTeams.length})
                 </h3>
                 {unassignedTeams.length === 0 ? (
                   <p className="mt-2 text-sm text-muted-foreground">
@@ -368,7 +384,7 @@ export default async function GroupsPage({ searchParams }: GroupsPageProps) {
               </div>
               <div className="rounded-lg border border-border p-4">
                 <h3 className="text-sm font-semibold text-muted-foreground">
-                  Assigned teams
+                  Assigned teams ({assignedTeamsCount})
                 </h3>
                 {groups.length === 0 ? (
                   <p className="mt-2 text-sm text-muted-foreground">

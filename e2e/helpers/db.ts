@@ -569,9 +569,23 @@ export async function getTop8GlobalRankingTeamIds(categoryCode: "MD" | "WD" | "X
   return ranking.slice(0, 8).map((row) => row.teamId);
 }
 
+export async function getTop16GlobalRankingTeamIds(categoryCode: "MD" | "WD" | "XD") {
+  const ranking = await getGlobalRankingEntries(categoryCode);
+  return ranking.slice(0, 16).map((row) => row.teamId);
+}
+
 export async function getSeriesAQualifierTeamIds(categoryCode: "MD" | "WD" | "XD") {
   const qualifiers = await prisma.seriesQualifier.findMany({
     where: { categoryCode, series: "A" },
+    select: { teamId: true },
+    orderBy: { teamId: "asc" },
+  });
+  return qualifiers.map((entry) => entry.teamId);
+}
+
+export async function getSeriesBQualifierTeamIds(categoryCode: "MD" | "WD" | "XD") {
+  const qualifiers = await prisma.seriesQualifier.findMany({
+    where: { categoryCode, series: "B" },
     select: { teamId: true },
     orderBy: { teamId: "asc" },
   });
@@ -594,16 +608,56 @@ export async function setGroupStageLock(categoryCode: "MD" | "WD" | "XD", locked
   });
 }
 
-export async function seedSeriesAQualifiersFromTop8(categoryCode: "MD" | "WD" | "XD") {
+export async function seedSeriesQualifiersFromCurrentRules(categoryCode: "MD" | "WD" | "XD") {
   const ranking = await getGlobalRankingEntries(categoryCode);
-  const top8 = ranking.slice(0, 8);
   await prisma.seriesQualifier.deleteMany({ where: { categoryCode } });
-  if (top8.length === 0) {
-    return { seriesACount: 0, seriesBCount: 0 };
+
+  if (ranking.length === 0) {
+    return { seriesACount: 0, seriesBCount: 0, eliminatedCount: 0 };
   }
 
+  if (categoryCode === "WD") {
+    if (ranking.length < 4) {
+      return {
+        seriesACount: 0,
+        seriesBCount: 0,
+        eliminatedCount: ranking.length,
+      };
+    }
+
+    const qualifiedCount = ranking.length >= 8 ? 8 : 4;
+    const seriesA = ranking.slice(0, qualifiedCount);
+    await prisma.seriesQualifier.createMany({
+      data: seriesA.map((entry) => ({
+        categoryCode,
+        series: "A",
+        groupId: entry.groupId,
+        teamId: entry.teamId,
+        groupRank: entry.groupRank,
+      })),
+    });
+
+    return {
+      seriesACount: seriesA.length,
+      seriesBCount: 0,
+      eliminatedCount: Math.max(0, ranking.length - seriesA.length),
+    };
+  }
+
+  if (ranking.length < 8) {
+    return {
+      seriesACount: 0,
+      seriesBCount: 0,
+      eliminatedCount: ranking.length,
+    };
+  }
+
+  const eligible = ranking.slice(0, 16);
+  const seriesA = eligible.slice(0, 8);
+  const seriesB = eligible.slice(8);
+
   await prisma.seriesQualifier.createMany({
-    data: top8.map((entry) => ({
+    data: seriesA.map((entry) => ({
       categoryCode,
       series: "A",
       groupId: entry.groupId,
@@ -612,10 +666,9 @@ export async function seedSeriesAQualifiersFromTop8(categoryCode: "MD" | "WD" | 
     })),
   });
 
-  const rest = ranking.slice(8);
-  if (rest.length > 0) {
+  if (seriesB.length > 0) {
     await prisma.seriesQualifier.createMany({
-      data: rest.map((entry) => ({
+      data: seriesB.map((entry) => ({
         categoryCode,
         series: "B",
         groupId: entry.groupId,
@@ -625,7 +678,51 @@ export async function seedSeriesAQualifiersFromTop8(categoryCode: "MD" | "WD" | 
     });
   }
 
-  return { seriesACount: top8.length, seriesBCount: rest.length };
+  return {
+    seriesACount: seriesA.length,
+    seriesBCount: seriesB.length,
+    eliminatedCount: Math.max(0, ranking.length - eligible.length),
+  };
+}
+
+export async function seedMdXdSeriesQualifiersWithSeriesBCount(
+  categoryCode: "MD" | "XD",
+  seriesBCount: number
+) {
+  const ranking = await getGlobalRankingEntries(categoryCode);
+  const needed = 8 + seriesBCount;
+  await prisma.seriesQualifier.deleteMany({ where: { categoryCode } });
+
+  if (seriesBCount < 0 || ranking.length < needed || ranking.length < 8) {
+    return { ok: false as const, rankingCount: ranking.length, needed };
+  }
+
+  const seriesA = ranking.slice(0, 8);
+  const seriesB = ranking.slice(8, needed);
+
+  await prisma.seriesQualifier.createMany({
+    data: seriesA.map((entry) => ({
+      categoryCode,
+      series: "A",
+      groupId: entry.groupId,
+      teamId: entry.teamId,
+      groupRank: entry.groupRank,
+    })),
+  });
+
+  if (seriesB.length > 0) {
+    await prisma.seriesQualifier.createMany({
+      data: seriesB.map((entry) => ({
+        categoryCode,
+        series: "B",
+        groupId: entry.groupId,
+        teamId: entry.teamId,
+        groupRank: entry.groupRank,
+      })),
+    });
+  }
+
+  return { ok: true as const, seriesACount: seriesA.length, seriesBCount: seriesB.length };
 }
 
 export async function setSecondChanceEnabled(

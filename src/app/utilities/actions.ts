@@ -53,9 +53,54 @@ export type LegacyCourtSummary = {
   byCourt: LegacyCourtRow[];
 };
 
+export type BulkCleanupSummary = {
+  refereeSubmissions: number;
+  forcedMatchPriorities: number;
+  blockedMatches: number;
+  courtAssignments: number;
+  knockoutGameScores: number;
+  knockoutMatches: number;
+  knockoutSeeds: number;
+  knockoutRandomDraws: number;
+  gameScores: number;
+  groupMatches: number;
+  seriesQualifiers: number;
+  groupRandomDraws: number;
+  groupTeams: number;
+  groups: number;
+  teamFlags: number;
+  teamMembers: number;
+  teams: number;
+  players: number;
+};
+
+export type BulkCleanupResult = {
+  ok: true;
+  deleted: BulkCleanupSummary;
+  remaining: {
+    teams: number;
+    players: number;
+  };
+};
+
 const TEST_PLAYER_PREFIXES = ["E2E ", "KR ", "Import "] as const;
 const TEST_TEAM_PREFIXES = ["E2E-", "KR-", "Import "] as const;
 const TEST_CLEANUP_CONFIRM_TOKEN = "CONFIRM_TEST_DELETE";
+const UTILITIES_CLEANUP_REVALIDATE_PATHS = [
+  "/utilities",
+  "/players",
+  "/teams",
+  "/groups",
+  "/matches",
+  "/standings",
+  "/brackets",
+  "/knockout",
+  "/schedule",
+  "/schedule-overview",
+  "/presenting",
+  "/referee",
+  "/player-checkin",
+] as const;
 
 export type TestDataCleanupSummary = {
   players: number;
@@ -593,6 +638,119 @@ export async function setAutoScheduleFunctionEnabled(enabled: boolean) {
   revalidatePath("/schedule");
 
   return { ok: true as const, enabled };
+}
+
+function zeroBulkCleanupSummary(): BulkCleanupSummary {
+  return {
+    refereeSubmissions: 0,
+    forcedMatchPriorities: 0,
+    blockedMatches: 0,
+    courtAssignments: 0,
+    knockoutGameScores: 0,
+    knockoutMatches: 0,
+    knockoutSeeds: 0,
+    knockoutRandomDraws: 0,
+    gameScores: 0,
+    groupMatches: 0,
+    seriesQualifiers: 0,
+    groupRandomDraws: 0,
+    groupTeams: 0,
+    groups: 0,
+    teamFlags: 0,
+    teamMembers: 0,
+    teams: 0,
+    players: 0,
+  };
+}
+
+function revalidateUtilityCleanupPaths() {
+  for (const path of UTILITIES_CLEANUP_REVALIDATE_PATHS) {
+    revalidatePath(path);
+  }
+}
+
+async function clearAllTeamRelatedData(tx: Prisma.TransactionClient): Promise<BulkCleanupSummary> {
+  const deleted = zeroBulkCleanupSummary();
+
+  deleted.refereeSubmissions = (
+    await tx.refereeSubmission.deleteMany({
+      where: { matchType: { in: ["GROUP", "KNOCKOUT"] } },
+    })
+  ).count;
+  deleted.forcedMatchPriorities = (await tx.forcedMatchPriority.deleteMany()).count;
+  deleted.blockedMatches = (await tx.blockedMatch.deleteMany()).count;
+  deleted.courtAssignments = (await tx.courtAssignment.deleteMany()).count;
+  deleted.knockoutGameScores = (await tx.knockoutGameScore.deleteMany()).count;
+  deleted.knockoutMatches = (await tx.knockoutMatch.deleteMany()).count;
+  deleted.knockoutSeeds = (await tx.knockoutSeed.deleteMany()).count;
+  deleted.knockoutRandomDraws = (await tx.knockoutRandomDraw.deleteMany()).count;
+  deleted.gameScores = (await tx.gameScore.deleteMany()).count;
+  deleted.groupMatches = (await tx.match.deleteMany()).count;
+  deleted.seriesQualifiers = (await tx.seriesQualifier.deleteMany()).count;
+  deleted.groupRandomDraws = (await tx.groupRandomDraw.deleteMany()).count;
+  deleted.groupTeams = (await tx.groupTeam.deleteMany()).count;
+  deleted.groups = (await tx.group.deleteMany()).count;
+  deleted.teamFlags = (await tx.teamFlags.deleteMany()).count;
+  deleted.teamMembers = (await tx.teamMember.deleteMany()).count;
+  deleted.teams = (await tx.team.deleteMany()).count;
+
+  return deleted;
+}
+
+export async function deleteAllTeamsWithRelatedData(): Promise<BulkCleanupResult | { error: string }> {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
+
+  try {
+    const deleted = await prisma.$transaction(async (tx) => clearAllTeamRelatedData(tx));
+    const [remainingTeams, remainingPlayers] = await Promise.all([
+      prisma.team.count(),
+      prisma.player.count(),
+    ]);
+
+    revalidateUtilityCleanupPaths();
+    return {
+      ok: true as const,
+      deleted,
+      remaining: {
+        teams: remainingTeams,
+        players: remainingPlayers,
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to delete all teams.";
+    return { error: message };
+  }
+}
+
+export async function deleteAllPlayersWithRelatedData(): Promise<BulkCleanupResult | { error: string }> {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
+
+  try {
+    const deleted = await prisma.$transaction(async (tx) => {
+      const summary = await clearAllTeamRelatedData(tx);
+      summary.players = (await tx.player.deleteMany()).count;
+      return summary;
+    });
+    const [remainingTeams, remainingPlayers] = await Promise.all([
+      prisma.team.count(),
+      prisma.player.count(),
+    ]);
+
+    revalidateUtilityCleanupPaths();
+    return {
+      ok: true as const,
+      deleted,
+      remaining: {
+        teams: remainingTeams,
+        players: remainingPlayers,
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to delete all players.";
+    return { error: message };
+  }
 }
 
 async function readLegacyCourtSummary(): Promise<LegacyCourtSummary> {

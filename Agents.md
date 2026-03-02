@@ -115,11 +115,17 @@ Group standings are calculated from match results using:
 ## Series Split
 
 After group stage is locked:
-- **Top half** of each group -> **Series A**
-- **Bottom half** -> **Series B**
-- **Always prioritize Series A to have exactly 8 teams** (to form Quarterfinals).
-- If Series A does not have 8 teams after initial split, adjust by moving teams between Series A and Series B within the same category until **Series A = 8**.
-- When choosing which team(s) to move, use **lowest-ranked teams in Series A overall** (based on groupRank tier first; do not compare raw totals across uneven groups).
+- Use **Global Group Stage Ranking** (within same category) after lock.
+- **MD / XD**:
+  - Only global ranks **#1-#16** qualify for knockout split.
+  - **Series A** = ranks **#1-#8**
+  - **Series B** = ranks **#9-#16**
+  - Ranks **#17+** are **eliminated** (not qualified for knockout).
+- **WD**:
+  - WD remains **Series A only**.
+  - If WD has **>= 8 teams**, qualify **top 8** to Series A.
+  - If WD has **4-7 teams**, qualify **top 4** to Series A.
+  - Remaining WD teams are **eliminated**.
 ---
 
 ## Knockout Seeding
@@ -163,14 +169,17 @@ After group stage is locked:
 ### Series Qualification Boundary (Important)
 - Knockout brackets MUST be generated ONLY from the qualified teams of that series.
 - Series A bracket must use ONLY the 8 Series A qualified teams.
+- For MD/XD, Series B bracket must use ONLY MD/XD ranks #9-#16 (within qualified set).
 - Series A seeding must follow the top-8 Global Group Stage Ranking order.
-- A non-qualified team (e.g., global rank #9+) must never appear in Series A bracket.
+- A non-qualified team must never appear in knockout brackets.
 
 ### Series A Qualification Source (Important)
-- Series A is determined by taking the **top 8 teams** from the **Global Group Stage Ranking** (within the same category).
+- Series A is determined from the **Global Group Stage Ranking** (within the same category):
+  - MD/XD: **top 8**
+  - WD: **top 8** when total teams >= 8, otherwise **top 4**
 - Global Group Stage Ranking order is based on the locked standings tie-break rules (wins, point difference, points for, head-to-head, stored random draw).
-- Series A must contain exactly those 8 teams (ranks #1-#8).
-- Teams outside rank #8 must not appear in Series A.
+- Series A must contain exactly those qualified teams.
+- Teams outside the qualification boundary must not appear in Series A.
 
 ## Series Stage
 
@@ -180,10 +189,11 @@ After group stage is locked:
 
 ### Women's Doubles (WD) Special Case
 - WD uses **Series A only** (no Series B)
-- WD **minimum teams: 4**, **maximum teams: 8**
+- WD **minimum teams: 4**
 - WD **do NOT have Play-ins**
-- If WD has **< 8 teams**, Series A starts at **Semifinals** using the **top 4** from group stage ranking
-- If WD has **8 teams**, Series A starts at **Quarterfinals** using top-8 group stage ranking + Avg PA seeding rules
+- If WD has **4-7 teams**, Series A starts at **Semifinals** using the **top 4** from group stage ranking
+- If WD has **>= 8 teams**, Series A starts at **Quarterfinals** using top-8 group stage ranking + Avg PA seeding rules
+- WD teams outside qualified top cutoff are **eliminated**
 - **Second chance is not available** for WD
 
 ### Second-Chance Rule (Configurable)
@@ -198,6 +208,7 @@ If `secondChanceEnabled: true`:
 - Series B Quarterfinals must always have **8 teams total**:
   - 4 teams = the dropped Series A QF losers
   - 4 teams = selected from original Series B via play-ins
+- Series B bracket generation requires **minimum 4 qualified Series B teams**.
 
 ### How many Series B play-in matches?
 Let `B` be the number of original Series B teams.
@@ -300,7 +311,9 @@ Pair the play-in teams using:
 ## Schedule Overview Page
 - Route: `/schedule-overview`
 - Static timetable for group stage matches only (no knockout)
-- Assumes 20-minute matches, starts at 12:30 PM
+- Configurable timing criteria via query params: `slotMinutes`, `startTime`, `bufferMinutes`
+- Defaults: `slotMinutes=20`, `startTime=12:30 PM`, `bufferMinutes=0`
+- Slot timeline spacing uses `(slotMinutes + bufferMinutes)`
 - Lays out 5 courts in parallel (Court 1 through Court 5)
 - Uses per-slot rest from previous slot only, independent of Schedule.md rest logic
 - Enforces no player overlaps within a time slot; fairness-first priority
