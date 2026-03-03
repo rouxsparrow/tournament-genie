@@ -2,14 +2,17 @@ import { expect, test } from "@playwright/test";
 import { loginAsAdmin } from "./helpers/auth";
 import {
   closeDb,
+  getGlobalRankingTeamIds,
   getKnockoutMatchIds,
   getSeriesAQualifierTeamIds,
   getSeriesBQualifierTeamIds,
   getTop8GlobalRankingTeamIds,
+  getTop12GlobalRankingTeamIds,
   getTop16GlobalRankingTeamIds,
   seedMdXdSeriesQualifiersWithSeriesBCount,
   seedSeriesQualifiersFromCurrentRules,
   setGroupStageLock,
+  setPlayInsEnabled,
   setSecondChanceEnabled,
 } from "./helpers/db";
 
@@ -32,9 +35,31 @@ test("Group stage lock enforcement @regression", async ({ page }) => {
   expect(body.error).toBe("GROUP_STAGE_UNLOCKED");
 });
 
-test("Group-to-knockout boundary top-16 qualification for MD @regression", async ({ page }) => {
+test("Group-to-knockout boundary top-12 qualification for MD when play-ins is OFF @regression", async ({ page }) => {
   await loginAsAdmin(page);
   await setGroupStageLock("MD", true);
+  await setPlayInsEnabled("MD", false);
+  const seeded = await seedSeriesQualifiersFromCurrentRules("MD");
+  test.skip(
+    seeded.seriesACount < 8,
+    "existing-group dataset needs at least 8 ranked MD teams for qualification boundary checks."
+  );
+
+  const seriesAIds = await getSeriesAQualifierTeamIds("MD");
+  const seriesBIds = await getSeriesBQualifierTeamIds("MD");
+  const top8 = await getTop8GlobalRankingTeamIds("MD");
+  const top12 = await getTop12GlobalRankingTeamIds("MD");
+  const expectedQualified = top12.slice(0, seriesAIds.length + seriesBIds.length);
+
+  expect(seriesAIds.length).toBe(8);
+  expect([...seriesAIds].sort()).toEqual([...top8].sort());
+  expect([...seriesAIds, ...seriesBIds].sort()).toEqual([...expectedQualified].sort());
+});
+
+test("Group-to-knockout boundary top-16 qualification for MD when play-ins is ON @regression", async ({ page }) => {
+  await loginAsAdmin(page);
+  await setGroupStageLock("MD", true);
+  await setPlayInsEnabled("MD", true);
   const seeded = await seedSeriesQualifiersFromCurrentRules("MD");
   test.skip(
     seeded.seriesACount < 8,
@@ -52,7 +77,7 @@ test("Group-to-knockout boundary top-16 qualification for MD @regression", async
   expect([...seriesAIds, ...seriesBIds].sort()).toEqual([...expectedQualified].sort());
 });
 
-test("WD qualification boundary follows top-8/top-4 rule @regression", async ({ page }) => {
+test("WD qualification boundary follows >8 => top-8, else top-4 rule @regression", async ({ page }) => {
   await loginAsAdmin(page);
   await setGroupStageLock("WD", true);
   const seeded = await seedSeriesQualifiersFromCurrentRules("WD");
@@ -61,10 +86,10 @@ test("WD qualification boundary follows top-8/top-4 rule @regression", async ({ 
     "existing-group dataset needs at least 4 ranked WD teams for boundary checks."
   );
 
+  const ranking = await getGlobalRankingTeamIds("WD");
   const seriesAIds = await getSeriesAQualifierTeamIds("WD");
-  const top8 = await getTop8GlobalRankingTeamIds("WD");
-  const expectedCount = top8.length >= 8 ? 8 : 4;
-  const expected = top8.slice(0, expectedCount);
+  const expectedCount = ranking.length > 8 ? 8 : 4;
+  const expected = ranking.slice(0, expectedCount);
 
   expect(seriesAIds.length).toBe(expectedCount);
   expect([...seriesAIds].sort()).toEqual([...expected].sort());
@@ -74,6 +99,7 @@ test("Generate full bracket blocks when Series B has fewer than 4 teams @regress
   await loginAsAdmin(page);
   await setGroupStageLock("MD", true);
   await setSecondChanceEnabled("MD", true);
+  await setPlayInsEnabled("MD", false);
 
   const clearBefore = await page.request.delete("/api/knockout/clear?category=MD");
   expect(clearBefore.status()).toBe(200);
@@ -95,9 +121,33 @@ test("Generate full bracket blocks when Series B has fewer than 4 teams @regress
   expect(knockoutIds.length).toBe(0);
 });
 
+test("Generate full bracket blocks when play-ins is OFF and second chance is OFF @regression", async ({ page }) => {
+  await loginAsAdmin(page);
+  await setGroupStageLock("MD", true);
+  await setPlayInsEnabled("MD", false);
+  await setSecondChanceEnabled("MD", false);
+
+  const clearBefore = await page.request.delete("/api/knockout/clear?category=MD");
+  expect(clearBefore.status()).toBe(200);
+
+  const seeded = await seedMdXdSeriesQualifiersWithSeriesBCount("MD", 4);
+  test.skip(
+    !seeded.ok,
+    "existing-group dataset needs at least 12 ranked MD teams for play-ins off dependency checks."
+  );
+
+  const response = await page.request.post("/api/knockout/generate-full", {
+    data: { category: "MD" },
+  });
+  expect(response.status()).toBe(400);
+  const body = await response.json();
+  expect(body.error).toBe("PLAYINS_REQUIRES_SECOND_CHANCE");
+});
+
 test("Knockout generation idempotency @regression", async ({ page }) => {
   await loginAsAdmin(page);
   await setGroupStageLock("MD", true);
+  await setPlayInsEnabled("MD", true);
   await setSecondChanceEnabled("MD", false);
   const seeded = await seedSeriesQualifiersFromCurrentRules("MD");
   const seriesBSupportsNoSecondChance =

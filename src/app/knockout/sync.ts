@@ -83,7 +83,7 @@ export async function syncKnockoutPropagation(categoryCode: CategoryCode) {
         where: { categoryCode },
       });
       const secondChanceEnabled =
-        categoryCode === "WD" ? false : config?.secondChanceEnabled ?? false;
+        categoryCode === "WD" ? false : config?.secondChanceEnabled ?? true;
 
       const matches = await tx.knockoutMatch.findMany({
         where: { categoryCode },

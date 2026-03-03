@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   computeSeriesQualifiers,
 } from "@/app/knockout/actions";
+import { PlayInsToggle } from "@/app/knockout/play-ins-toggle";
 import { SecondChanceToggle } from "@/app/knockout/second-chance-toggle";
 import { loadGlobalGroupRanking } from "@/app/knockout/logic";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
@@ -81,6 +82,8 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
   );
   const seriesACount = qualifiers.filter((entry) => entry.series === "A").length;
   const seriesBCount = qualifiers.filter((entry) => entry.series === "B").length;
+  const playInsEnabled = isWD ? false : categoryConfig?.playInsEnabled ?? false;
+  const secondChanceEnabled = isWD ? false : categoryConfig?.secondChanceEnabled ?? true;
   const qualifiedSeriesByTeamId = new Map(
     qualifiers.map((entry) => [entry.teamId, entry.series])
   );
@@ -90,11 +93,14 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
     ? await loadGlobalGroupRanking(selectedCategory)
     : [];
   const eliminatedCount = Math.max(0, globalRanking.length - qualifiers.length);
-  const hasTooFewSeriesBTeams =
-    !isWD && qualifiers.length > 0 && seriesBCount < 4;
+  const hasTooFewSeriesBTeams = !isWD && qualifiers.length > 0 && seriesBCount < 4;
+  const hasInvalidSeriesBCountForPlayInsOff =
+    !isWD && !playInsEnabled && qualifiers.length > 0 && seriesBCount !== 4;
+  const isBlockedByDisabledSecondChance =
+    !isWD && !playInsEnabled && !secondChanceEnabled;
   const seriesASeedPreview = globalRanking.slice(
     0,
-    isWD ? (globalRanking.length >= 8 ? 8 : 4) : 8
+    isWD ? (globalRanking.length > 8 ? 8 : 4) : 8
   );
 
   return (
@@ -143,17 +149,29 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
             Compute Series Split
           </Button>
         </form>
-        {!isWD && categoryConfig?.secondChanceEnabled ? (
+        {!isWD && secondChanceEnabled ? (
           <span className="text-xs text-muted-foreground">
             Second chance enabled for this category.
           </span>
         ) : null}
         {!isWD ? (
-          <SecondChanceToggle
+          <PlayInsToggle
             category={selectedCategory}
-            enabled={categoryConfig?.secondChanceEnabled ?? false}
+            enabled={playInsEnabled}
             disabled={!isLocked}
           />
+        ) : null}
+        {!isWD ? (
+          <SecondChanceToggle
+            category={selectedCategory}
+            enabled={secondChanceEnabled}
+            disabled={!isLocked}
+          />
+        ) : null}
+        {!isWD && !playInsEnabled ? (
+          <span className="text-xs text-muted-foreground">
+            Play-ins disabled: Series B uses global ranks #9-#12.
+          </span>
         ) : null}
         {qualifiers.length > 0 ? (
           <span className="text-xs text-muted-foreground">
@@ -162,7 +180,19 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
             {` · Eliminated: ${eliminatedCount} teams`}
           </span>
         ) : null}
-        {hasTooFewSeriesBTeams ? (
+        {isBlockedByDisabledSecondChance ? (
+          <span className="text-xs text-red-600 dark:text-red-400">
+            Bracket generation is blocked while Play-ins is OFF and Second Chance is OFF.
+            Enable Second Chance or turn Play-ins ON.
+          </span>
+        ) : null}
+        {hasInvalidSeriesBCountForPlayInsOff ? (
+          <span className="text-xs text-red-600 dark:text-red-400">
+            Play-ins is OFF, so Series B must have exactly 4 qualified teams (ranks #9-#12).
+            Recompute Series Split or turn Play-ins ON.
+          </span>
+        ) : null}
+        {playInsEnabled && hasTooFewSeriesBTeams ? (
           <span className="text-xs text-red-600 dark:text-red-400">
             Series B has {seriesBCount} qualified team
             {seriesBCount === 1 ? "" : "s"}.

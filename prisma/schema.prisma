@@ -303,7 +303,8 @@ model KnockoutRandomDraw {
 
 model CategoryConfig {
   categoryCode        CategoryCode @id
-  secondChanceEnabled Boolean      @default(false)
+  secondChanceEnabled Boolean      @default(true)
+  playInsEnabled      Boolean      @default(false)
   updatedAt           DateTime     @updatedAt
 }
 
@@ -484,4 +485,12 @@ model RefereeSubmission {
   @@index([submittedAt])
   @@index([matchType, submittedAt])
   @@index([refereeAccountId, submittedAt])
+}
+
+model RefereeGuideline {
+  id                  String   @id
+  mainRefereeSections Json     @default("[]")
+  lineRefereeSections Json     @default("[]")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }

@@ -117,14 +117,20 @@ Group standings are calculated from match results using:
 After group stage is locked:
 - Use **Global Group Stage Ranking** (within same category) after lock.
 - **MD / XD**:
-  - Only global ranks **#1-#16** qualify for knockout split.
-  - **Series A** = ranks **#1-#8**
-  - **Series B** = ranks **#9-#16**
-  - Ranks **#17+** are **eliminated** (not qualified for knockout).
+  - If `playInsEnabled = false` (default):
+    - Only global ranks **#1-#12** qualify for knockout split.
+    - **Series A** = ranks **#1-#8**
+    - **Series B** = ranks **#9-#12**
+    - Ranks **#13+** are **eliminated** (not qualified for knockout).
+  - If `playInsEnabled = true`:
+    - Only global ranks **#1-#16** qualify for knockout split.
+    - **Series A** = ranks **#1-#8**
+    - **Series B** = ranks **#9-#16**
+    - Ranks **#17+** are **eliminated** (not qualified for knockout).
 - **WD**:
   - WD remains **Series A only**.
-  - If WD has **>= 8 teams**, qualify **top 8** to Series A.
-  - If WD has **4-7 teams**, qualify **top 4** to Series A.
+  - If WD has **> 8 teams**, qualify **top 8** to Series A.
+  - If WD has **4-8 teams**, qualify **top 4** to Series A.
   - Remaining WD teams are **eliminated**.
 ---
 
@@ -159,7 +165,7 @@ After group stage is locked:
 - If the number of teams does not fit the desired bracket size, use **play-in elimination matches**.
 
 ### Round Numbering (Global)
-- Round 1 = Play-ins
+- Round 1 = Play-ins (when enabled and needed)
 - Round 2 = Quarterfinals (QF)
 - Round 3 = Semifinals (SF)
 - Round 4 = Finals block (matchNo 1 = Final, matchNo 2 = Bronze Medal Match)
@@ -169,14 +175,15 @@ After group stage is locked:
 ### Series Qualification Boundary (Important)
 - Knockout brackets MUST be generated ONLY from the qualified teams of that series.
 - Series A bracket must use ONLY the 8 Series A qualified teams.
-- For MD/XD, Series B bracket must use ONLY MD/XD ranks #9-#16 (within qualified set).
+- For MD/XD with `playInsEnabled = true`, Series B bracket must use ONLY MD/XD ranks #9-#16 (within qualified set).
+- For MD/XD with `playInsEnabled = false`, Series B bracket must use ONLY MD/XD ranks #9-#12 (within qualified set).
 - Series A seeding must follow the top-8 Global Group Stage Ranking order.
 - A non-qualified team must never appear in knockout brackets.
 
 ### Series A Qualification Source (Important)
 - Series A is determined from the **Global Group Stage Ranking** (within the same category):
   - MD/XD: **top 8**
-  - WD: **top 8** when total teams >= 8, otherwise **top 4**
+  - WD: **top 8** when total teams > 8, otherwise **top 4**
 - Global Group Stage Ranking order is based on the locked standings tie-break rules (wins, point difference, points for, head-to-head, stored random draw).
 - Series A must contain exactly those qualified teams.
 - Teams outside the qualification boundary must not appear in Series A.
@@ -191,10 +198,19 @@ After group stage is locked:
 - WD uses **Series A only** (no Series B)
 - WD **minimum teams: 4**
 - WD **do NOT have Play-ins**
-- If WD has **4-7 teams**, Series A starts at **Semifinals** using the **top 4** from group stage ranking
-- If WD has **>= 8 teams**, Series A starts at **Quarterfinals** using top-8 group stage ranking + Avg PA seeding rules
+- If WD has **4-8 teams**, Series A starts at **Semifinals** using the **top 4** from group stage ranking
+- If WD has **> 8 teams**, Series A starts at **Quarterfinals** using top-8 group stage ranking + Avg PA seeding rules
 - WD teams outside qualified top cutoff are **eliminated**
 - **Second chance is not available** for WD
+
+### Play-ins Toggle (MD/XD)
+- `playInsEnabled`: true / false (default: **false**)
+- If `playInsEnabled = false`:
+  - Series B is fixed to ranks #9-#12 (4 teams)
+  - Those 4 teams go directly to Series B Quarterfinals (no Round 1 play-ins)
+  - Bracket generation is blocked unless `secondChanceEnabled = true`
+- If `playInsEnabled = true`:
+  - Keep existing MD/XD behavior (Series B ranks #9-#16, play-ins as required)
 
 ### Second-Chance Rule (Configurable)
 At tournament creation:
@@ -207,10 +223,11 @@ If `secondChanceEnabled: true`:
 - The **4 losers of Series A Quarterfinals** drop into **Series B Quarterfinals**.
 - Series B Quarterfinals must always have **8 teams total**:
   - 4 teams = the dropped Series A QF losers
-  - 4 teams = selected from original Series B via play-ins
+  - 4 teams = selected from original Series B (via play-ins when enabled; direct QF entry when play-ins are disabled)
 - Series B bracket generation requires **minimum 4 qualified Series B teams**.
 
 ### How many Series B play-in matches?
+When play-ins are enabled:
 Let `B` be the number of original Series B teams.
 - We must qualify exactly **4** of them into Series B QF.
 - Number of elimination matches required: `B - 4`

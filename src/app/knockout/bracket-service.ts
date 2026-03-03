@@ -222,21 +222,51 @@ export async function generateKnockoutBracketInternal(params: {
     throwBracketError("MISSING_SERIES_SPLIT", "Compute series split first.");
   }
 
+  const categoryConfig = await prisma.categoryConfig.findUnique({
+    where: { categoryCode },
+  });
+  const playInsEnabled =
+    categoryCode === "WD" ? false : categoryConfig?.playInsEnabled ?? false;
+  const secondChanceEnabled =
+    categoryCode === "WD" ? false : categoryConfig?.secondChanceEnabled ?? true;
+
+  if (categoryCode !== "WD" && !playInsEnabled && !secondChanceEnabled) {
+    throwBracketError(
+      "PLAYINS_REQUIRES_SECOND_CHANCE",
+      "Play-ins is disabled. Enable Second Chance to generate MD/XD brackets, or turn Play-ins on."
+    );
+  }
+
   if (categoryCode !== "WD" && series === "A") {
     const seriesBQualifierCount = await prisma.seriesQualifier.count({
       where: { categoryCode, series: "B" },
     });
-    if (seriesBQualifierCount < 4) {
-      throwBracketError(
-        "SERIES_B_MIN_TEAMS",
-        "Series B requires at least 4 qualified teams. Recompute series split or add more teams."
-      );
-    }
-    if (seriesBQualifierCount > 8) {
-      throwBracketError(
-        "SERIES_B_TEAM_COUNT",
-        "Series B supports at most 8 qualified teams. Recompute series split (top-16 boundary)."
-      );
+    if (playInsEnabled) {
+      if (seriesBQualifierCount < 4) {
+        throwBracketError(
+          "SERIES_B_MIN_TEAMS",
+          "Series B requires at least 4 qualified teams. Recompute series split or add more teams."
+        );
+      }
+      if (seriesBQualifierCount > 8) {
+        throwBracketError(
+          "SERIES_B_TEAM_COUNT",
+          "Series B supports at most 8 qualified teams. Recompute series split (top-16 boundary)."
+        );
+      }
+    } else {
+      if (seriesBQualifierCount < 4) {
+        throwBracketError(
+          "SERIES_B_MIN_TEAMS",
+          "Play-ins is disabled, so Series B requires exactly 4 qualified teams (ranks #9-#12). Add teams or turn Play-ins on."
+        );
+      }
+      if (seriesBQualifierCount > 4) {
+        throwBracketError(
+          "SERIES_B_TEAM_COUNT",
+          "Play-ins is disabled, so Series B must be exactly ranks #9-#12. Recompute series split or turn Play-ins on."
+        );
+      }
     }
   }
 
@@ -247,7 +277,7 @@ export async function generateKnockoutBracketInternal(params: {
   if (series === "A") {
     const globalRanking = await loadGlobalGroupRanking(categoryCode);
     const isWD = categoryCode === "WD";
-    const seriesATeamCount = isWD ? (globalRanking.length >= 8 ? 8 : 4) : 8;
+    const seriesATeamCount = isWD ? (globalRanking.length > 8 ? 8 : 4) : 8;
     const topSeriesA = globalRanking.slice(0, seriesATeamCount);
     if (topSeriesA.length !== seriesATeamCount) {
       throwBracketError(
@@ -305,17 +335,32 @@ export async function generateKnockoutBracketInternal(params: {
 
   if (series === "B") {
     const teamCount = orderedSeedEntries.length;
-    if (teamCount < 4) {
-      throwBracketError(
-        "SERIES_B_MIN_TEAMS",
-        "Series B requires at least 4 qualified teams. Recompute series split or add more teams."
-      );
-    }
-    if (teamCount > 8) {
-      throwBracketError(
-        "SERIES_B_TEAM_COUNT",
-        "Series B supports at most 8 qualified teams. Recompute series split (top-16 boundary)."
-      );
+    if (playInsEnabled) {
+      if (teamCount < 4) {
+        throwBracketError(
+          "SERIES_B_MIN_TEAMS",
+          "Series B requires at least 4 qualified teams. Recompute series split or add more teams."
+        );
+      }
+      if (teamCount > 8) {
+        throwBracketError(
+          "SERIES_B_TEAM_COUNT",
+          "Series B supports at most 8 qualified teams. Recompute series split (top-16 boundary)."
+        );
+      }
+    } else {
+      if (teamCount < 4) {
+        throwBracketError(
+          "SERIES_B_MIN_TEAMS",
+          "Play-ins is disabled, so Series B requires exactly 4 qualified teams (ranks #9-#12). Add teams or turn Play-ins on."
+        );
+      }
+      if (teamCount > 4) {
+        throwBracketError(
+          "SERIES_B_TEAM_COUNT",
+          "Play-ins is disabled, so Series B must be exactly ranks #9-#12. Recompute series split or turn Play-ins on."
+        );
+      }
     }
   }
 
@@ -329,12 +374,7 @@ export async function generateKnockoutBracketInternal(params: {
     }
   }
 
-  const categoryConfig = await prisma.categoryConfig.findUnique({
-    where: { categoryCode },
-  });
-
-  const useSecondChance =
-    categoryCode === "WD" ? false : categoryConfig?.secondChanceEnabled ?? false;
+  const useSecondChance = secondChanceEnabled;
 
   let baseMatches: {
     round: number;

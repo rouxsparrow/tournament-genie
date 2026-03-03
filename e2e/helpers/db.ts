@@ -569,9 +569,19 @@ export async function getTop8GlobalRankingTeamIds(categoryCode: "MD" | "WD" | "X
   return ranking.slice(0, 8).map((row) => row.teamId);
 }
 
+export async function getTop12GlobalRankingTeamIds(categoryCode: "MD" | "WD" | "XD") {
+  const ranking = await getGlobalRankingEntries(categoryCode);
+  return ranking.slice(0, 12).map((row) => row.teamId);
+}
+
 export async function getTop16GlobalRankingTeamIds(categoryCode: "MD" | "WD" | "XD") {
   const ranking = await getGlobalRankingEntries(categoryCode);
   return ranking.slice(0, 16).map((row) => row.teamId);
+}
+
+export async function getGlobalRankingTeamIds(categoryCode: "MD" | "WD" | "XD") {
+  const ranking = await getGlobalRankingEntries(categoryCode);
+  return ranking.map((row) => row.teamId);
 }
 
 export async function getSeriesAQualifierTeamIds(categoryCode: "MD" | "WD" | "XD") {
@@ -625,7 +635,7 @@ export async function seedSeriesQualifiersFromCurrentRules(categoryCode: "MD" | 
       };
     }
 
-    const qualifiedCount = ranking.length >= 8 ? 8 : 4;
+    const qualifiedCount = ranking.length > 8 ? 8 : 4;
     const seriesA = ranking.slice(0, qualifiedCount);
     await prisma.seriesQualifier.createMany({
       data: seriesA.map((entry) => ({
@@ -652,7 +662,12 @@ export async function seedSeriesQualifiersFromCurrentRules(categoryCode: "MD" | 
     };
   }
 
-  const eligible = ranking.slice(0, 16);
+  const config = await prisma.categoryConfig.findUnique({
+    where: { categoryCode },
+    select: { playInsEnabled: true },
+  });
+  const playInsEnabled = config?.playInsEnabled ?? false;
+  const eligible = ranking.slice(0, playInsEnabled ? 16 : 12);
   const seriesA = eligible.slice(0, 8);
   const seriesB = eligible.slice(8);
 
@@ -733,6 +748,18 @@ export async function setSecondChanceEnabled(
     where: { categoryCode },
     create: { categoryCode, secondChanceEnabled: enabled },
     update: { secondChanceEnabled: enabled },
+  });
+}
+
+export async function setPlayInsEnabled(
+  categoryCode: "MD" | "WD" | "XD",
+  enabled: boolean
+) {
+  if (categoryCode === "WD") return;
+  await prisma.categoryConfig.upsert({
+    where: { categoryCode },
+    create: { categoryCode, playInsEnabled: enabled },
+    update: { playInsEnabled: enabled },
   });
 }
 
