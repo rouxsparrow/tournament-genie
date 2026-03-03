@@ -48,6 +48,12 @@ export async function computeSeriesQualifiers(formData: FormData) {
     redirect(`/knockout?category=${categoryCode}&error=${encodeURIComponent("No groups found.")}`);
   }
   const isWD = categoryCode === "WD";
+  const categoryConfig = isWD
+    ? null
+    : await prisma.categoryConfig.findUnique({
+        where: { categoryCode },
+      });
+  const playInsEnabled = isWD ? false : categoryConfig?.playInsEnabled ?? false;
   const minRankedTeams = isWD ? 4 : 8;
   if (globalRanking.length < minRankedTeams) {
     redirect(
@@ -60,8 +66,8 @@ export async function computeSeriesQualifiers(formData: FormData) {
   }
 
   const eligibleRanking = isWD
-    ? globalRanking.slice(0, globalRanking.length >= 8 ? 8 : 4)
-    : globalRanking.slice(0, 16);
+    ? globalRanking.slice(0, globalRanking.length > 8 ? 8 : 4)
+    : globalRanking.slice(0, playInsEnabled ? 16 : 12);
 
   const qualifiers: {
     categoryCode: "MD" | "WD" | "XD";
@@ -133,7 +139,7 @@ export async function applySecondChanceDrop(formData: FormData) {
   const config = await prisma.categoryConfig.findUnique({
     where: { categoryCode },
   });
-  if (!config?.secondChanceEnabled) {
+  if (!(config?.secondChanceEnabled ?? true)) {
     redirect(`/knockout?category=${categoryCode}&error=${encodeURIComponent("Second chance is not enabled.")}`);
   }
 
@@ -222,6 +228,33 @@ export async function toggleSecondChanceEnabled(formData: FormData) {
     where: { categoryCode },
     create: { categoryCode, secondChanceEnabled: enabled },
     update: { secondChanceEnabled: enabled },
+  });
+
+  revalidatePath("/knockout");
+  redirect(`/knockout?category=${categoryCode}`);
+}
+
+export async function togglePlayInsEnabled(formData: FormData) {
+  await requireAdmin({ onFail: "redirect" });
+  const parsed = categorySchema.safeParse(formData.get("category"));
+  if (!parsed.success) {
+    redirect(`/knockout?error=${encodeURIComponent("Invalid category.")}`);
+  }
+
+  const categoryCode = parsed.data;
+  if (categoryCode === "WD") {
+    redirect(
+      `/knockout?category=${categoryCode}&error=${encodeURIComponent(
+        "Play-ins are not available for Women's Doubles."
+      )}`
+    );
+  }
+
+  const enabled = formData.get("playInsEnabled") === "on";
+  await prisma.categoryConfig.upsert({
+    where: { categoryCode },
+    create: { categoryCode, playInsEnabled: enabled },
+    update: { playInsEnabled: enabled },
   });
 
   revalidatePath("/knockout");

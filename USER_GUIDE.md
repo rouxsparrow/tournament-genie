@@ -53,9 +53,16 @@ Standings are updated in real-time based on:
 Once the Group Stage is **locked**, the software automatically splits teams:
 *   **Series A**: Typically the top-ranking teams (the goal is an 8-team Quarterfinal).
 *   **Series B**: Remaining teams progress here.
+*   **MD/XD Play-ins toggle (default OFF)**:
+    *   OFF: Series B uses ranks #9-#12 only (4 teams).
+    *   ON: Series B uses ranks #9-#16 (up to 8 teams).
+*   **WD threshold**:
+    *   4-8 teams: top 4 qualify (Series A starts at Semifinals).
+    *   >8 teams: top 8 qualify (Series A starts at Quarterfinals).
 
 ### Second Chance Logic
 If enabled, losers of the Series A Quarterfinals "drop" into Series B Quarterfinals, giving them a second chance at a podium finish.
+For MD/XD when Play-ins is OFF, enabling Second Chance is required before knockout generation.
 
 ---
 

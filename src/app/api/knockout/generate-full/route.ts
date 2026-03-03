@@ -27,6 +27,13 @@ export async function POST(request: Request) {
   }
 
   const { category } = parsed.data;
+  const categoryConfig = await prisma.categoryConfig.findUnique({
+    where: { categoryCode: category },
+    select: { secondChanceEnabled: true, playInsEnabled: true },
+  });
+  const playInsEnabled = category === "WD" ? false : categoryConfig?.playInsEnabled ?? false;
+  const secondChanceEnabled =
+    category === "WD" ? false : categoryConfig?.secondChanceEnabled ?? true;
 
   const lock = await prisma.groupStageLock.findUnique({
     where: { categoryCode: category },
@@ -91,28 +98,63 @@ export async function POST(request: Request) {
   }
 
   if (category !== "WD") {
-    const seriesBCount = await prisma.seriesQualifier.count({
-      where: { categoryCode: category, series: "B" },
-    });
-    if (seriesBCount < 4) {
+    if (!playInsEnabled && !secondChanceEnabled) {
       return NextResponse.json(
         {
-          error: "SERIES_B_MIN_TEAMS",
+          error: "PLAYINS_REQUIRES_SECOND_CHANCE",
           message:
-            "Series B requires at least 4 qualified teams before generating brackets.",
+            "Play-ins is disabled. Enable Second Chance to generate MD/XD brackets, or turn Play-ins on.",
         },
         { status: 400 }
       );
     }
-    if (seriesBCount > 8) {
-      return NextResponse.json(
-        {
-          error: "SERIES_B_TEAM_COUNT",
-          message:
-            "Series B supports at most 8 qualified teams. Recompute series split.",
-        },
-        { status: 400 }
-      );
+
+    const seriesBCount = await prisma.seriesQualifier.count({
+      where: { categoryCode: category, series: "B" },
+    });
+
+    if (playInsEnabled) {
+      if (seriesBCount < 4) {
+        return NextResponse.json(
+          {
+            error: "SERIES_B_MIN_TEAMS",
+            message:
+              "Series B requires at least 4 qualified teams before generating brackets.",
+          },
+          { status: 400 }
+        );
+      }
+      if (seriesBCount > 8) {
+        return NextResponse.json(
+          {
+            error: "SERIES_B_TEAM_COUNT",
+            message:
+              "Series B supports at most 8 qualified teams. Recompute series split.",
+          },
+          { status: 400 }
+        );
+      }
+    } else {
+      if (seriesBCount < 4) {
+        return NextResponse.json(
+          {
+            error: "SERIES_B_MIN_TEAMS",
+            message:
+              "Play-ins is disabled, so Series B requires exactly 4 qualified teams (ranks #9-#12). Add teams or turn Play-ins on.",
+          },
+          { status: 400 }
+        );
+      }
+      if (seriesBCount > 4) {
+        return NextResponse.json(
+          {
+            error: "SERIES_B_TEAM_COUNT",
+            message:
+              "Play-ins is disabled, so Series B must be exactly ranks #9-#12. Recompute series split or turn Play-ins on.",
+          },
+          { status: 400 }
+        );
+      }
     }
   }
 

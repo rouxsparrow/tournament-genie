@@ -112,7 +112,7 @@ Use the following deterministic order:
   - Prefer earlier rounds (Play-ins / Quarterfinals) as a **tie-break**
   - No hard reservation window
 - Knockout round mapping (global):
-  - Round 1 = Play-ins (Series B only, when Second Chance + play-ins needed)
+  - Round 1 = Play-ins (Series B only, when play-ins are enabled and needed)
   - Round 2 = Quarterfinals (Series A starts here)
   - Round 3 = Semifinals
   - Round 4 = Finals block

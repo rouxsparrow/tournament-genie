@@ -52,7 +52,10 @@ graph TD
 1.  **Locking**: Once all group matches are done, **Lock the Group Stage**. 
     > [!WARNING]
     > Locking prevents further edits to group scores. This is necessary to freeze the rankings used for knockout seeding.
-2.  **Series Split**: The system qualified the top teams for **Series A** (typically the top 8) and the remainder for **Series B**.
+2.  **Series Split**: Decide MD/XD **Play-ins** mode first, then compute split.
+    * Play-ins OFF (default): Series B is ranks #9-#12.
+    * Play-ins ON: Series B expands to ranks #9-#16.
+    * WD: top 4 for 4-8 teams; top 8 only when total WD teams > 8.
 3.  **Bracket Generation**: Generate the knockout brackets for each category and series.
 
 ## 🏆 Phase 4: Knockout Stage

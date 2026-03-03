@@ -412,7 +412,7 @@ async function applySecondChanceDrop(
   const config = await tx.categoryConfig.findUnique({
     where: { categoryCode: match.categoryCode },
   });
-  if (!config?.secondChanceEnabled) return;
+  if (!(config?.secondChanceEnabled ?? true)) return;
 
   const qfRoundA = 2;
   if (match.round !== qfRoundA) return;
@@ -514,7 +514,7 @@ async function clearSecondChanceDrop(
   const config = await tx.categoryConfig.findUnique({
     where: { categoryCode: match.categoryCode },
   });
-  if (!config?.secondChanceEnabled) return;
+  if (!(config?.secondChanceEnabled ?? true)) return;
 
   const qfRoundA = 2;
   if (match.round !== qfRoundA) return;
