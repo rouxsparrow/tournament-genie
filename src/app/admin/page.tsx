@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
+  BookText,
   CalendarRange,
   FolderKanban,
   Radio,
@@ -23,6 +24,7 @@ const ADMIN_LINKS = [
   { href: "/broadcast", label: "Broadcast", icon: Radio },
   { href: "/referees", label: "Referees", icon: UserCheck },
   { href: "/referee-submissions", label: "Referee Submissions", icon: UserCheck },
+  { href: "/tournament-format", label: "Tournament Format", icon: BookText },
   { href: "/player-checkin", label: "Player Check-in", icon: UserCheck },
   { href: "/utilities", label: "Utilities", icon: Wrench },
   { href: "/schedule-overview", label: "Schedule Overview", icon: CalendarRange },
