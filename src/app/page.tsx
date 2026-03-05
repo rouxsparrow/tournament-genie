@@ -78,6 +78,17 @@ export default async function Home() {
           </span>
         </Link>
       </div>
+      <div className="mx-auto mt-3 max-w-5xl">
+        <Link
+          href="/tournament-format"
+          className="block rounded-lg border border-border bg-card px-4 py-3 text-center text-sm transition-colors hover:bg-accent"
+        >
+          <span className="block font-semibold text-foreground">Check out the Tournament Format 🧭</span>
+          <span className="mt-1 block text-xs text-muted-foreground">
+            Read tournament format and progression flow
+          </span>
+        </Link>
+      </div>
 
       {hasFavourite ? (
         <div className="mt-10 border-t border-border/70 pt-8 flex justify-center">
