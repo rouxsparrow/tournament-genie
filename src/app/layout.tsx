@@ -27,7 +27,7 @@ export const metadata: Metadata = {
     default: "Tournament Genie",
     template: "%s",
   },
-  description: "Admin-first tournament management for badminton doubles.",
+  description: "FAP Badminton Tournament 2026",
 };
 
 async function logout() {
