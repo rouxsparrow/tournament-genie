@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Image from "next/image";
 import Link from "next/link";
 import Script from "next/script";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { GlobalLoadingProvider } from "@/components/global-loading-provider";
@@ -249,6 +250,7 @@ export default async function RootLayout({
             {children}
           </main>
         </GlobalLoadingProvider>
+        <SpeedInsights />
       </body>
     </html>
   );
