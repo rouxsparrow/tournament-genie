@@ -5,6 +5,7 @@ import {
   generateKnockoutBracketInternal,
 } from "@/app/knockout/bracket-service";
 import { getRoleFromRequest } from "@/lib/auth";
+import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
 
 const payloadSchema = z.object({
   category: z.enum(["MD", "WD", "XD"]),
@@ -44,5 +45,10 @@ export async function POST(request: Request) {
     );
   }
 
+  await invalidatePublicReadModels({
+    type: "knockout-results",
+    categoryCodes: [category],
+    series: [series],
+  });
   return NextResponse.json({ ok: true });
 }

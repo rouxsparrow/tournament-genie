@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { buildRandomizedGroups } from "@/lib/group-randomizer";
 import { requireAdmin } from "@/lib/auth";
+import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
 import {
   clearGroupStageMatchesForCategory,
   generateGroupStageMatchesForCategory,
@@ -105,6 +106,10 @@ export async function createGroupsManual(formData: FormData) {
     data: names.map((name) => ({ name, categoryId: category.id })),
   });
 
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [parsed.data.category],
+  });
   revalidatePath("/groups");
   redirect(`/groups?category=${parsed.data.category}`);
 }
@@ -125,6 +130,10 @@ export async function deleteGroup(groupId: string) {
     where: { id: groupId },
   });
 
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [group.category.code],
+  });
   revalidatePath("/groups");
 }
 
@@ -151,6 +160,10 @@ export async function deleteAllGroupsByCategory(formData: FormData) {
     where: { categoryId: category.id },
   });
 
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [parsed.data],
+  });
   revalidatePath("/groups");
   redirect(
     buildGroupsRedirect(parsed.data, {
@@ -214,6 +227,10 @@ export async function assignTeamToGroup(formData: FormData) {
     },
   });
 
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [group.category.code],
+  });
   revalidatePath("/groups");
   redirect(`/groups?category=${group.category.code}`);
 }
@@ -235,6 +252,10 @@ export async function unassignTeam(teamId: string) {
     where: { teamId },
   });
 
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [groupTeam.group.category.code],
+  });
   revalidatePath("/groups");
 }
 
@@ -300,6 +321,10 @@ export async function randomizeGroups(formData: FormData) {
     ),
   });
 
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [parsed.data],
+  });
   revalidatePath("/groups");
   redirect(`/groups?category=${parsed.data}`);
 }
@@ -376,6 +401,10 @@ export async function generateGroupStageMatchesFromGroups(formData: FormData) {
   revalidatePath("/matches");
   revalidatePath("/standings");
   revalidatePath("/schedule-overview");
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [categoryCode],
+  });
   redirect(
     buildGroupsRedirect(categoryCode, {
       notice: `Generated ${result.createdCount} group-stage matches.`,
@@ -409,6 +438,10 @@ export async function clearGroupStageMatchesFromGroups(formData: FormData) {
   revalidatePath("/matches");
   revalidatePath("/standings");
   revalidatePath("/schedule-overview");
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [categoryCode],
+  });
   redirect(
     buildGroupsRedirect(categoryCode, {
       notice: `Cleared ${result.deletedCount} group-stage matches.`,

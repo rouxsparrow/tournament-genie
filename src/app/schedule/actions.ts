@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
+import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
 import {
   getBroadcastViewChangeType,
   getBroadcastViewSignature,
@@ -113,6 +114,13 @@ async function publishBroadcastRefreshIfViewChanged(params: {
       response: result.response ?? null,
     });
   }
+}
+
+async function invalidatePresentingStage(stage: ScheduleStage) {
+  await invalidatePublicReadModels({
+    type: "presenting",
+    stages: [stage],
+  });
 }
 
 function stopPerfTimer(
@@ -2624,6 +2632,7 @@ export async function toggleAutoSchedule(stage: ScheduleStage, enabled: boolean)
     before,
   });
   revalidatePath("/schedule");
+  await invalidatePresentingStage(stage);
   return { ok: true };
 }
 
@@ -2643,6 +2652,7 @@ export async function lockCourt(courtId: string, locked: boolean, stage: Schedul
     data: { action: locked ? "COURT_LOCK" : "COURT_UNLOCK", payload: { stage, courtId } },
   });
   revalidatePath("/schedule");
+  await invalidatePresentingStage(stage);
   return { ok: true };
 }
 
@@ -2673,6 +2683,7 @@ export async function backToQueue(courtId: string, stage: ScheduleStage) {
       before,
     });
     revalidatePath("/schedule");
+    await invalidatePresentingStage(stage);
     return { ok: true };
   }
 
@@ -2744,6 +2755,7 @@ export async function swapBackToQueue(courtId: string, stage: ScheduleStage) {
       before,
     });
     revalidatePath("/schedule");
+    await invalidatePresentingStage(stage);
     return { error: "No assignable match available; court is now empty." };
   }
 
@@ -2771,6 +2783,7 @@ export async function swapBackToQueue(courtId: string, stage: ScheduleStage) {
     before,
   });
   revalidatePath("/schedule");
+  await invalidatePresentingStage(stage);
   return { ok: true };
 }
 
@@ -2823,6 +2836,7 @@ export async function blockMatch(
     before,
   });
   revalidatePath("/schedule");
+  await invalidatePresentingStage(stage);
   return { ok: true };
 }
 
@@ -2879,6 +2893,7 @@ export async function unblockMatch(
     before,
   });
   revalidatePath("/schedule");
+  await invalidatePresentingStage(stage);
   return { ok: true };
 }
 
@@ -2931,6 +2946,7 @@ export async function markCompleted(courtId: string, stage: ScheduleStage) {
     before,
   });
   revalidatePath("/schedule");
+  await invalidatePresentingStage(stage);
   return { ok: true };
 }
 
@@ -3051,6 +3067,7 @@ export async function assignNext(params: {
     before,
   });
   revalidatePath("/schedule");
+  await invalidatePresentingStage(params.stage);
   return { ok: true };
 }
 
@@ -3114,6 +3131,7 @@ export async function forceNext(
     before,
   });
   revalidatePath("/schedule");
+  await invalidatePresentingStage(stage);
   return { ok: true };
 }
 
@@ -3143,6 +3161,7 @@ export async function clearForcedPriority(
     before,
   });
   revalidatePath("/schedule");
+  await invalidatePresentingStage(stage);
   return { ok: true };
 }
 
@@ -3165,5 +3184,6 @@ export async function resetQueueForcedPriorities(stage: ScheduleStage) {
     before,
   });
   revalidatePath("/schedule");
+  await invalidatePresentingStage(stage);
   return { ok: true };
 }

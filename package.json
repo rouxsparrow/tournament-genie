@@ -28,7 +28,8 @@
     "test:e2e:report": "playwright show-report playwright-report",
     "test:e2e:broadcast:realtime": "playwright test --config=playwright.no-seed.config.ts e2e/broadcast-realtime.spec.ts --grep @broadcast-realtime",
     "test:predata:integrity": "npm run test:schedule:integrity",
-    "test:predata:stress": "npm run test:schedule:stress"
+    "test:predata:stress": "npm run test:schedule:stress",
+    "test:public:load": "node scripts/load-public-pages.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",

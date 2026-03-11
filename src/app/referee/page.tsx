@@ -4,7 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { getRefereeFromRequest } from "@/lib/referee-auth";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Referee Scoresheet" };
+export const metadata = {
+  title: "Referee Scoresheet",
+  robots: { index: false, follow: false },
+};
 
 const COURT_LABELS: Record<string, "P5" | "P6" | "P7" | "P8" | "P9"> = {
   C1: "P5",

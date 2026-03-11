@@ -3,6 +3,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { clearKnockoutBracketArtifacts } from "@/lib/match-management";
 import { getRoleFromRequest } from "@/lib/auth";
+import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
 
 const categorySchema = z.enum(["MD", "WD", "XD"]);
 const seriesSchema = z.enum(["A", "B"]);
@@ -41,6 +42,11 @@ export async function DELETE(request: Request) {
     await clearKnockoutBracketArtifacts(category);
   }
 
+  await invalidatePublicReadModels({
+    type: "knockout-results",
+    categoryCodes: [category],
+    series: seriesParsed?.success ? [seriesParsed.data] : undefined,
+  });
   revalidatePath("/knockout");
   revalidatePath("/matches");
   revalidatePath("/schedule");

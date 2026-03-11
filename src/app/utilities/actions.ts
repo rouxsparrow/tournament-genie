@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
 
 type DuplicateByCourtRow = {
   stage: "GROUP" | "KNOCKOUT";
@@ -880,6 +881,7 @@ export async function fixLegacyCourtIds() {
   revalidatePath("/schedule");
   revalidatePath("/presenting");
   revalidatePath("/referee");
+  await invalidatePublicReadModels({ type: "presenting" });
 
   return { ok: true as const, updated, summary };
 }
@@ -1041,6 +1043,7 @@ export async function removeTestDataCleanup(confirmToken: string) {
   revalidatePath("/referee");
   revalidatePath("/standings");
   revalidatePath("/brackets");
+  await invalidatePublicReadModels({ type: "all" });
 
   return {
     ok: true as const,

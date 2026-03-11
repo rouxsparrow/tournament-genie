@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { BracketDiagram } from "@/app/knockout/bracket-diagram";
 import { getRoleFromRequest } from "@/lib/auth";
 import { getFavouritePlayerCategoryMap, getFavouritePlayerContext } from "@/lib/favourite-player";
+import { getCachedBracketsState } from "@/lib/public-read-models/loaders";
+import type { CategoryCode, SeriesCode } from "@/lib/public-read-models/types";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Brackets" };
@@ -12,16 +13,17 @@ type BracketsPageProps = {
   searchParams?: Promise<{ category?: string; series?: "A" | "B"; fromNav?: string }>;
 };
 
-const categories = ["MD", "WD", "XD"] as const;
-const seriesOptions = ["A", "B"] as const;
+const categories: CategoryCode[] = ["MD", "WD", "XD"];
+const seriesOptions: SeriesCode[] = ["A", "B"];
 
-function teamLabel(team: {
-  name: string;
-  members: { player: { name: string } }[];
-}) {
-  if (team.name) return team.name;
-  const names = team.members.map((member) => member.player.name);
-  return names.length === 2 ? `${names[0]} / ${names[1]}` : "Unnamed team";
+function parseCategory(input: string | undefined): CategoryCode {
+  if (input === "WD" || input === "XD") return input;
+  return "MD";
+}
+
+function parseSeries(input: string | undefined): SeriesCode {
+  if (input === "B") return "B";
+  return "A";
 }
 
 export default async function BracketsPage({ searchParams }: BracketsPageProps) {
@@ -31,45 +33,21 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
   const isViewer = role === "viewer";
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const fromNav = resolvedSearchParams?.fromNav === "1";
+
   const selectedCategory =
-    isViewer &&
-    fromNav &&
-    favourite?.categoryCode &&
-    categories.includes(favourite.categoryCode)
-      ? favourite.categoryCode
-      : categories.includes(resolvedSearchParams?.category as (typeof categories)[number])
-        ? (resolvedSearchParams?.category as (typeof categories)[number])
-        : "MD";
+    isViewer && fromNav && favourite?.categoryCode
+      ? parseCategory(favourite.categoryCode)
+      : parseCategory(resolvedSearchParams?.category);
+
   const preferredSeries =
-    isViewer && fromNav
-      ? favouriteMap.get(selectedCategory)?.preferredSeries ?? null
-      : null;
-  const requestedSeries =
-    preferredSeries && seriesOptions.includes(preferredSeries)
-      ? preferredSeries
-      : seriesOptions.includes(resolvedSearchParams?.series as (typeof seriesOptions)[number])
-        ? (resolvedSearchParams?.series as (typeof seriesOptions)[number])
-        : "A";
-  const isWD = selectedCategory === "WD";
-  const selectedSeries = isWD && requestedSeries === "B" ? "A" : requestedSeries;
+    isViewer && fromNav ? favouriteMap.get(selectedCategory)?.preferredSeries ?? null : null;
 
-  const matches = await prisma.knockoutMatch.findMany({
-    where: { categoryCode: selectedCategory, series: selectedSeries },
-    include: {
-      homeTeam: { include: { members: { include: { player: true } } } },
-      awayTeam: { include: { members: { include: { player: true } } } },
-      previousMatches: true,
-      games: true,
-    },
-    orderBy: [{ round: "asc" }, { matchNo: "asc" }],
-  });
+  const requestedSeries = preferredSeries
+    ? parseSeries(preferredSeries)
+    : parseSeries(resolvedSearchParams?.series);
 
-  const showPlayIns = !isWD && matches.some((match) => match.round === 1);
-
-  const seeds = await prisma.knockoutSeed.findMany({
-    where: { categoryCode: selectedCategory, series: selectedSeries },
-  });
-  const seedMap = new Map(seeds.map((seed) => [seed.teamId, seed.seedNo]));
+  const bracketsState = await getCachedBracketsState(selectedCategory, requestedSeries);
+  const selectedSeries = bracketsState.series;
 
   return (
     <section className="rounded-2xl border border-border bg-card p-8">
@@ -105,7 +83,7 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {(isWD ? (["A"] as const) : seriesOptions).map((series) => (
+        {(bracketsState.isWD ? (["A"] as const) : seriesOptions).map((series) => (
           <Button
             key={series}
             asChild
@@ -119,41 +97,13 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
         ))}
       </div>
 
-      {matches.length === 0 ? (
-        <p className="mt-6 text-sm text-muted-foreground">
-          Knockout Stage has not begun.
-        </p>
+      {bracketsState.matches.length === 0 ? (
+        <p className="mt-6 text-sm text-muted-foreground">Knockout Stage has not begun.</p>
       ) : (
         <div className="mt-6">
           <BracketDiagram
-            matches={matches.map((match) => ({
-              id: match.id,
-              round: match.round,
-              matchNo: match.matchNo,
-              status: match.status,
-              winnerTeamId: match.winnerTeamId,
-              games: match.games.map((game) => ({
-                gameNumber: game.gameNumber,
-                homePoints: game.homePoints,
-                awayPoints: game.awayPoints,
-              })),
-              previousMatches: match.previousMatches.map((prev) => ({
-                round: prev.round,
-                matchNo: prev.matchNo,
-                nextSlot: prev.nextSlot,
-              })),
-              homeTeam: {
-                id: match.homeTeamId,
-                name: match.homeTeam ? teamLabel(match.homeTeam) : "TBD",
-                seed: match.homeTeamId ? seedMap.get(match.homeTeamId) ?? null : null,
-              },
-              awayTeam: {
-                id: match.awayTeamId,
-                name: match.awayTeam ? teamLabel(match.awayTeam) : "TBD",
-                seed: match.awayTeamId ? seedMap.get(match.awayTeamId) ?? null : null,
-              },
-            }))}
-            showPlayIns={showPlayIns}
+            matches={bracketsState.matches}
+            showPlayIns={bracketsState.showPlayIns}
             favouritePlayerName={favourite?.playerName ?? null}
           />
         </div>

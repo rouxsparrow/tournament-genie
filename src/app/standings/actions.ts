@@ -2,6 +2,8 @@
 
 import { prisma } from "@/lib/prisma";
 
+export type StandingsCategoryCode = "MD" | "WD" | "XD";
+
 type StandingRow = {
   teamId: string;
   teamName: string;
@@ -16,7 +18,7 @@ type StandingRow = {
 type GroupForStandings = {
   id: string;
   name: string;
-  category: { code: "MD" | "WD" | "XD" };
+  category: { code: StandingsCategoryCode };
   teams: {
     team: {
       id: string;
@@ -38,84 +40,104 @@ type GroupForStandings = {
   }[];
 };
 
-async function getRandomDrawOrder(params: {
-  groupId: string;
-  categoryCode: "MD" | "WD" | "XD";
-  teamIds: string[];
-}) {
-  const sortedIds = [...params.teamIds].sort();
-  const tieKey = `${params.groupId}:${sortedIds.join(",")}`;
+type GroupResolvedStandings = {
+  group: GroupForStandings;
+  matches: GroupForStandings["matches"];
+  standings: StandingRow[];
+};
 
-  const existing = await prisma.groupRandomDraw.findUnique({
-    where: { tieKey },
-  });
+type RandomDrawResolver = {
+  getOrder: (teamIds: string[]) => Promise<string[]>;
+};
 
-  if (existing && Array.isArray(existing.orderedTeamIds)) {
-    return existing.orderedTeamIds as string[];
-  }
+function buildTieKey(groupId: string, teamIds: string[]) {
+  const sortedIds = [...teamIds].sort();
+  return `${groupId}:${sortedIds.join(",")}`;
+}
 
-  const shuffled = [...sortedIds];
+function shuffleIds(teamIds: string[]) {
+  const shuffled = [...teamIds];
   for (let index = shuffled.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(Math.random() * (index + 1));
     [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
   }
-
-  try {
-    const created = await prisma.groupRandomDraw.create({
-      data: {
-        groupId: params.groupId,
-        categoryCode: params.categoryCode,
-        tieKey,
-        orderedTeamIds: shuffled,
-      },
-    });
-    return created.orderedTeamIds as string[];
-  } catch (error) {
-    const fallback = await prisma.groupRandomDraw.findUnique({ where: { tieKey } });
-    if (fallback && Array.isArray(fallback.orderedTeamIds)) {
-      return fallback.orderedTeamIds as string[];
-    }
-    throw error;
-  }
+  return shuffled;
 }
 
-export async function computeStandings(groupId: string) {
-  const group = await prisma.group.findUnique({
-    where: { id: groupId },
-    include: {
-      category: true,
-      teams: {
-        include: {
-          team: {
-            include: { members: { include: { player: true } } },
-          },
-        },
-      },
-      matches: {
-        where: { stage: "GROUP" },
-        include: {
-          games: true,
-          homeTeam: true,
-          awayTeam: true,
-        },
-        orderBy: { createdAt: "asc" },
-      },
-    },
+async function createGroupRandomDrawResolver(
+  groupId: string,
+  categoryCode: StandingsCategoryCode
+): Promise<RandomDrawResolver> {
+  const existing = await prisma.groupRandomDraw.findMany({
+    where: { groupId, categoryCode },
+    select: { tieKey: true, orderedTeamIds: true },
   });
 
-  if (!group) return null;
-  return resolveStandingsForGroup(group as GroupForStandings);
+  const orderByTieKey = new Map<string, string[]>();
+  for (const row of existing) {
+    if (Array.isArray(row.orderedTeamIds)) {
+      orderByTieKey.set(row.tieKey, row.orderedTeamIds as string[]);
+    }
+  }
+
+  return {
+    async getOrder(teamIds: string[]) {
+      const tieKey = buildTieKey(groupId, teamIds);
+      const cached = orderByTieKey.get(tieKey);
+      if (cached && cached.length > 0) return cached;
+
+      const sortedIds = [...teamIds].sort();
+      const shuffled = shuffleIds(sortedIds);
+
+      try {
+        const row = await prisma.groupRandomDraw.upsert({
+          where: { tieKey },
+          update: {},
+          create: {
+            groupId,
+            categoryCode,
+            tieKey,
+            orderedTeamIds: shuffled,
+          },
+          select: { orderedTeamIds: true },
+        });
+
+        const ordered = Array.isArray(row.orderedTeamIds)
+          ? (row.orderedTeamIds as string[])
+          : shuffled;
+        orderByTieKey.set(tieKey, ordered);
+        return ordered;
+      } catch {
+        const fallback = await prisma.groupRandomDraw.findUnique({
+          where: { tieKey },
+          select: { orderedTeamIds: true },
+        });
+        if (fallback && Array.isArray(fallback.orderedTeamIds)) {
+          const ordered = fallback.orderedTeamIds as string[];
+          orderByTieKey.set(tieKey, ordered);
+          return ordered;
+        }
+        throw new Error("Unable to resolve random draw order.");
+      }
+    },
+  };
 }
 
-async function resolveStandingsForGroup(group: GroupForStandings) {
-
+async function resolveStandingsForGroup(
+  group: GroupForStandings,
+  randomDrawResolver: RandomDrawResolver
+): Promise<GroupResolvedStandings> {
   const stats = new Map<string, StandingRow>();
   const teams = group.teams.map((entry) => entry.team);
 
   for (const team of teams) {
     stats.set(team.id, {
       teamId: team.id,
-      teamName: team.name,
+      teamName:
+        team.name ||
+        (team.members.length === 2
+          ? `${team.members[0]?.player.name ?? ""} / ${team.members[1]?.player.name ?? ""}`
+          : "Unnamed team"),
       wins: 0,
       losses: 0,
       played: 0,
@@ -125,9 +147,7 @@ async function resolveStandingsForGroup(group: GroupForStandings) {
     });
   }
 
-  const completedMatches = group.matches.filter(
-    (match) => match.status === "COMPLETED"
-  );
+  const completedMatches = group.matches.filter((match) => match.status === "COMPLETED");
 
   for (const match of completedMatches) {
     if (!match.homeTeamId || !match.awayTeamId || !match.winnerTeamId) continue;
@@ -185,10 +205,8 @@ async function resolveStandingsForGroup(group: GroupForStandings) {
       const [first, second] = tieGroup;
       const headToHead = completedMatches.find(
         (match) =>
-          (match.homeTeamId === first.teamId &&
-            match.awayTeamId === second.teamId) ||
-          (match.homeTeamId === second.teamId &&
-            match.awayTeamId === first.teamId)
+          (match.homeTeamId === first.teamId && match.awayTeamId === second.teamId) ||
+          (match.homeTeamId === second.teamId && match.awayTeamId === first.teamId)
       );
 
       if (headToHead?.winnerTeamId === first.teamId) {
@@ -196,22 +214,14 @@ async function resolveStandingsForGroup(group: GroupForStandings) {
       } else if (headToHead?.winnerTeamId === second.teamId) {
         resolved.push(second, first);
       } else {
-        const order = await getRandomDrawOrder({
-          groupId: group.id,
-          categoryCode: group.category.code,
-          teamIds: [first.teamId, second.teamId],
-        });
+        const order = await randomDrawResolver.getOrder([first.teamId, second.teamId]);
         const ordered = order
           .map((id) => tieGroup.find((team) => team.teamId === id))
           .filter((team): team is StandingRow => Boolean(team));
         resolved.push(...ordered);
       }
     } else if (tieGroup.length > 2) {
-      const order = await getRandomDrawOrder({
-        groupId: group.id,
-        categoryCode: group.category.code,
-        teamIds: tieGroup.map((team) => team.teamId),
-      });
+      const order = await randomDrawResolver.getOrder(tieGroup.map((team) => team.teamId));
       const ordered = order
         .map((id) => tieGroup.find((team) => team.teamId === id))
         .filter((team): team is StandingRow => Boolean(team));
@@ -230,32 +240,154 @@ async function resolveStandingsForGroup(group: GroupForStandings) {
   };
 }
 
-export async function computeStandingsForCategory(categoryCode: "MD" | "WD" | "XD") {
-  const groups = await prisma.group.findMany({
-    where: { category: { code: categoryCode } },
-    include: {
-      category: true,
-      teams: {
-        include: {
-          team: {
-            include: { members: { include: { player: true } } },
+function groupStandingsSelect() {
+  return {
+    id: true,
+    name: true,
+    category: {
+      select: {
+        code: true,
+      },
+    },
+    teams: {
+      select: {
+        team: {
+          select: {
+            id: true,
+            name: true,
+            members: {
+              select: {
+                player: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
           },
         },
       },
-      matches: {
-        where: { stage: "GROUP" },
-        include: {
-          games: true,
-          homeTeam: true,
-          awayTeam: true,
+    },
+    matches: {
+      where: {
+        stage: "GROUP" as const,
+      },
+      select: {
+        id: true,
+        status: true,
+        winnerTeamId: true,
+        homeTeamId: true,
+        awayTeamId: true,
+        games: {
+          select: {
+            gameNumber: true,
+            homePoints: true,
+            awayPoints: true,
+          },
+          orderBy: {
+            gameNumber: "asc" as const,
+          },
         },
-        orderBy: { createdAt: "asc" },
+      },
+      orderBy: {
+        createdAt: "asc" as const,
       },
     },
+  };
+}
+
+export async function computeStandings(groupId: string) {
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: groupStandingsSelect(),
+  });
+
+  if (!group) return null;
+
+  const resolvedGroup = group as GroupForStandings;
+  const randomDrawResolver = await createGroupRandomDrawResolver(
+    resolvedGroup.id,
+    resolvedGroup.category.code
+  );
+
+  return resolveStandingsForGroup(resolvedGroup, randomDrawResolver);
+}
+
+export async function computeStandingsForCategory(categoryCode: StandingsCategoryCode) {
+  const groups = await prisma.group.findMany({
+    where: { category: { code: categoryCode } },
+    select: groupStandingsSelect(),
     orderBy: { name: "asc" },
   });
 
   return Promise.all(
-    groups.map((group) => resolveStandingsForGroup(group as GroupForStandings))
+    groups.map(async (group) => {
+      const resolvedGroup = group as GroupForStandings;
+      const randomDrawResolver = await createGroupRandomDrawResolver(
+        resolvedGroup.id,
+        resolvedGroup.category.code
+      );
+      return resolveStandingsForGroup(resolvedGroup, randomDrawResolver);
+    })
   );
+}
+
+export async function getCompletedGroupMatches(groupId: string) {
+  return prisma.match.findMany({
+    where: {
+      groupId,
+      stage: "GROUP",
+      status: "COMPLETED",
+    },
+    select: {
+      id: true,
+      status: true,
+      winnerTeamId: true,
+      homeTeamId: true,
+      awayTeamId: true,
+      homeTeam: {
+        select: {
+          id: true,
+          name: true,
+          members: {
+            select: {
+              player: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      awayTeam: {
+        select: {
+          id: true,
+          name: true,
+          members: {
+            select: {
+              player: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      games: {
+        select: {
+          gameNumber: true,
+          homePoints: true,
+          awayPoints: true,
+        },
+        orderBy: {
+          gameNumber: "asc",
+        },
+      },
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
+  });
 }

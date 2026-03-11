@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { loadGlobalGroupRanking } from "@/app/knockout/logic";
 import { BracketError, generateKnockoutBracketInternal } from "@/app/knockout/bracket-service";
 import { requireAdmin } from "@/lib/auth";
+import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
 
 const categorySchema = z.enum(["MD", "WD", "XD"]);
 
@@ -117,6 +118,11 @@ export async function generateKnockoutBracket(formData: FormData) {
     throw error;
   }
 
+  await invalidatePublicReadModels({
+    type: "knockout-results",
+    categoryCodes: [categoryCode],
+    series: [series],
+  });
   revalidatePath("/knockout");
   redirect(`/knockout?category=${categoryCode}`);
 }
@@ -203,6 +209,11 @@ export async function applySecondChanceDrop(formData: FormData) {
     })
   );
 
+  await invalidatePublicReadModels({
+    type: "knockout-results",
+    categoryCodes: [categoryCode],
+    series: ["B"],
+  });
   revalidatePath("/knockout");
   redirect(`/knockout?category=${categoryCode}`);
 }

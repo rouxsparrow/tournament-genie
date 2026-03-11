@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { publishKnockoutMatchesForCategory } from "@/lib/match-management";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
 import { getRoleFromRequest } from "@/lib/auth";
+import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
 
 const payloadSchema = z.object({
   category: z.enum(["MD", "WD", "XD"]),
@@ -180,6 +181,10 @@ export async function POST(request: Request) {
     );
   }
 
+  await invalidatePublicReadModels({
+    type: "knockout-results",
+    categoryCodes: [category],
+  });
   revalidatePath("/knockout");
   revalidatePath("/matches");
   revalidatePath("/schedule");
