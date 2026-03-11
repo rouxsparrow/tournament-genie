@@ -140,7 +140,7 @@ export function StandingsClient({
             const teams = group.teams.map((entry) => entry.team);
             const completedMatches = matches.filter((match) => match.status !== "SCHEDULED");
             const completedCount = completedMatches.length;
-            const isCollapsed = collapsedMatchesByGroup[group.id] ?? false;
+            const isCollapsed = collapsedMatchesByGroup[group.id] ?? true;
             const scoresByMatch = new Map(
               matches.map((match) => [
                 match.id,

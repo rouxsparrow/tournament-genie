@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import Script from "next/script";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { GlobalLoadingProvider } from "@/components/global-loading-provider";
@@ -28,7 +29,7 @@ export const metadata: Metadata = {
     default: "Tournament Genie",
     template: "%s",
   },
-  description: "Admin-first tournament management for badminton doubles.",
+  description: "FAP Badminton Tournament 2026",
 };
 
 async function logout() {
@@ -251,6 +252,7 @@ export default async function RootLayout({
           </main>
         </GlobalLoadingProvider>
         <SpeedInsights />
+        <Analytics />
       </body>
     </html>
   );
