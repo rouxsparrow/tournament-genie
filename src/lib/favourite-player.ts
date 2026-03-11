@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { getRoleFromRequest } from "@/lib/auth";
@@ -16,6 +17,14 @@ export type FavouritePlayerContext = {
   series?: SeriesCode;
 };
 
+export type FavouriteCategoryPreference = {
+  categoryCode: CategoryCode;
+  groupId: string | null;
+  groupName: string | null;
+  seriesOptions: SeriesCode[];
+  preferredSeries: SeriesCode | null;
+};
+
 function normalize(value: string) {
   return value.toLowerCase();
 }
@@ -27,17 +36,24 @@ function compareNullable(a?: string, b?: string) {
   return a.localeCompare(b);
 }
 
-export async function getFavouritePlayerId(): Promise<string | null> {
-  const role = await getRoleFromRequest();
+const getFavouriteRole = cache(async () => getRoleFromRequest());
+
+export const getFavouritePlayerId = cache(async (): Promise<string | null> => {
+  const role = await getFavouriteRole();
   if (role !== "viewer") return null;
   const store = await cookies();
   const value = store.get(COOKIE_NAME)?.value ?? "";
   return value || null;
-}
+});
 
-export async function getFavouritePlayerContext(): Promise<FavouritePlayerContext | null> {
+const loadFavouritePlayerBundle = cache(async (): Promise<{
+  context: FavouritePlayerContext | null;
+  categoryMap: Map<CategoryCode, FavouriteCategoryPreference>;
+}> => {
   const playerId = await getFavouritePlayerId();
-  if (!playerId) return null;
+  if (!playerId) {
+    return { context: null, categoryMap: new Map() };
+  }
 
   const player = await prisma.player.findUnique({
     where: { id: playerId },
@@ -56,7 +72,9 @@ export async function getFavouritePlayerContext(): Promise<FavouritePlayerContex
     },
   });
 
-  if (!player) return null;
+  if (!player) {
+    return { context: null, categoryMap: new Map() };
+  }
 
   const entries = player.teams.map((member) => {
     const team = member.team;
@@ -69,11 +87,13 @@ export async function getFavouritePlayerContext(): Promise<FavouritePlayerContex
     )[0];
 
     return {
+      teamId: team.id,
       teamName: team.name,
       categoryCode,
       groupId: groupLink?.groupId,
       groupName: groupLink?.group.name,
       series: qualifier?.series as SeriesCode | undefined,
+      seriesOptions: team.seriesQualifiers.map((q) => q.series as SeriesCode),
     };
   });
 
@@ -87,89 +107,40 @@ export async function getFavouritePlayerContext(): Promise<FavouritePlayerContex
     return compareNullable(a.series, b.series);
   });
 
-  return {
-    playerId: player.id,
-    playerName: player.name,
-    categoryCode: primary?.categoryCode,
-    groupId: primary?.groupId,
-    groupName: primary?.groupName,
-    series: primary?.series,
-  };
-}
-
-export type FavouriteCategoryPreference = {
-  categoryCode: CategoryCode;
-  groupId: string | null;
-  groupName: string | null;
-  seriesOptions: SeriesCode[];
-  preferredSeries: SeriesCode | null;
-};
-
-export async function getFavouritePlayerCategoryMap(): Promise<
-  Map<CategoryCode, FavouriteCategoryPreference>
-> {
-  const playerId = await getFavouritePlayerId();
-  if (!playerId) return new Map();
-
-  const player = await prisma.player.findUnique({
-    where: { id: playerId },
-    include: {
-      teams: {
-        include: {
-          team: {
-            include: {
-              category: true,
-              groupLinks: { include: { group: true } },
-              seriesQualifiers: true,
-            },
-          },
-        },
-      },
-    },
-  });
-
-  if (!player) return new Map();
-
-  const map = new Map<CategoryCode, FavouriteCategoryPreference>();
-  const teamIds: string[] = [];
-  const teamCategoryById = new Map<string, CategoryCode>();
-
-  for (const member of player.teams) {
-    const team = member.team;
-    const categoryCode = team.category.code as CategoryCode;
-    teamIds.push(team.id);
-    teamCategoryById.set(team.id, categoryCode);
-    const entry = map.get(categoryCode) ?? {
-      categoryCode,
+  const categoryMap = new Map<CategoryCode, FavouriteCategoryPreference>();
+  for (const entry of entries) {
+    const mapEntry = categoryMap.get(entry.categoryCode) ?? {
+      categoryCode: entry.categoryCode,
       groupId: null,
       groupName: null,
       seriesOptions: [] as SeriesCode[],
       preferredSeries: null,
     };
 
-    const groupLink = [...team.groupLinks].sort((a, b) =>
-      normalize(a.group.name).localeCompare(normalize(b.group.name))
-    )[0];
-    if (!entry.groupId && groupLink) {
-      entry.groupId = groupLink.groupId;
-      entry.groupName = groupLink.group.name;
+    if (!mapEntry.groupId && entry.groupId) {
+      mapEntry.groupId = entry.groupId;
+      mapEntry.groupName = entry.groupName ?? null;
     }
 
-    for (const qualifier of team.seriesQualifiers) {
-      const series = qualifier.series as SeriesCode;
-      if (!entry.seriesOptions.includes(series)) {
-        entry.seriesOptions.push(series);
+    for (const series of entry.seriesOptions) {
+      if (!mapEntry.seriesOptions.includes(series)) {
+        mapEntry.seriesOptions.push(series);
       }
     }
 
-    entry.seriesOptions.sort();
-    entry.preferredSeries = entry.seriesOptions.includes("B")
-      ? "B"
-      : entry.seriesOptions[0] ?? null;
+    if (entry.series && !mapEntry.seriesOptions.includes(entry.series)) {
+      mapEntry.seriesOptions.push(entry.series);
+    }
 
-    map.set(categoryCode, entry);
+    mapEntry.seriesOptions.sort();
+    mapEntry.preferredSeries = mapEntry.seriesOptions.includes("B")
+      ? "B"
+      : mapEntry.seriesOptions[0] ?? null;
+
+    categoryMap.set(entry.categoryCode, mapEntry);
   }
 
+  const teamIds = entries.map((entry) => entry.teamId);
   if (teamIds.length > 0) {
     const matches = await prisma.knockoutMatch.findMany({
       where: {
@@ -178,28 +149,48 @@ export async function getFavouritePlayerCategoryMap(): Promise<
       select: {
         categoryCode: true,
         series: true,
-        homeTeamId: true,
-        awayTeamId: true,
       },
     });
 
     for (const match of matches) {
-      const matchCategory = match.categoryCode as CategoryCode;
-      const entry = map.get(matchCategory);
-      if (!entry) continue;
+      const categoryCode = match.categoryCode as CategoryCode;
       const series = match.series as SeriesCode;
+      const entry = categoryMap.get(categoryCode);
+      if (!entry) continue;
       if (!entry.seriesOptions.includes(series)) {
         entry.seriesOptions.push(series);
+        entry.seriesOptions.sort();
       }
-      entry.seriesOptions.sort();
       entry.preferredSeries = entry.seriesOptions.includes("B")
         ? "B"
         : entry.seriesOptions[0] ?? null;
-      map.set(matchCategory, entry);
+      categoryMap.set(categoryCode, entry);
     }
   }
 
-  return map;
+  return {
+    context: {
+      playerId: player.id,
+      playerName: player.name,
+      categoryCode: primary?.categoryCode,
+      groupId: primary?.groupId,
+      groupName: primary?.groupName,
+      series: primary?.series,
+    },
+    categoryMap,
+  };
+});
+
+export async function getFavouritePlayerContext(): Promise<FavouritePlayerContext | null> {
+  const bundle = await loadFavouritePlayerBundle();
+  return bundle.context;
+}
+
+export async function getFavouritePlayerCategoryMap(): Promise<
+  Map<CategoryCode, FavouriteCategoryPreference>
+> {
+  const bundle = await loadFavouritePlayerBundle();
+  return bundle.categoryMap;
 }
 
 export async function setFavouritePlayerIdCookie(playerId: string | null) {

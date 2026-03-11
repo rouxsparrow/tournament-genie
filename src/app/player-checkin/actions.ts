@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
+import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
 import { publishBroadcastRefreshEvent } from "@/lib/supabase/broadcast-refresh-publisher";
 
 async function refreshCheckInConsumers() {
@@ -11,6 +12,7 @@ async function refreshCheckInConsumers() {
   revalidatePath("/presenting");
   revalidatePath("/broadcast");
   revalidatePath("/utilities");
+  await invalidatePublicReadModels({ type: "player-checkin" });
 
   await Promise.all([
     publishBroadcastRefreshEvent({

@@ -14,18 +14,25 @@ const PUBLIC_PATHS = new Set([
   "/login",
 ]);
 const PUBLIC_PREFIXES = ["/_next", "/favicon.ico", "/assets", "/images"];
-const PUBLIC_API = new Set(["/api/favourite"]);
+const PUBLIC_API = new Set([
+  "/api/favourite",
+  "/api/public/standings/summary",
+  "/api/public/standings/group-matches",
+  "/api/public/presenting",
+  "/api/public/brackets",
+]);
+
+function normalizePath(pathname: string) {
+  return pathname !== "/" && pathname.endsWith("/")
+    ? pathname.slice(0, -1)
+    : pathname;
+}
 
 function isPublicPath(pathname: string) {
-  const normalizedPath =
-    pathname !== "/" && pathname.endsWith("/")
-      ? pathname.slice(0, -1)
-      : pathname;
-
-  if (PUBLIC_PATHS.has(normalizedPath)) return true;
-  if (PUBLIC_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix))) return true;
-  if (normalizedPath.startsWith("/api")) {
-    return PUBLIC_API.has(normalizedPath);
+  if (PUBLIC_PATHS.has(pathname)) return true;
+  if (PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return true;
+  if (pathname.startsWith("/api")) {
+    return PUBLIC_API.has(pathname);
   }
   return false;
 }
@@ -60,15 +67,30 @@ async function verifyAdminSession(token: string, secret: string) {
   return expected === signature;
 }
 
-export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-  if (isPublicPath(pathname)) return NextResponse.next();
-
+async function isAdminRequest(request: NextRequest) {
   const secret = process.env.AUTH_SECRET ?? "";
   const token = request.cookies.get(SESSION_COOKIE)?.value ?? "";
-  const isAdmin = secret ? await verifyAdminSession(token, secret) : false;
+  return secret ? verifyAdminSession(token, secret) : false;
+}
 
+export async function middleware(request: NextRequest) {
+  const normalizedPath = normalizePath(request.nextUrl.pathname);
+
+  if (normalizedPath === "/schedule") {
+    const isAdmin = await isAdminRequest(request);
+    if (!isAdmin) {
+      const redirectUrl = new URL("/presenting", request.url);
+      redirectUrl.search = request.nextUrl.search;
+      return NextResponse.redirect(redirectUrl);
+    }
+    return NextResponse.next();
+  }
+
+  if (isPublicPath(normalizedPath)) return NextResponse.next();
+
+  const isAdmin = await isAdminRequest(request);
   if (isAdmin) return NextResponse.next();
+
   return NextResponse.redirect(new URL("/", request.url));
 }
 

@@ -3,7 +3,10 @@ import { Button } from "@/components/ui/button";
 import { setAdminSession, validateAdminCredentials } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Login" };
+export const metadata = {
+  title: "Login",
+  robots: { index: false, follow: false },
+};
 
 export default async function LoginPage({
   searchParams,

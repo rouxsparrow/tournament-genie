@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
 import { getScheduleState } from "@/app/schedule/actions";
 import { requireAdmin } from "@/lib/auth";
+import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
 import {
   clearGroupStageMatchesForCategory,
   generateGroupStageMatchesForCategory,
@@ -585,6 +586,10 @@ export async function generateGroupStageMatches(formData: FormData) {
   await assertGroupAssignmentLocked(categoryCode);
   await generateGroupStageMatchesForCategory(categoryCode);
 
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [categoryCode],
+  });
   revalidatePath("/matches");
   redirect(`/matches?category=${categoryCode}`);
 }
@@ -602,6 +607,10 @@ export async function clearGroupStageMatches(formData: FormData) {
 
   await clearGroupStageMatchesForCategory(categoryCode);
 
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [categoryCode],
+  });
   revalidatePath("/matches");
   revalidatePath("/standings");
   redirect(`/matches?category=${categoryCode}`);
@@ -705,6 +714,10 @@ export async function randomizeFilteredGroupMatchResults(formData: FormData) {
     })
   );
 
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [categoryCode],
+  });
   revalidatePath("/matches");
   revalidatePath("/standings");
   redirect(buildMatchesRedirect(categoryCode, redirectOptions));
@@ -835,6 +848,11 @@ async function upsertMatchScoreInternal(
         data: { status: "SCHEDULED", winnerTeamId: null, completedAt: null },
       }),
     ]);
+    await invalidatePublicReadModels({
+      type: "group-results",
+      categoryCodes: [match.group.category.code],
+      groupIds: [match.group.id],
+    });
     revalidatePath("/matches");
     revalidatePath("/standings");
     if (noRedirect) {
@@ -987,6 +1005,11 @@ async function upsertMatchScoreInternal(
     completedAt: completedAt.toISOString(),
   });
 
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [match.group.category.code],
+    groupIds: [match.group.id],
+  });
   revalidatePath("/schedule");
   revalidatePath("/matches");
   revalidatePath("/standings");
@@ -1063,6 +1086,11 @@ export async function undoMatchResult(formData: FormData) {
     }),
   ]);
 
+  await invalidatePublicReadModels({
+    type: "group-results",
+    categoryCodes: [match.group.category.code],
+    groupIds: [match.group.id],
+  });
   const after = await getBroadcastViewSignature("GROUP");
   const changeType = getBroadcastViewChangeType(before, after);
   if (changeType) {
@@ -1170,6 +1198,11 @@ export async function generateMatchesKnockout(formData: FormData) {
 
   await syncKnockoutPropagation(categoryCode);
 
+  await invalidatePublicReadModels({
+    type: "knockout-results",
+    categoryCodes: [categoryCode],
+    series: series ? [series] : undefined,
+  });
   revalidatePath("/matches");
   return { ok: true };
 }
@@ -1238,6 +1271,11 @@ export async function upsertKnockoutMatchScore(
           completedAt: null,
         },
       });
+    });
+    await invalidatePublicReadModels({
+      type: "knockout-results",
+      categoryCodes: [match.categoryCode],
+      series: [match.series],
     });
     revalidatePath("/matches");
     revalidatePath("/knockout");
@@ -1333,6 +1371,11 @@ export async function upsertKnockoutMatchScore(
     completedAt: completedAt.toISOString(),
   });
 
+  await invalidatePublicReadModels({
+    type: "knockout-results",
+    categoryCodes: [match.categoryCode],
+    series: [match.series],
+  });
   revalidatePath("/schedule");
   revalidatePath("/matches");
   revalidatePath("/knockout");
@@ -1372,6 +1415,11 @@ export async function undoKnockoutMatchResult(formData: FormData) {
     });
   });
 
+  await invalidatePublicReadModels({
+    type: "knockout-results",
+    categoryCodes: [match.categoryCode],
+    series: [match.series],
+  });
   const after = await getBroadcastViewSignature("KNOCKOUT");
   const changeType = getBroadcastViewChangeType(before, after);
   if (changeType) {
@@ -1415,6 +1463,11 @@ export async function clearMatchesKnockout(formData: FormData) {
     },
   });
 
+  await invalidatePublicReadModels({
+    type: "knockout-results",
+    categoryCodes: [categoryCode],
+    series: series ? [series] : undefined,
+  });
   revalidatePath("/matches");
   return { ok: true };
 }
@@ -1514,6 +1567,11 @@ export async function randomizeAllKnockoutResultsDev(formData: FormData) {
     })
   );
 
+  await invalidatePublicReadModels({
+    type: "knockout-results",
+    categoryCodes: [categoryCode],
+    series: series ? [series] : undefined,
+  });
   revalidatePath("/matches");
   return { ok: true };
 }
@@ -1601,6 +1659,11 @@ export async function setFinalBestOf3(formData: FormData) {
     data: { isBestOf3: parsed.data.isBestOf3 },
   });
 
+  await invalidatePublicReadModels({
+    type: "knockout-results",
+    categoryCodes: [match.categoryCode],
+    series: [match.series],
+  });
   revalidatePath("/matches");
   revalidatePath("/knockout");
   return { ok: true };

@@ -1,9 +1,8 @@
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import { StandingsClient } from "@/app/standings/standings-client";
-import { computeStandingsForCategory } from "@/app/standings/actions";
 import { getRoleFromRequest } from "@/lib/auth";
 import { getFavouritePlayerCategoryMap, getFavouritePlayerContext } from "@/lib/favourite-player";
+import { getCachedStandingsSummary } from "@/lib/public-read-models/loaders";
+import type { CategoryCode } from "@/lib/public-read-models/types";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Standings" };
@@ -12,107 +11,53 @@ type StandingsPageProps = {
   searchParams?: Promise<{ category?: string; error?: string; fromNav?: string; groupId?: string }>;
 };
 
-const categories = ["MD", "WD", "XD"] as const;
+const categories: CategoryCode[] = ["MD", "WD", "XD"];
+
+function parseCategory(value: string | undefined): CategoryCode {
+  if (value === "WD" || value === "XD") return value;
+  return "MD";
+}
 
 export default async function StandingsPage({ searchParams }: StandingsPageProps) {
   const role = await getRoleFromRequest();
   const favourite = await getFavouritePlayerContext();
   const favouriteMap = await getFavouritePlayerCategoryMap();
   const isViewer = role === "viewer";
+
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const fromNav = resolvedSearchParams?.fromNav === "1";
   const requestedGroupId = resolvedSearchParams?.groupId ?? "";
+
   const selectedCategory =
-    isViewer &&
-    fromNav &&
-    favourite?.categoryCode &&
-    categories.includes(favourite.categoryCode)
-      ? favourite.categoryCode
-      : categories.includes(resolvedSearchParams?.category as (typeof categories)[number])
-        ? (resolvedSearchParams?.category as (typeof categories)[number])
-        : "MD";
+    isViewer && fromNav && favourite?.categoryCode
+      ? parseCategory(favourite.categoryCode)
+      : parseCategory(resolvedSearchParams?.category);
+
   const favouriteGroupForCategory = favouriteMap.get(selectedCategory)?.groupId ?? "";
+  const initialGroupId = fromNav && isViewer ? favouriteGroupForCategory : requestedGroupId;
   const errorMessage = resolvedSearchParams?.error
     ? decodeURIComponent(resolvedSearchParams.error)
     : null;
 
-  const groupData = await computeStandingsForCategory(selectedCategory);
-  const groups = groupData.map((entry) => ({
-    id: entry.group.id,
-    name: entry.group.name,
-  }));
+  const favouriteGroupByCategory: Record<CategoryCode, string> = {
+    MD: favouriteMap.get("MD")?.groupId ?? "",
+    WD: favouriteMap.get("WD")?.groupId ?? "",
+    XD: favouriteMap.get("XD")?.groupId ?? "",
+  };
+
+  const initialData = await getCachedStandingsSummary(selectedCategory);
 
   return (
     <section className="rounded-2xl border border-border bg-card p-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Standings</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            View group-stage rankings and completed results.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {categories.map((categoryCode) => (
-            <Button
-              key={categoryCode}
-              asChild
-              variant={categoryCode === selectedCategory ? "default" : "outline"}
-              size="sm"
-            >
-              <Link
-                href={`/standings?category=${categoryCode}${
-                  isViewer && favouriteMap.get(categoryCode)?.groupId
-                    ? `&groupId=${favouriteMap.get(categoryCode)?.groupId}`
-                    : ""
-                }`}
-              >
-                {categoryCode}
-              </Link>
-            </Button>
-          ))}
-        </div>
-      </div>
-
-      {errorMessage ? (
-        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {errorMessage}
-        </div>
-      ) : null}
-
       <StandingsClient
-        key={`${selectedCategory}:${fromNav && isViewer ? favouriteGroupForCategory : requestedGroupId}`}
-        categoryCode={selectedCategory}
+        categories={categories}
+        initialCategoryCode={selectedCategory}
+        initialData={initialData}
         favouritePlayerName={favourite?.playerName ?? null}
-        initialGroupId={fromNav && isViewer ? favouriteGroupForCategory : requestedGroupId}
-        groups={groups}
-        groupData={groupData.map((entry) => ({
-          group: {
-            id: entry.group.id,
-            name: entry.group.name,
-            teams: entry.group.teams.map((teamEntry) => ({
-              team: {
-                id: teamEntry.team.id,
-                name: teamEntry.team.name,
-                members: teamEntry.team.members.map((member) => ({
-                  player: { name: member.player.name },
-                })),
-              },
-            })),
-          },
-          standings: entry.standings,
-          matches: entry.matches.map((match) => ({
-            id: match.id,
-            status: match.status,
-            winnerTeamId: match.winnerTeamId,
-            homeTeamId: match.homeTeamId,
-            awayTeamId: match.awayTeamId,
-            games: match.games.map((game) => ({
-              gameNumber: game.gameNumber,
-              homePoints: game.homePoints,
-              awayPoints: game.awayPoints,
-            })),
-          })),
-        }))}
+        initialGroupId={initialGroupId}
+        favouriteGroupByCategory={favouriteGroupByCategory}
+        isViewer={isViewer}
+        errorMessage={errorMessage}
       />
     </section>
   );

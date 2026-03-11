@@ -1,9 +1,12 @@
 import Link from "next/link";
-import { getPresentingState } from "@/app/schedule/actions";
 import { PresentingClient } from "@/app/presenting/presenting-client";
 import { Button } from "@/components/ui/button";
 import { getRoleFromRequest } from "@/lib/auth";
 import { getFavouritePlayerContext } from "@/lib/favourite-player";
+import {
+  getCachedPresentingState,
+  resolvePresentingStageForViewerFromNav,
+} from "@/lib/public-read-models/loaders";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Live Schedule" };
@@ -16,56 +19,18 @@ export default async function PresentingPage({
   const resolvedParams = (await searchParams) ?? {};
   const stageParam =
     typeof resolvedParams.stage === "string" ? resolvedParams.stage.toLowerCase() : "";
-  const stage = stageParam === "ko" ? "KNOCKOUT" : "GROUP";
+  const requestedStage = stageParam === "ko" ? "KNOCKOUT" : "GROUP";
   const fromNav = resolvedParams.fromNav === "1";
+
   const role = await getRoleFromRequest();
   const favourite = await getFavouritePlayerContext();
-  let state = await getPresentingState({ category: "ALL", stage });
-  let resolvedStage = stage;
 
-  if (role === "viewer" && fromNav) {
-    const groupState =
-      stage === "GROUP"
-        ? state
-        : await getPresentingState({ category: "ALL", stage: "GROUP" });
-    const favouriteId = favourite?.playerId ?? null;
-    const knockoutState =
-      favouriteId && stage !== "KNOCKOUT"
-        ? await getPresentingState({ category: "ALL", stage: "KNOCKOUT" })
-        : stage === "KNOCKOUT"
-          ? state
-          : null;
-    const hasAssigned = groupState.courts.some((court) => Boolean(court.playing));
-    const hasUpcomingFavouriteInGroup = favouriteId
-      ? groupState.upcomingMatches.some((match) =>
-          match.teams.playerIds.includes(favouriteId)
-        )
-      : false;
-    const hasFavouriteInGroupQueue = favouriteId
-      ? groupState.eligibleMatches.some((match) =>
-          match.teams.playerIds.includes(favouriteId)
-        )
-      : false;
-    const hasFavouriteInKnockoutUpcoming =
-      favouriteId && knockoutState
-        ? knockoutState.upcomingMatches.some((match) =>
-            match.teams.playerIds.includes(favouriteId)
-          )
-        : false;
+  const resolvedStage =
+    role === "viewer" && fromNav
+      ? await resolvePresentingStageForViewerFromNav(favourite?.playerId ?? null)
+      : requestedStage;
 
-    if (
-      !hasAssigned &&
-      !hasUpcomingFavouriteInGroup &&
-      !hasFavouriteInGroupQueue &&
-      !hasFavouriteInKnockoutUpcoming
-    ) {
-      resolvedStage = "KNOCKOUT";
-      state = knockoutState ?? await getPresentingState({ category: "ALL", stage: "KNOCKOUT" });
-    } else {
-      state = groupState;
-      resolvedStage = "GROUP";
-    }
-  }
+  const state = await getCachedPresentingState(resolvedStage);
   const groupHref = "/presenting?stage=group";
   const koHref = "/presenting?stage=ko";
 
@@ -76,11 +41,7 @@ export default async function PresentingPage({
           <h1 className="text-2xl font-semibold text-foreground">Live Matches</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            asChild
-            size="sm"
-            variant={resolvedStage === "GROUP" ? "default" : "outline"}
-          >
+          <Button asChild size="sm" variant={resolvedStage === "GROUP" ? "default" : "outline"}>
             <Link href={groupHref}>Group Stage</Link>
           </Button>
           <Button
@@ -94,10 +55,7 @@ export default async function PresentingPage({
       </div>
 
       <div className="mt-6">
-        <PresentingClient
-          state={state}
-          favouritePlayerName={favourite?.playerName ?? null}
-        />
+        <PresentingClient state={state} favouritePlayerName={favourite?.playerName ?? null} />
       </div>
     </section>
   );

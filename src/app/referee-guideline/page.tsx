@@ -8,7 +8,10 @@ import {
 } from "@/app/referee-guideline/referee-guideline-client";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Referee Guideline" };
+export const metadata = {
+  title: "Referee Guideline",
+  robots: { index: false, follow: false },
+};
 
 const DEFAULT_LINE_REFEREE_SECTIONS: RefereeGuidelineSection[] = [
   {
