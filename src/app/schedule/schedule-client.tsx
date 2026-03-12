@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Check, Eye, EyeOff, X } from "lucide-react";
@@ -22,6 +22,11 @@ import {
   toggleRefereeNotificationRead,
   toggleAutoSchedule,
   unblockMatch,
+} from "@/app/schedule/actions";
+import type {
+  ScheduleActionDeltaPayload,
+  ScheduleActionDeltaResult,
+  ScheduleActionResponse,
 } from "@/app/schedule/actions";
 import { getRealtimeBrowserClient } from "@/lib/supabase/realtime-client";
 
@@ -164,6 +169,162 @@ function hasInPlayConflict(
   return playerIds.some((playerId) => inPlayPlayerIds.has(playerId));
 }
 
+function isAssignableNow(playerIds: string[], inPlayPlayerIds: Set<string>) {
+  return !hasInPlayConflict(playerIds, inPlayPlayerIds);
+}
+
+function computeRestScore(
+  playerIds: string[],
+  inPlayPlayerIds: Set<string>,
+  recentlyPlayedPlayerIds: Set<string>
+) {
+  if (playerIds.length === 0) return 0;
+  let rested = 0;
+  for (const playerId of playerIds) {
+    if (!inPlayPlayerIds.has(playerId) && !recentlyPlayedPlayerIds.has(playerId)) {
+      rested += 1;
+    }
+  }
+  return rested;
+}
+
+function sortScheduleMatches(matches: ScheduleState["eligibleMatches"]) {
+  return [...matches].sort((a, b) => {
+    const aForced = a.forcedRank ?? Number.POSITIVE_INFINITY;
+    const bForced = b.forcedRank ?? Number.POSITIVE_INFINITY;
+    if (aForced !== bForced) return aForced - bForced;
+
+    const aType = a.matchType === "GROUP" ? 0 : 1;
+    const bType = b.matchType === "GROUP" ? 0 : 1;
+    if (aType !== bType) return aType - bType;
+    if (a.restScore !== b.restScore) return b.restScore - a.restScore;
+    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.round !== b.round) {
+      return (a.round ?? 0) - (b.round ?? 0);
+    }
+    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.series !== b.series) {
+      const seriesRank: Record<string, number> = { B: 0, A: 1 };
+      const aSeries = a.series ? seriesRank[a.series] ?? 2 : 2;
+      const bSeries = b.series ? seriesRank[b.series] ?? 2 : 2;
+      if (aSeries !== bSeries) return aSeries - bSeries;
+    }
+    if (a.matchNo !== b.matchNo) return (a.matchNo ?? 0) - (b.matchNo ?? 0);
+    return a.matchId.localeCompare(b.matchId);
+  });
+}
+
+function buildUpcomingMatches(
+  queueMatches: ScheduleState["eligibleMatches"],
+  inPlayPlayerIds: Set<string>,
+  limit = 5
+) {
+  const forcedCandidates = queueMatches.filter((match) => match.isForced);
+  const normalCandidates = queueMatches.filter((match) => !match.isForced);
+  const pickedPlayerIds = new Set<string>();
+  const upcoming: ScheduleState["upcomingMatches"] = [];
+
+  const pickFrom = (candidates: ScheduleState["eligibleMatches"], requireAssignable: boolean) => {
+    for (const match of candidates) {
+      if (upcoming.length >= limit) break;
+      const overlapsPicked = hasInPlayConflict(match.teams.playerIds, pickedPlayerIds);
+      if (overlapsPicked) continue;
+      const overlapsInPlay = hasInPlayConflict(match.teams.playerIds, inPlayPlayerIds);
+      if (requireAssignable && overlapsInPlay) continue;
+      upcoming.push(match);
+      for (const playerId of match.teams.playerIds) {
+        pickedPlayerIds.add(playerId);
+      }
+    }
+  };
+
+  pickFrom(forcedCandidates, true);
+  pickFrom(forcedCandidates, false);
+  pickFrom(normalCandidates, true);
+  pickFrom(normalCandidates, false);
+
+  return upcoming;
+}
+
+function applyScheduleActionDelta(
+  previousState: ScheduleState,
+  delta: ScheduleActionDeltaPayload
+): ScheduleState | null {
+  try {
+    const courtPatchMap = new Map((delta.courtPatches ?? []).map((patch) => [patch.courtId, patch]));
+    const nextCourts = previousState.courts.map((court) => {
+      const patch = courtPatchMap.get(court.id);
+      if (!patch) return court;
+      return {
+        ...court,
+        playing: patch.playing,
+      };
+    });
+
+    const removeEligibleKeys = new Set(delta.removeEligibleKeys ?? []);
+    for (const key of delta.changedMatchKeys?.assigned ?? []) removeEligibleKeys.add(key);
+    for (const key of delta.changedMatchKeys?.blocked ?? []) removeEligibleKeys.add(key);
+    for (const key of delta.changedMatchKeys?.completed ?? []) removeEligibleKeys.add(key);
+
+    const removeBlockedKeys = new Set(delta.removeBlockedKeys ?? []);
+    for (const key of delta.changedMatchKeys?.unblocked ?? []) removeBlockedKeys.add(key);
+
+    const eligibleMap = new Map(previousState.eligibleMatches.map((match) => [match.key, match]));
+    for (const key of removeEligibleKeys) {
+      eligibleMap.delete(key);
+    }
+    for (const added of delta.addEligible ?? []) {
+      eligibleMap.set(added.key, added);
+    }
+
+    const blockedMap = new Map(previousState.blockedMatches.map((match) => [match.key, match]));
+    for (const key of removeBlockedKeys) {
+      blockedMap.delete(key);
+    }
+    for (const added of delta.addBlocked ?? []) {
+      blockedMap.set(added.key, added);
+      eligibleMap.delete(added.key);
+    }
+    for (const added of delta.addEligible ?? []) {
+      blockedMap.delete(added.key);
+    }
+
+    const inPlaySet = new Set(delta.inPlayPlayerIds ?? previousState.inPlayPlayerIds ?? []);
+    for (const playerId of delta.removeInPlayPlayerIds ?? []) {
+      inPlaySet.delete(playerId);
+    }
+    for (const playerId of delta.addInPlayPlayerIds ?? []) {
+      inPlaySet.add(playerId);
+    }
+    const inPlayPlayerIds = Array.from(inPlaySet);
+    const recentlyPlayedSet = new Set(previousState.recentlyPlayedPlayerIds ?? []);
+
+    const eligibleWithRest = Array.from(eligibleMap.values()).map((match) => ({
+      ...match,
+      restScore: computeRestScore(match.teams.playerIds, inPlaySet, recentlyPlayedSet),
+    }));
+    const eligibleSorted = sortScheduleMatches(eligibleWithRest);
+    const upcomingMatches = buildUpcomingMatches(eligibleSorted, inPlaySet, 5);
+    const assignableCount = eligibleSorted.filter((match) =>
+      isAssignableNow(match.teams.playerIds, inPlaySet)
+    ).length;
+    const upcomingAssignableCount = upcomingMatches.filter((match) =>
+      isAssignableNow(match.teams.playerIds, inPlaySet)
+    ).length;
+
+    return {
+      ...previousState,
+      courts: nextCourts,
+      eligibleMatches: eligibleSorted,
+      upcomingMatches,
+      blockedMatches: sortScheduleMatches(Array.from(blockedMap.values())),
+      inPlayPlayerIds,
+      assignableCount,
+      upcomingAssignableCount,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function formatNotificationTime(timestamp: string) {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return "";
@@ -188,7 +349,9 @@ export function ScheduleClient({
 }) {
   const isAdmin = role === "admin";
   const router = useRouter();
-  const stage = initialState.stage as ScheduleStage;
+  const [state, setState] = useState<ScheduleState>(initialState);
+  const stateRef = useRef(state);
+  const stage = state.stage as ScheduleStage;
   const effectiveView = isAdmin ? initialView : "courts";
   const [category, setCategory] = useState<CategoryFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<QueueStatus>("ELIGIBLE");
@@ -204,32 +367,56 @@ export function ScheduleClient({
     initialState.refereeNotifications ?? []
   );
   const [error, setError] = useState<string | null>(null);
+  const [isHotActionInFlight, setIsHotActionInFlight] = useState(false);
   const [isPending, startTransition] = useGlobalTransition();
   const [isAutoScheduleSubmitting, setIsAutoScheduleSubmitting] = useState(false);
   const inPlayPlayerIds = useMemo(
-    () => new Set(initialState.inPlayPlayerIds ?? []),
-    [initialState.inPlayPlayerIds]
+    () => new Set(state.inPlayPlayerIds ?? []),
+    [state.inPlayPlayerIds]
   );
   const notRestedPlayerIds = useMemo(() => {
-    const union = new Set(initialState.inPlayPlayerIds ?? []);
-    for (const id of initialState.recentlyPlayedPlayerIds ?? []) {
+    const union = new Set(state.inPlayPlayerIds ?? []);
+    for (const id of state.recentlyPlayedPlayerIds ?? []) {
       union.add(id);
     }
     return union;
-  }, [initialState.inPlayPlayerIds, initialState.recentlyPlayedPlayerIds]);
+  }, [state.inPlayPlayerIds, state.recentlyPlayedPlayerIds]);
   const scheduleDebug = process.env.NEXT_PUBLIC_SCHEDULE_DEBUG === "1";
   const autoScheduleFunctionEnabled =
-    initialState.config.autoScheduleFunctionEnabled ?? true;
+    state.config.autoScheduleFunctionEnabled ?? true;
   const autoScheduleStageValue =
     autoScheduleOverride?.stage === stage
       ? autoScheduleOverride.value
-      : initialState.config.autoScheduleEnabled;
+      : state.config.autoScheduleEnabled;
   const autoSchedule = autoScheduleFunctionEnabled && autoScheduleStageValue;
+  const isActionDisabled = isPending || isAutoScheduleSubmitting || isHotActionInFlight;
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    setState(initialState);
+    stateRef.current = initialState;
+    setRefereeNotifications(initialState.refereeNotifications ?? []);
+  }, [initialState]);
+
+  const refreshState = useCallback(async () => {
+    try {
+      const next = await getScheduleState({ category: "ALL", stage });
+      setState(next);
+      stateRef.current = next;
+      setRefereeNotifications(next.refereeNotifications ?? []);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [stage]);
 
   if (scheduleDebug) {
     console.log(
       "[schedule][debug][client] upcoming",
-      initialState.upcomingMatches.map((match) => ({
+      state.upcomingMatches.map((match) => ({
         key: match.key,
         forced: match.isForced ?? false,
         waiting: hasInPlayConflict(match.teams.playerIds, inPlayPlayerIds),
@@ -237,7 +424,7 @@ export function ScheduleClient({
     );
     console.log(
       "[schedule][debug][client] queue",
-      initialState.eligibleMatches.slice(0, 10).map((match) => ({
+      state.eligibleMatches.slice(0, 10).map((match) => ({
         key: match.key,
         forced: match.isForced ?? false,
       }))
@@ -254,9 +441,10 @@ export function ScheduleClient({
       setRefereeNotifications(result.notifications);
     };
 
+    void refreshNotifications();
     const interval = setInterval(() => {
       void refreshNotifications();
-    }, 10000);
+    }, 30000);
 
     return () => {
       isMounted = false;
@@ -295,8 +483,13 @@ export function ScheduleClient({
     const scheduleRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
-        logDebug("router.refresh", { eventCount });
-        router.refresh();
+        logDebug("state refresh", { eventCount });
+        void refreshState().then((ok) => {
+          if (!ok) {
+            logDebug("router.refresh fallback", { eventCount });
+            router.refresh();
+          }
+        });
       }, 350);
     };
 
@@ -348,9 +541,10 @@ export function ScheduleClient({
       }
       logDebug("cleanup", { eventCount });
     };
-  }, [autoSchedule, isAdmin, router, scheduleDebug, stage]);
+  }, [autoSchedule, isAdmin, refreshState, router, scheduleDebug, stage]);
 
   const handleAction = async <T,>(action: () => Promise<T>) => {
+    if (isHotActionInFlight) return;
     setError(null);
     startTransition(async () => {
       const result = (await action()) as { error?: string } | undefined;
@@ -359,12 +553,57 @@ export function ScheduleClient({
         setAutoScheduleOverride(null);
         return;
       }
-      router.refresh();
+      setAutoScheduleOverride(null);
+      const refreshed = await refreshState();
+      if (!refreshed) {
+        router.refresh();
+      }
     });
   };
 
+  const handleHotAction = useCallback(
+    async (params: {
+      actionLabel: string;
+      request: () => Promise<ScheduleActionResponse>;
+      onApplied?: (result: ScheduleActionDeltaResult) => void;
+    }) => {
+      if (isHotActionInFlight) return;
+      setError(null);
+      setIsHotActionInFlight(true);
+      try {
+        const result = await params.request();
+        if ("error" in result) {
+          setError(result.error);
+          return;
+        }
+        if (!result.ok || result.stage !== stage) {
+          setError(`${params.actionLabel} failed. Please try again.`);
+          return;
+        }
+
+        const nextState = applyScheduleActionDelta(stateRef.current, result.delta);
+        if (!nextState) {
+          setError("Unable to update schedule board in-place. Please retry.");
+          return;
+        }
+
+        stateRef.current = nextState;
+        setState(nextState);
+        if (result.delta.infoMessage) {
+          setError(result.delta.infoMessage);
+        }
+        params.onApplied?.(result);
+      } catch {
+        setError(`${params.actionLabel} request failed. Please retry.`);
+      } finally {
+        setIsHotActionInFlight(false);
+      }
+    },
+    [isHotActionInFlight, stage]
+  );
+
   const eligibleFiltered = useMemo(() => {
-    return initialState.eligibleMatches.filter((match) => {
+    return state.eligibleMatches.filter((match) => {
       if (category !== "ALL" && match.categoryCode !== category) return false;
       if (search.trim()) {
         const needle = search.trim().toLowerCase();
@@ -373,10 +612,10 @@ export function ScheduleClient({
       }
       return true;
     });
-  }, [initialState.eligibleMatches, category, search]);
+  }, [state.eligibleMatches, category, search]);
 
   const blockedFiltered = useMemo(() => {
-    return initialState.blockedMatches.filter((match) => {
+    return state.blockedMatches.filter((match) => {
       if (category !== "ALL" && match.categoryCode !== category) return false;
       if (search.trim()) {
         const needle = search.trim().toLowerCase();
@@ -385,12 +624,12 @@ export function ScheduleClient({
       }
       return true;
     });
-  }, [initialState.blockedMatches, category, search]);
+  }, [state.blockedMatches, category, search]);
   const queueMatchCount =
     statusFilter === "ELIGIBLE" ? eligibleFiltered.length : blockedFiltered.length;
 
   const upcomingFiltered = useMemo(() => {
-    return initialState.upcomingMatches.filter((match) => {
+    return state.upcomingMatches.filter((match) => {
       if (category !== "ALL" && match.categoryCode !== category) return false;
       if (search.trim()) {
         const needle = search.trim().toLowerCase();
@@ -399,7 +638,7 @@ export function ScheduleClient({
       }
       return true;
     });
-  }, [initialState.upcomingMatches, category, search]);
+  }, [state.upcomingMatches, category, search]);
 
   const eligibleForModal = eligibleFiltered;
   const eligibleForModalFiltered = useMemo(() => {
@@ -436,7 +675,7 @@ export function ScheduleClient({
         </div>
       ) : null}
 
-      {stage === "KNOCKOUT" && initialState.matchPoolCount === 0 ? (
+      {stage === "KNOCKOUT" && state.matchPoolCount === 0 ? (
         <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
           No knockout matches available. Generate brackets first.
         </div>
@@ -458,7 +697,7 @@ export function ScheduleClient({
                       ? "border-lime-300 bg-lime-300 text-slate-950 hover:bg-lime-400 hover:text-slate-950 dark:!border-lime-300 dark:!bg-lime-300 dark:!text-slate-950 dark:hover:!bg-lime-400"
                       : undefined
                   }
-                  disabled={isPending || isAutoScheduleSubmitting}
+                  disabled={isActionDisabled}
                   onClick={async () => {
                     if (isAutoScheduleSubmitting) return;
                     const next = !autoSchedule;
@@ -474,7 +713,10 @@ export function ScheduleClient({
                         setAutoScheduleOverride(null);
                         return;
                       }
-                      router.refresh();
+                      const refreshed = await refreshState();
+                      if (!refreshed) {
+                        router.refresh();
+                      }
                     } finally {
                       setIsAutoScheduleSubmitting(false);
                     }
@@ -485,14 +727,14 @@ export function ScheduleClient({
               ) : null}
             </div>
             <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {initialState.courts.map((court) => {
+              {state.courts.map((court) => {
                 const playing = court.playing;
                 const showNoAssignable =
                   autoSchedule &&
                   !court.isLocked &&
                   !playing &&
-                  initialState.eligibleMatches.length > 0 &&
-                  initialState.upcomingAssignableCount === 0;
+                  state.eligibleMatches.length > 0 &&
+                  state.upcomingAssignableCount === 0;
                 return (
                   <div
                     key={court.id}
@@ -514,11 +756,12 @@ export function ScheduleClient({
                               if (!playing) return;
                               const matchId = playing.matchKey.split(":")[1] ?? "";
                               if (!matchId) return;
-                              handleAction(() =>
-                                blockMatch(playing.matchType, matchId, stage)
-                              );
+                              handleHotAction({
+                                actionLabel: "Block match",
+                                request: () => blockMatch(playing.matchType, matchId, stage),
+                              });
                             }}
-                            disabled={!playing || isPending}
+                            disabled={!playing || isActionDisabled}
                           >
                             Block Match
                           </Button>
@@ -531,6 +774,7 @@ export function ScheduleClient({
                                 lockCourt(court.id, !court.isLocked, stage)
                               )
                             }
+                            disabled={isActionDisabled}
                           >
                             {court.isLocked ? "Unlock Court" : "Lock Court"}
                           </Button>
@@ -592,7 +836,7 @@ export function ScheduleClient({
                             setSelectedMatchKey(firstAssignable?.key ?? "");
                             setModal({ type: "assign", courtId: court.id });
                           }}
-                          disabled={isPending || court.isLocked}
+                          disabled={isActionDisabled || court.isLocked}
                         >
                           Assign
                         </Button>
@@ -601,8 +845,13 @@ export function ScheduleClient({
                             type="button"
                             size="sm"
                             className="w-full border-orange-500 bg-orange-500 text-white hover:bg-orange-600"
-                            onClick={() => handleAction(() => backToQueue(court.id, stage))}
-                            disabled={!playing || isPending}
+                            onClick={() =>
+                              handleHotAction({
+                                actionLabel: "Back to queue",
+                                request: () => backToQueue(court.id, stage),
+                              })
+                            }
+                            disabled={!playing || isActionDisabled}
                           >
                             Back to Q
                           </Button>
@@ -610,8 +859,13 @@ export function ScheduleClient({
                             type="button"
                             size="sm"
                             className="w-full border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
-                            onClick={() => handleAction(() => markCompleted(court.id, stage))}
-                            disabled={!playing || isPending}
+                            onClick={() =>
+                              handleHotAction({
+                                actionLabel: "Mark completed",
+                                request: () => markCompleted(court.id, stage),
+                              })
+                            }
+                            disabled={!playing || isActionDisabled}
                           >
                             Completed
                           </Button>
@@ -730,7 +984,7 @@ export function ScheduleClient({
                   type="button"
                   size="sm"
                   variant="outline"
-                  disabled={isPending || refereeNotifications.length === 0}
+                  disabled={isActionDisabled || refereeNotifications.length === 0}
                   onClick={() =>
                     handleAction(async () => {
                       const result = await clearRefereeNotifications(stage);
@@ -785,6 +1039,7 @@ export function ScheduleClient({
                               return result;
                             })
                           }
+                          disabled={isActionDisabled}
                           aria-label={item.isRead ? "Mark as unread" : "Mark as read"}
                         >
                           {item.isRead ? (
@@ -839,6 +1094,7 @@ export function ScheduleClient({
                 size="sm"
                 variant="outline"
                 onClick={() => handleAction(() => resetQueueForcedPriorities(stage))}
+                disabled={isActionDisabled}
               >
                 Reset the Queue
               </Button>
@@ -921,6 +1177,7 @@ export function ScheduleClient({
                             forceNext(match.matchType, match.matchId, stage)
                           )
                         }
+                        disabled={isActionDisabled}
                       >
                         Force Next
                       </Button>
@@ -938,6 +1195,7 @@ export function ScheduleClient({
                               )
                             )
                           }
+                          disabled={isActionDisabled}
                         >
                           Back to correct position
                         </Button>
@@ -947,10 +1205,12 @@ export function ScheduleClient({
                         size="sm"
                         variant="outline"
                         onClick={() =>
-                          handleAction(() =>
-                            blockMatch(match.matchType, match.matchId, stage)
-                          )
+                          handleHotAction({
+                            actionLabel: "Block match",
+                            request: () => blockMatch(match.matchType, match.matchId, stage),
+                          })
                         }
+                        disabled={isActionDisabled}
                       >
                         Block
                       </Button>
@@ -1015,10 +1275,12 @@ export function ScheduleClient({
                         type="button"
                         size="sm"
                         onClick={() =>
-                          handleAction(() =>
-                            unblockMatch(match.matchType, match.matchId, stage)
-                          )
+                          handleHotAction({
+                            actionLabel: "Unblock match",
+                            request: () => unblockMatch(match.matchType, match.matchId, stage),
+                          })
                         }
+                        disabled={isActionDisabled}
                       >
                         Unblock
                       </Button>
@@ -1168,18 +1430,21 @@ export function ScheduleClient({
                   type="button"
                   onClick={() => {
                       if (!selectedMatchForModal) return;
-                      handleAction(async () => {
-                        const result = await assignNext({
+                      handleHotAction({
+                        actionLabel: "Assignment",
+                        request: () =>
+                          assignNext({
                           courtId: modal.courtId,
                           matchType: selectedMatchForModal.matchType,
                           matchId: selectedMatchForModal.matchId,
                           stage,
-                        });
-                        setModal(null);
-                        return result;
+                          }),
+                        onApplied: () => {
+                          setModal(null);
+                        },
                       });
                   }}
-                  disabled={isPending || !selectedMatchForModal || selectedMatchHasConflict}
+                  disabled={isActionDisabled || !selectedMatchForModal || selectedMatchHasConflict}
                 >
                   Confirm assignment
                 </Button>

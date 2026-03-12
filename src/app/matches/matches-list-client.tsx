@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  lockGroupStage,
+  lockGroupStageNoRedirect,
   randomizeFilteredGroupMatchResults,
-  unlockGroupStage,
-  undoMatchResult,
-  upsertMatchScore,
+  unlockGroupStageNoRedirect,
+  undoMatchResultNoRedirect,
+  upsertMatchScoreNoRedirect,
 } from "@/app/matches/actions";
 import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
 
@@ -69,6 +69,73 @@ function matchScoreSummary(match: MatchItem) {
     .join(", ");
 }
 
+function parseOptionalNumber(value: FormDataEntryValue | null): number | null {
+  if (typeof value !== "string" || value === "") return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildUpdatedMatchFromSubmission(
+  match: MatchItem,
+  formData: FormData,
+  scoringMode: "SINGLE_GAME_21" | "BEST_OF_3_21"
+): MatchItem {
+  const game1Home = parseOptionalNumber(formData.get("game1Home"));
+  const game1Away = parseOptionalNumber(formData.get("game1Away"));
+  if (game1Home === null || game1Away === null) return match;
+
+  if (game1Home === 0 && game1Away === 0) {
+    return {
+      ...match,
+      status: "SCHEDULED",
+      winnerTeamId: null,
+      games: [],
+    };
+  }
+
+  const games: MatchGame[] = [
+    { gameNumber: 1, homePoints: game1Home, awayPoints: game1Away },
+  ];
+
+  let winnerTeamId: string | null = null;
+
+  if (scoringMode === "SINGLE_GAME_21") {
+    if (game1Home === game1Away) return match;
+    winnerTeamId =
+      game1Home > game1Away ? (match.homeTeam?.id ?? null) : (match.awayTeam?.id ?? null);
+  } else {
+    const game2Home = parseOptionalNumber(formData.get("game2Home"));
+    const game2Away = parseOptionalNumber(formData.get("game2Away"));
+    if (game2Home === null || game2Away === null || game2Home === game2Away) return match;
+    games.push({ gameNumber: 2, homePoints: game2Home, awayPoints: game2Away });
+
+    let homeWins = game1Home > game1Away ? 1 : 0;
+    let awayWins = game1Away > game1Home ? 1 : 0;
+    homeWins += game2Home > game2Away ? 1 : 0;
+    awayWins += game2Away > game2Home ? 1 : 0;
+
+    if (homeWins === 2) {
+      winnerTeamId = match.homeTeam?.id ?? null;
+    } else if (awayWins === 2) {
+      winnerTeamId = match.awayTeam?.id ?? null;
+    } else {
+      const game3Home = parseOptionalNumber(formData.get("game3Home"));
+      const game3Away = parseOptionalNumber(formData.get("game3Away"));
+      if (game3Home === null || game3Away === null || game3Home === game3Away) return match;
+      games.push({ gameNumber: 3, homePoints: game3Home, awayPoints: game3Away });
+      winnerTeamId =
+        game3Home > game3Away ? (match.homeTeam?.id ?? null) : (match.awayTeam?.id ?? null);
+    }
+  }
+
+  return {
+    ...match,
+    status: "COMPLETED",
+    winnerTeamId,
+    games,
+  };
+}
+
 export function MatchesListClient({
   categoryCode,
   matches,
@@ -85,11 +152,23 @@ export function MatchesListClient({
   const [search, setSearch] = useState(initialFilters?.search ?? "");
   const [groupId, setGroupId] = useState(initialFilters?.groupId ?? "");
   const [status, setStatus] = useState<"ALL" | "COMPLETED" | "SCHEDULED">("ALL");
+  const [matchesState, setMatchesState] = useState<MatchItem[]>(matches);
+  const [stageLocks, setStageLocks] = useState(stageLockByCategory);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setCategoryFilter(categoryCode);
   }, [categoryCode]);
+
+  useEffect(() => {
+    setMatchesState(matches);
+  }, [matches]);
+
+  useEffect(() => {
+    setStageLocks(stageLockByCategory);
+  }, [stageLockByCategory]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(storageKey);
@@ -125,7 +204,7 @@ export function MatchesListClient({
   const availableGroups = useMemo(() => {
     if (isAllCategories) return [];
 
-    const items = matches.filter((match) => match.categoryCode === categoryFilter);
+    const items = matchesState.filter((match) => match.categoryCode === categoryFilter);
 
     const deduped = new Map<string, string>();
     for (const match of items) {
@@ -140,7 +219,7 @@ export function MatchesListClient({
           sensitivity: "base",
         })
       );
-  }, [categoryFilter, isAllCategories, matches]);
+  }, [categoryFilter, isAllCategories, matchesState]);
 
   useEffect(() => {
     if (!groupId) return;
@@ -151,7 +230,7 @@ export function MatchesListClient({
   }, [availableGroups, groupId]);
 
   const filteredMatches = useMemo(() => {
-    let filtered = matches;
+    let filtered = matchesState;
     if (categoryFilter !== "ALL") {
       filtered = filtered.filter((match) => match.categoryCode === categoryFilter);
     }
@@ -172,10 +251,78 @@ export function MatchesListClient({
       const away = teamSearchText(match.awayTeam);
       return home.includes(query) || away.includes(query);
     });
-  }, [categoryFilter, groupId, matches, search, status]);
+  }, [categoryFilter, groupId, matchesState, search, status]);
 
   const selectedCategoryLockState =
-    categoryFilter === "ALL" ? false : stageLockByCategory[categoryFilter];
+    categoryFilter === "ALL" ? false : stageLocks[categoryFilter];
+
+  const handleLockAction = (locked: boolean) => {
+    if (categoryFilter === "ALL") return;
+    setActionError(null);
+    const formData = new FormData();
+    formData.set("category", categoryFilter);
+    formData.set("pageCategory", categoryCode);
+    formData.set("filterGroupId", groupId);
+    formData.set("filterSearch", search);
+    formData.set("filterView", "group");
+    startTransition(async () => {
+      const result = locked
+        ? await lockGroupStageNoRedirect(formData)
+        : await unlockGroupStageNoRedirect(formData);
+      if (!result) {
+        setActionError("Unable to update lock state.");
+        return;
+      }
+      if ("error" in result) {
+        setActionError(result.error);
+        return;
+      }
+      setStageLocks((prev) => ({
+        ...prev,
+        [result.categoryCode]: result.locked,
+      }));
+    });
+  };
+
+  const handleSaveResult = (event: FormEvent<HTMLFormElement>, match: MatchItem) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    setActionError(null);
+    startTransition(async () => {
+      const result = await upsertMatchScoreNoRedirect(formData);
+      if (!result || ("error" in result && result.error)) {
+        setActionError(result?.error ?? "Unable to save score.");
+        return;
+      }
+      setMatchesState((prev) =>
+        prev.map((entry) =>
+          entry.id === match.id
+            ? buildUpdatedMatchFromSubmission(entry, formData, scoringMode)
+            : entry
+        )
+      );
+    });
+  };
+
+  const handleUndoResult = (event: FormEvent<HTMLFormElement>, match: MatchItem) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    setActionError(null);
+    startTransition(async () => {
+      const result = await undoMatchResultNoRedirect(formData);
+      if (!result || ("error" in result && result.error)) {
+        setActionError(result?.error ?? "Unable to undo score.");
+        return;
+      }
+      setMatchesState((prev) =>
+        prev.map((entry) =>
+          entry.id === match.id
+            ? { ...entry, status: "SCHEDULED", winnerTeamId: null, games: [] }
+            : entry
+        )
+      );
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -244,37 +391,23 @@ export function MatchesListClient({
             />
           </div>
           <div className="flex min-w-[240px] flex-1 items-end gap-2">
-            <form action={lockGroupStage}>
-              <GlobalFormPendingBridge />
-              <input type="hidden" name="category" value={categoryFilter} />
-              <input type="hidden" name="pageCategory" value={categoryCode} />
-              <input type="hidden" name="filterGroupId" value={groupId} />
-              <input type="hidden" name="filterSearch" value={search} />
-              <input type="hidden" name="filterView" value="group" />
-              <Button
-                size="sm"
-                type="submit"
-                disabled={categoryFilter === "ALL" || selectedCategoryLockState}
-              >
-                Lock group stage
-              </Button>
-            </form>
-            <form action={unlockGroupStage}>
-              <GlobalFormPendingBridge />
-              <input type="hidden" name="category" value={categoryFilter} />
-              <input type="hidden" name="pageCategory" value={categoryCode} />
-              <input type="hidden" name="filterGroupId" value={groupId} />
-              <input type="hidden" name="filterSearch" value={search} />
-              <input type="hidden" name="filterView" value="group" />
-              <Button
-                size="sm"
-                type="submit"
-                variant="outline"
-                disabled={categoryFilter === "ALL" || !selectedCategoryLockState}
-              >
-                Unlock
-              </Button>
-            </form>
+            <Button
+              size="sm"
+              type="button"
+              onClick={() => handleLockAction(true)}
+              disabled={categoryFilter === "ALL" || selectedCategoryLockState || isPending}
+            >
+              Lock group stage
+            </Button>
+            <Button
+              size="sm"
+              type="button"
+              variant="outline"
+              onClick={() => handleLockAction(false)}
+              disabled={categoryFilter === "ALL" || !selectedCategoryLockState || isPending}
+            >
+              Unlock
+            </Button>
             <span className="ml-auto text-xs text-muted-foreground">
               {filteredMatches.length} match
               {filteredMatches.length === 1 ? "" : "es"}
@@ -298,6 +431,12 @@ export function MatchesListClient({
             </form>
           ) : null}
       </div>
+
+      {actionError ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {actionError}
+        </div>
+      ) : null}
 
       {filteredMatches.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -361,8 +500,10 @@ export function MatchesListClient({
                   </div>
                 </div>
 
-                <form action={upsertMatchScore} className="mt-4 grid gap-2">
-                  <GlobalFormPendingBridge />
+                <form
+                  className="mt-4 grid gap-2"
+                  onSubmit={(event) => handleSaveResult(event, match)}
+                >
                   <input type="hidden" name="matchId" value={match.id} />
                   <input type="hidden" name="category" value={match.categoryCode} />
                   <input type="hidden" name="filterGroupId" value={groupId} />
@@ -450,14 +591,16 @@ export function MatchesListClient({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <Button size="sm" type="submit" disabled={isMatchLocked}>
+                    <Button size="sm" type="submit" disabled={isMatchLocked || isPending}>
                       Save result
                     </Button>
                   </div>
                 </form>
                 {match.status !== "SCHEDULED" ? (
-                  <form action={undoMatchResult} className="mt-2">
-                    <GlobalFormPendingBridge />
+                  <form
+                    className="mt-2"
+                    onSubmit={(event) => handleUndoResult(event, match)}
+                  >
                     <input type="hidden" name="matchId" value={match.id} />
                     <input type="hidden" name="category" value={match.categoryCode} />
                     <input type="hidden" name="filterGroupId" value={groupId} />
@@ -467,7 +610,7 @@ export function MatchesListClient({
                       size="sm"
                       type="submit"
                       variant="outline"
-                      disabled={isMatchLocked}
+                      disabled={isMatchLocked || isPending}
                     >
                       Undo
                     </Button>

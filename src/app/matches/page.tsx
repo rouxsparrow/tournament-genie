@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { MatchesListClient } from "@/app/matches/matches-list-client";
 import { KnockoutMatchesSection } from "@/app/matches/knockout-matches-section";
-import { syncKnockoutPropagation } from "@/app/knockout/sync";
 
 type MatchesPageProps = {
   searchParams?: Promise<{
@@ -34,10 +33,6 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
   const initialGroupId = resolvedSearchParams?.group ?? "";
   const initialSearch = resolvedSearchParams?.search ?? "";
 
-  if (view === "knockout" && selectedCategory !== "ALL") {
-    await syncKnockoutPropagation(selectedCategory);
-  }
-
   const category =
     selectedCategory === "ALL"
       ? null
@@ -59,47 +54,53 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
   });
   const scoringMode = settings?.scoringMode ?? "SINGLE_GAME_21";
 
-  const matches = category
-    ? await prisma.match.findMany({
-        where: {
-          stage: "GROUP",
-          group: {
-            categoryId: category.id,
+  const matches =
+    view === "group"
+      ? category
+        ? await prisma.match.findMany({
+            where: {
+              stage: "GROUP",
+              group: {
+                categoryId: category.id,
+              },
+            },
+            include: {
+              group: { include: { category: true } },
+              homeTeam: { include: { members: { include: { player: true } } } },
+              awayTeam: { include: { members: { include: { player: true } } } },
+              games: true,
+            },
+            orderBy: [{ group: { name: "asc" } }, { createdAt: "asc" }],
+          })
+        : selectedCategory === "ALL"
+          ? await prisma.match.findMany({
+              where: { stage: "GROUP" },
+              include: {
+                group: { include: { category: true } },
+                homeTeam: { include: { members: { include: { player: true } } } },
+                awayTeam: { include: { members: { include: { player: true } } } },
+                games: true,
+              },
+              orderBy: [{ group: { name: "asc" } }, { createdAt: "asc" }],
+            })
+          : []
+      : [];
+
+  const knockoutMatches =
+    view === "knockout"
+      ? await prisma.knockoutMatch.findMany({
+          where: {
+            isPublished: true,
+            ...(selectedCategory === "ALL" ? {} : { categoryCode: selectedCategory }),
           },
-        },
-        include: {
-          group: { include: { category: true } },
-          homeTeam: { include: { members: { include: { player: true } } } },
-          awayTeam: { include: { members: { include: { player: true } } } },
-          games: true,
-        },
-        orderBy: [{ group: { name: "asc" } }, { createdAt: "asc" }],
-      })
-    : selectedCategory === "ALL"
-      ? await prisma.match.findMany({
-          where: { stage: "GROUP" },
           include: {
-            group: { include: { category: true } },
             homeTeam: { include: { members: { include: { player: true } } } },
             awayTeam: { include: { members: { include: { player: true } } } },
             games: true,
           },
-          orderBy: [{ group: { name: "asc" } }, { createdAt: "asc" }],
+          orderBy: [{ series: "asc" }, { round: "asc" }, { matchNo: "asc" }],
         })
       : [];
-
-  const knockoutMatches = await prisma.knockoutMatch.findMany({
-    where: {
-      isPublished: true,
-      ...(selectedCategory === "ALL" ? {} : { categoryCode: selectedCategory }),
-    },
-    include: {
-      homeTeam: { include: { members: { include: { player: true } } } },
-      awayTeam: { include: { members: { include: { player: true } } } },
-      games: true,
-    },
-    orderBy: [{ series: "asc" }, { round: "asc" }, { matchNo: "asc" }],
-  });
 
   return (
     <section className="rounded-2xl border border-border bg-card p-8">

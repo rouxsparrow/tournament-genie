@@ -1,6 +1,4 @@
 "use server";
-
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import {
@@ -8,6 +6,9 @@ import {
   upsertMatchScoreNoRedirect,
 } from "@/app/matches/actions";
 import { requireReferee } from "@/lib/referee-auth";
+
+const REFEREE_SCORE_SUBMITTED_GROUP_ACTION = "REFEREE_SCORE_SUBMITTED_GROUP";
+const REFEREE_SCORE_SUBMITTED_KNOCKOUT_ACTION = "REFEREE_SCORE_SUBMITTED_KNOCKOUT";
 
 const COURT_LABELS: Record<string, "P5" | "P6" | "P7" | "P8" | "P9"> = {
   C1: "P5",
@@ -151,7 +152,7 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
 
     await prisma.scheduleActionLog.create({
       data: {
-        action: "REFEREE_SCORE_SUBMITTED",
+        action: REFEREE_SCORE_SUBMITTED_GROUP_ACTION,
         payload: {
           stage: "GROUP",
           matchType: "GROUP",
@@ -240,7 +241,7 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
 
     await prisma.scheduleActionLog.create({
       data: {
-        action: "REFEREE_SCORE_SUBMITTED",
+        action: REFEREE_SCORE_SUBMITTED_KNOCKOUT_ACTION,
         payload: {
           stage: "KNOCKOUT",
           matchType: "KNOCKOUT",
@@ -262,11 +263,5 @@ export async function submitRefereeScore(input: SubmitRefereeScoreInput) {
     });
   }
 
-  revalidatePath("/referee");
-  revalidatePath("/matches");
-  revalidatePath("/schedule");
-  revalidatePath("/standings");
-  revalidatePath("/knockout");
-
-  return { ok: true as const };
+  return { ok: true as const, stage: payload.stage, matchId: payload.matchId };
 }

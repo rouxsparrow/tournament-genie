@@ -21,6 +21,7 @@ const ADMIN_LINKS = [
   { href: "/teams", label: "Teams", icon: ShieldCheck },
   { href: "/groups", label: "Groups", icon: FolderKanban },
   { href: "/knockout", label: "Knockout", icon: Trophy },
+  { href: "/group-stage-result", label: "Group Stage Result", icon: Trophy },
   { href: "/broadcast", label: "Broadcast", icon: Radio },
   { href: "/referees", label: "Referees", icon: UserCheck },
   { href: "/referee-submissions", label: "Referee Submissions", icon: UserCheck },
