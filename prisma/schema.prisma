@@ -393,6 +393,9 @@ model CourtAssignment {
 
   @@index([courtId, status, stage])
   @@index([stage, status])
+  @@index([stage, status, courtId])
+  @@index([stage, status, groupMatchId])
+  @@index([stage, status, knockoutMatchId])
   @@index([stage, status, assignedAt])
   @@index([groupMatchId])
   @@index([knockoutMatchId])
@@ -407,6 +410,8 @@ model BlockedMatch {
   createdAt       DateTime  @default(now())
 
   @@index([matchType])
+  @@index([matchType, groupMatchId])
+  @@index([matchType, knockoutMatchId])
 }
 
 model ScheduleActionLog {

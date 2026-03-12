@@ -114,6 +114,7 @@ export function RefereeScoreboard({
   refereeDisplayName,
 }: RefereeScoreboardProps) {
   const router = useRouter();
+  const [matchesState, setMatchesState] = useState<MatchItem[]>(matches);
   const [stage, setStage] = useState<Stage>("GROUP");
   const [selectedCourt, setSelectedCourt] = useState<CourtLabel | "">("");
   const [selectedMatchId, setSelectedMatchId] = useState("");
@@ -132,6 +133,10 @@ export function RefereeScoreboard({
   useEffect(() => {
     setSessionAuthenticated(isAuthenticated);
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    setMatchesState(matches);
+  }, [matches]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -179,12 +184,12 @@ export function RefereeScoreboard({
   const activeSelectedMatchId = selectedMatchId || selectedMatchIdFromStorage;
 
   const availableMatches = useMemo(() => {
-    let filtered = matches.filter((match) => match.stage === stage);
+    let filtered = matchesState.filter((match) => match.stage === stage);
     if (selectedCourt) {
       filtered = filtered.filter((match) => match.court === selectedCourt);
     }
     return filtered;
-  }, [matches, selectedCourt, stage]);
+  }, [matchesState, selectedCourt, stage]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -397,7 +402,17 @@ export function RefereeScoreboard({
       setSubmitMessage("Submitted");
       setSubmittedForMatchId(selectedMatch.id);
       setSubmittedMatchSnapshot(selectedMatch);
-      router.refresh();
+      if (result && "ok" in result && result.ok) {
+        setMatchesState((prev) =>
+          prev.filter(
+            (match) =>
+              !(
+                match.id === result.matchId &&
+                match.stage === result.stage
+              )
+          )
+        );
+      }
     });
   };
 

@@ -6,11 +6,6 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
 import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
-import {
-  getBroadcastViewChangeType,
-  getBroadcastViewSignature,
-  type BroadcastViewSignature,
-} from "@/lib/schedule/broadcast-view-signature";
 import { publishBroadcastRefreshEvent } from "@/lib/supabase/broadcast-refresh-publisher";
 
 type CategoryFilter = "ALL" | "MD" | "WD" | "XD";
@@ -72,11 +67,68 @@ type ScheduleMatchItem = {
   pendingCheckInPlayerIds?: string[];
 };
 
+export type SchedulePlayingItem = {
+  matchKey: string;
+  matchType: MatchType;
+  categoryCode: string;
+  detail: string;
+  homeTeam: { name: string; players: string[] } | null;
+  awayTeam: { name: string; players: string[] } | null;
+};
+
+export type ScheduleActionDeltaPayload = {
+  courtPatches?: Array<{ courtId: string; playing: SchedulePlayingItem | null }>;
+  removeEligibleKeys?: string[];
+  addEligible?: ScheduleMatchItem[];
+  removeBlockedKeys?: string[];
+  addBlocked?: ScheduleMatchItem[];
+  inPlayPlayerIds?: string[];
+  addInPlayPlayerIds?: string[];
+  removeInPlayPlayerIds?: string[];
+  changedMatchKeys?: {
+    assigned?: string[];
+    cleared?: string[];
+    blocked?: string[];
+    unblocked?: string[];
+    completed?: string[];
+  };
+  infoMessage?: string;
+};
+
+export type ScheduleActionDeltaResult = {
+  ok: true;
+  action: "assign" | "back-to-queue" | "swap-back-to-queue" | "block" | "unblock" | "completed";
+  stage: ScheduleStage;
+  delta: ScheduleActionDeltaPayload;
+};
+
+export type ScheduleActionErrorResult = { error: string };
+export type ScheduleActionResponse = ScheduleActionDeltaResult | ScheduleActionErrorResult;
+export type ScheduleActionUnknownResult = {
+  status: "unknown";
+  action: string;
+  stage: ScheduleStage;
+  message: string;
+};
+
 type LastBatchPayload = {
   matchKeys: string[];
   playerIds: string[];
   updatedAt: string;
 };
+
+const REFEREE_SCORE_SUBMITTED_ACTION = "REFEREE_SCORE_SUBMITTED";
+const REFEREE_SCORE_SUBMITTED_GROUP_ACTION = "REFEREE_SCORE_SUBMITTED_GROUP";
+const REFEREE_SCORE_SUBMITTED_KNOCKOUT_ACTION = "REFEREE_SCORE_SUBMITTED_KNOCKOUT";
+const REFEREE_SCORE_SUBMITTED_ACTIONS = [
+  REFEREE_SCORE_SUBMITTED_ACTION,
+  REFEREE_SCORE_SUBMITTED_GROUP_ACTION,
+  REFEREE_SCORE_SUBMITTED_KNOCKOUT_ACTION,
+] as const;
+
+function isRefereeScoreSubmittedAction(action: string) {
+  return (REFEREE_SCORE_SUBMITTED_ACTIONS as readonly string[]).includes(action);
+}
 
 const matchTypeSchema = z.enum(["GROUP", "KNOCKOUT"]);
 const scheduleStageSchema = z.enum(["GROUP", "KNOCKOUT"]);
@@ -84,6 +136,7 @@ const categoryFilterSchema = z.enum(["ALL", "MD", "WD", "XD"]);
 const COURT_IDS = ["C1", "C2", "C3", "C4", "C5"] as const;
 const SCHEDULE_DEBUG = process.env.SCHEDULE_DEBUG === "1";
 const SCHEDULE_PERF_DEBUG = process.env.SCHEDULE_PERF_DEBUG === "1";
+const BROADCAST_PUBLISH_WAIT_MS = 250;
 
 type PerfEntry = { step: string; ms: number };
 
@@ -91,29 +144,56 @@ function startPerfTimer() {
   return Date.now();
 }
 
-async function publishBroadcastRefreshIfViewChanged(params: {
+async function publishBroadcastRefresh(params: {
   stage: ScheduleStage;
-  source: "schedule-action";
-  before: BroadcastViewSignature;
+  source: string;
+  changeType: "assignment" | "upcoming" | "both";
 }) {
-  const after = await getBroadcastViewSignature(params.stage);
-  const changeType = getBroadcastViewChangeType(params.before, after);
-  if (!changeType) return;
-
-  const result = await publishBroadcastRefreshEvent({
+  const publishAttempt = publishBroadcastRefreshEvent({
     stage: params.stage,
     source: params.source,
     reason: "view-change",
-    changeType,
+    changeType: params.changeType,
   });
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<Awaited<ReturnType<typeof publishBroadcastRefreshEvent>>>(
+    (resolve) => {
+      timeoutHandle = setTimeout(() => {
+        resolve({
+          ok: false,
+          error: `Publish timeout after ${BROADCAST_PUBLISH_WAIT_MS}ms`,
+        });
+      }, BROADCAST_PUBLISH_WAIT_MS);
+    }
+  );
+  const result = await Promise.race([publishAttempt, timeout]);
+  if (timeoutHandle) {
+    clearTimeout(timeoutHandle);
+  }
   if (!result.ok) {
-    console.error("[broadcast][schedule] publish failed", {
+    console.warn("[broadcast][schedule] publish skipped", {
       stage: params.stage,
       source: params.source,
+      changeType: params.changeType,
       error: result.error,
       response: result.response ?? null,
     });
   }
+}
+
+function dispatchBroadcastRefresh(params: {
+  stage: ScheduleStage;
+  source: string;
+  changeType: "assignment" | "upcoming" | "both";
+}) {
+  void publishBroadcastRefresh(params).catch((error: unknown) => {
+    console.warn("[broadcast][schedule] async dispatch failed", {
+      stage: params.stage,
+      source: params.source,
+      changeType: params.changeType,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
 
 async function invalidatePresentingStage(stage: ScheduleStage) {
@@ -129,6 +209,22 @@ function stopPerfTimer(
   step: string
 ) {
   entries.push({ step, ms: Date.now() - startedAt });
+}
+
+function logHotActionPerf(params: {
+  action: string;
+  stage: ScheduleStage;
+  entries: PerfEntry[];
+  meta?: Record<string, unknown>;
+}) {
+  if (!SCHEDULE_PERF_DEBUG) return;
+  console.log("[schedule][perf][action]", {
+    action: params.action,
+    stage: params.stage,
+    totalMs: params.entries.reduce((sum, entry) => sum + entry.ms, 0),
+    entries: params.entries,
+    ...(params.meta ?? {}),
+  });
 }
 
 function buildMatchKey(matchType: MatchType, matchId: string) {
@@ -294,6 +390,111 @@ function extractTeamPlayers(team: {
   };
 }
 
+function extractTeamPlayerIds(team: {
+  members: { player: { id: string } }[];
+}) {
+  return team.members.map((member) => member.player.id);
+}
+
+const scheduleTeamSelect = {
+  select: {
+    name: true,
+    members: {
+      select: {
+        player: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+const scheduleTeamIdOnlySelect = {
+  select: {
+    members: {
+      select: {
+        player: {
+          select: {
+            id: true,
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+const scheduleGroupMatchSelect = {
+  id: true,
+  status: true,
+  homeTeamId: true,
+  awayTeamId: true,
+  group: {
+    select: {
+      name: true,
+      category: {
+        select: {
+          code: true,
+        },
+      },
+    },
+  },
+  homeTeam: scheduleTeamSelect,
+  awayTeam: scheduleTeamSelect,
+} as const;
+
+const scheduleKnockoutMatchSelect = {
+  id: true,
+  status: true,
+  categoryCode: true,
+  series: true,
+  round: true,
+  matchNo: true,
+  isPublished: true,
+  homeTeamId: true,
+  awayTeamId: true,
+  homeTeam: scheduleTeamSelect,
+  awayTeam: scheduleTeamSelect,
+} as const;
+
+const assignmentScheduleSelect = {
+  id: true,
+  courtId: true,
+  stage: true,
+  matchType: true,
+  groupMatchId: true,
+  knockoutMatchId: true,
+  groupMatch: { select: scheduleGroupMatchSelect },
+  knockoutMatch: { select: scheduleKnockoutMatchSelect },
+} as const;
+
+const assignmentPlayerIdOnlySelect = {
+  id: true,
+  courtId: true,
+  stage: true,
+  matchType: true,
+  groupMatchId: true,
+  knockoutMatchId: true,
+  groupMatch: {
+    select: {
+      id: true,
+      status: true,
+      homeTeam: scheduleTeamIdOnlySelect,
+      awayTeam: scheduleTeamIdOnlySelect,
+    },
+  },
+  knockoutMatch: {
+    select: {
+      id: true,
+      status: true,
+      homeTeam: scheduleTeamIdOnlySelect,
+      awayTeam: scheduleTeamIdOnlySelect,
+    },
+  },
+} as const;
+
 function getPlayersForGroupMatch(match: {
   homeTeam: { members: { player: { id: string; name: string } }[] } | null;
   awayTeam: { members: { player: { id: string; name: string } }[] } | null;
@@ -312,6 +513,22 @@ function getPlayersForKnockoutMatch(match: {
   const home = extractTeamPlayers(match.homeTeam);
   const away = extractTeamPlayers(match.awayTeam);
   return [...home.playerIds, ...away.playerIds];
+}
+
+function getPlayersForGroupMatchIds(match: {
+  homeTeam: { members: { player: { id: string } }[] } | null;
+  awayTeam: { members: { player: { id: string } }[] } | null;
+}) {
+  if (!match.homeTeam || !match.awayTeam) return [];
+  return [...extractTeamPlayerIds(match.homeTeam), ...extractTeamPlayerIds(match.awayTeam)];
+}
+
+function getPlayersForKnockoutMatchIds(match: {
+  homeTeam: { members: { player: { id: string } }[] } | null;
+  awayTeam: { members: { player: { id: string } }[] } | null;
+}) {
+  if (!match.homeTeam || !match.awayTeam) return [];
+  return [...extractTeamPlayerIds(match.homeTeam), ...extractTeamPlayerIds(match.awayTeam)];
 }
 
 function isListEligibleGroupMatch(match: {
@@ -485,6 +702,168 @@ function formatKoRoundLabel(round?: number | null, matchNo?: number | null) {
   return round ? `Round ${round}` : "Round";
 }
 
+function buildPlayingFromScheduleMatchItem(match: ScheduleMatchItem): SchedulePlayingItem {
+  return {
+    matchKey: match.key,
+    matchType: match.matchType,
+    categoryCode: match.categoryCode,
+    detail: match.matchType === "GROUP" ? match.label : `${match.label} • ${match.detail}`,
+    homeTeam: {
+      name: match.teams.homeName,
+      players: match.teams.homePlayers,
+    },
+    awayTeam: {
+      name: match.teams.awayName,
+      players: match.teams.awayPlayers,
+    },
+  };
+}
+
+async function loadForcedRankMap(stage: ScheduleStage) {
+  const forced = await prisma.forcedMatchPriority.findMany({
+    where: { matchType: stage === "GROUP" ? "GROUP" : "KNOCKOUT" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: {
+      matchType: true,
+      matchId: true,
+    },
+  });
+  const rankMap = new Map<string, number>();
+  forced.forEach((entry, index) => {
+    rankMap.set(buildMatchKey(entry.matchType, entry.matchId), index + 1);
+  });
+  return rankMap;
+}
+
+function getForcedRankFromMap(
+  rankMap: Map<string, number>,
+  stage: ScheduleStage,
+  matchType: MatchType,
+  matchId: string
+) {
+  if (
+    (stage === "GROUP" && matchType !== "GROUP") ||
+    (stage === "KNOCKOUT" && matchType !== "KNOCKOUT")
+  ) {
+    return undefined;
+  }
+  return rankMap.get(buildMatchKey(matchType, matchId));
+}
+
+function buildEligibleGroupItemFromMatch(
+  match: {
+    id: string;
+    status: "SCHEDULED" | "COMPLETED";
+    homeTeamId: string | null;
+    awayTeamId: string | null;
+    group: { name: string; category: { code: CategoryCode } } | null;
+    homeTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
+    awayTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
+  },
+  forcedRank?: number
+) {
+  if (!match.group?.category || !isListEligibleGroupMatch(match)) {
+    return null;
+  }
+  return buildMatchItem({
+    matchType: "GROUP",
+    matchId: match.id,
+    categoryCode: match.group.category.code,
+    label: `Group ${match.group.name}`,
+    detail: "Group Match",
+    homeTeam: match.homeTeam,
+    awayTeam: match.awayTeam,
+    restScore: 0,
+    forcedRank,
+    isForced: typeof forcedRank === "number",
+  });
+}
+
+function buildEligibleKnockoutItemFromMatch(
+  match: {
+    id: string;
+    categoryCode: CategoryCode;
+    series: "A" | "B";
+    round: number;
+    matchNo: number;
+    status: "SCHEDULED" | "COMPLETED";
+    isPublished: boolean;
+    homeTeamId: string | null;
+    awayTeamId: string | null;
+    homeTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
+    awayTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
+  },
+  forcedRank?: number
+) {
+  if (!isListEligibleKnockoutMatch(match)) {
+    return null;
+  }
+  return buildMatchItem({
+    matchType: "KNOCKOUT",
+    matchId: match.id,
+    categoryCode: match.categoryCode,
+    label: `Series ${match.series}`,
+    detail: `${formatKoRoundLabel(match.round, match.matchNo)} • Match ${match.matchNo}`,
+    series: match.series,
+    round: match.round,
+    matchNo: match.matchNo,
+    homeTeam: match.homeTeam,
+    awayTeam: match.awayTeam,
+    restScore: 0,
+    forcedRank,
+    isForced: typeof forcedRank === "number",
+  });
+}
+
+function buildManualBlockedGroupItem(match: {
+  id: string;
+  group: { name: string; category: { code: CategoryCode } } | null;
+  homeTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
+  awayTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
+}) {
+  if (!match.group?.category) return null;
+  return buildMatchItem({
+    matchType: "GROUP",
+    matchId: match.id,
+    categoryCode: match.group.category.code,
+    label: `Group ${match.group.name}`,
+    detail: "Group Match",
+    homeTeam: match.homeTeam,
+    awayTeam: match.awayTeam,
+    restScore: 0,
+    blockReason: "MANUAL_ABSENT",
+    blockReasonLabel: "injury / absent",
+    canUnblock: true,
+  });
+}
+
+function buildManualBlockedKnockoutItem(match: {
+  id: string;
+  categoryCode: CategoryCode;
+  series: "A" | "B";
+  round: number;
+  matchNo: number;
+  homeTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
+  awayTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
+}) {
+  return buildMatchItem({
+    matchType: "KNOCKOUT",
+    matchId: match.id,
+    categoryCode: match.categoryCode,
+    label: `Series ${match.series}`,
+    detail: `${formatKoRoundLabel(match.round, match.matchNo)} • Match ${match.matchNo}`,
+    series: match.series,
+    round: match.round,
+    matchNo: match.matchNo,
+    homeTeam: match.homeTeam,
+    awayTeam: match.awayTeam,
+    restScore: 0,
+    blockReason: "MANUAL_ABSENT",
+    blockReasonLabel: "injury / absent",
+    canUnblock: true,
+  });
+}
+
 function asObjectRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
@@ -593,7 +972,7 @@ async function listRefereeNotifications(
   limit = 20
 ): Promise<RefereeNotificationItem[]> {
   const logs = await prisma.scheduleActionLog.findMany({
-    where: { action: "REFEREE_SCORE_SUBMITTED" },
+    where: { action: { in: [...REFEREE_SCORE_SUBMITTED_ACTIONS] } },
     orderBy: { createdAt: "desc" },
     take: Math.max(limit * 6, 120),
   });
@@ -785,28 +1164,28 @@ async function buildLastBatchData(matchKeys: string[]): Promise<LastBatchPayload
   const groupMatches = groupIds.length
     ? await prisma.match.findMany({
         where: { id: { in: groupIds } },
-        include: {
-          homeTeam: { include: { members: { include: { player: true } } } },
-          awayTeam: { include: { members: { include: { player: true } } } },
+        select: {
+          homeTeam: scheduleTeamIdOnlySelect,
+          awayTeam: scheduleTeamIdOnlySelect,
         },
       })
     : [];
   const knockoutMatches = knockoutIds.length
     ? await prisma.knockoutMatch.findMany({
         where: { id: { in: knockoutIds } },
-        include: {
-          homeTeam: { include: { members: { include: { player: true } } } },
-          awayTeam: { include: { members: { include: { player: true } } } },
+        select: {
+          homeTeam: scheduleTeamIdOnlySelect,
+          awayTeam: scheduleTeamIdOnlySelect,
         },
       })
     : [];
 
   const playerIds = new Set<string>();
   for (const match of groupMatches) {
-    for (const id of getPlayersForGroupMatch(match)) playerIds.add(id);
+    for (const id of getPlayersForGroupMatchIds(match)) playerIds.add(id);
   }
   for (const match of knockoutMatches) {
-    for (const id of getPlayersForKnockoutMatch(match)) playerIds.add(id);
+    for (const id of getPlayersForKnockoutMatchIds(match)) playerIds.add(id);
   }
 
   return {
@@ -832,17 +1211,34 @@ async function updateLastBatch(configId: string, matchKey: string) {
 async function getInPlayPlayerIds(stage: ScheduleStage) {
   const assignments = await prisma.courtAssignment.findMany({
     where: { status: "ACTIVE", stage },
-    include: {
+    select: {
+      matchType: true,
       groupMatch: {
-        include: {
-          homeTeam: { include: { members: { include: { player: true } } } },
-          awayTeam: { include: { members: { include: { player: true } } } },
+        select: {
+          homeTeam: {
+            select: {
+              members: { select: { player: { select: { id: true } } } },
+            },
+          },
+          awayTeam: {
+            select: {
+              members: { select: { player: { select: { id: true } } } },
+            },
+          },
         },
       },
       knockoutMatch: {
-        include: {
-          homeTeam: { include: { members: { include: { player: true } } } },
-          awayTeam: { include: { members: { include: { player: true } } } },
+        select: {
+          homeTeam: {
+            select: {
+              members: { select: { player: { select: { id: true } } } },
+            },
+          },
+          awayTeam: {
+            select: {
+              members: { select: { player: { select: { id: true } } } },
+            },
+          },
         },
       },
     },
@@ -851,10 +1247,10 @@ async function getInPlayPlayerIds(stage: ScheduleStage) {
   const playerIds = new Set<string>();
   for (const assignment of assignments) {
     if (assignment.matchType === "GROUP" && assignment.groupMatch) {
-      getPlayersForGroupMatch(assignment.groupMatch).forEach((id) => playerIds.add(id));
+      getPlayersForGroupMatchIds(assignment.groupMatch).forEach((id) => playerIds.add(id));
     }
     if (assignment.matchType === "KNOCKOUT" && assignment.knockoutMatch) {
-      getPlayersForKnockoutMatch(assignment.knockoutMatch).forEach((id) =>
+      getPlayersForKnockoutMatchIds(assignment.knockoutMatch).forEach((id) =>
         playerIds.add(id)
       );
     }
@@ -868,14 +1264,14 @@ async function getRecentCompletedPlayerIds(stage: ScheduleStage, limit = 5) {
       where: { status: "COMPLETED", stage: "GROUP" },
       orderBy: { completedAt: "desc" },
       take: limit,
-      include: {
-        homeTeam: { include: { members: { include: { player: true } } } },
-        awayTeam: { include: { members: { include: { player: true } } } },
+      select: {
+        homeTeam: scheduleTeamIdOnlySelect,
+        awayTeam: scheduleTeamIdOnlySelect,
       },
     });
     const playerIds = new Set<string>();
     for (const match of groupMatches) {
-      getPlayersForGroupMatch(match).forEach((id) => playerIds.add(id));
+      getPlayersForGroupMatchIds(match).forEach((id) => playerIds.add(id));
     }
     return playerIds;
   }
@@ -884,14 +1280,14 @@ async function getRecentCompletedPlayerIds(stage: ScheduleStage, limit = 5) {
     where: { status: "COMPLETED" },
     orderBy: { completedAt: "desc" },
     take: limit,
-    include: {
-      homeTeam: { include: { members: { include: { player: true } } } },
-      awayTeam: { include: { members: { include: { player: true } } } },
+    select: {
+      homeTeam: scheduleTeamIdOnlySelect,
+      awayTeam: scheduleTeamIdOnlySelect,
     },
   });
   const playerIds = new Set<string>();
   for (const match of knockoutMatches) {
-    getPlayersForKnockoutMatch(match).forEach((id) => playerIds.add(id));
+    getPlayersForKnockoutMatchIds(match).forEach((id) => playerIds.add(id));
   }
   return playerIds;
 }
@@ -2545,7 +2941,7 @@ export async function clearRefereeNotifications(stage: ScheduleStage) {
   if (!parsedStage.success) return { error: "Invalid stage." };
 
   const logs = await prisma.scheduleActionLog.findMany({
-    where: { action: "REFEREE_SCORE_SUBMITTED" },
+    where: { action: { in: [...REFEREE_SCORE_SUBMITTED_ACTIONS] } },
     select: { id: true, payload: true },
   });
 
@@ -2578,7 +2974,7 @@ export async function toggleRefereeNotificationRead(
     where: { id: notificationId },
     select: { id: true, action: true, payload: true },
   });
-  if (!log || log.action !== "REFEREE_SCORE_SUBMITTED") {
+  if (!log || !isRefereeScoreSubmittedAction(log.action)) {
     return { error: "Notification not found." };
   }
 
@@ -2612,7 +3008,6 @@ export async function toggleAutoSchedule(stage: ScheduleStage, enabled: boolean)
     return { error: "Auto Schedule function is disabled in Utilities." };
   }
 
-  const before = await getBroadcastViewSignature(stage);
   const config = await ensureScheduleSetup(stage);
   await prisma.scheduleConfig.update({
     where: { id: config.id },
@@ -2622,14 +3017,10 @@ export async function toggleAutoSchedule(stage: ScheduleStage, enabled: boolean)
     data: { action: "AUTO_SCHEDULE", payload: { stage, enabled } },
   });
 
-  if (enabled) {
-    await getScheduleState({ stage });
-  }
-
-  await publishBroadcastRefreshIfViewChanged({
+  await publishBroadcastRefresh({
     stage,
     source: "schedule-action",
-    before,
+    changeType: "both",
   });
   revalidatePath("/schedule");
   await invalidatePresentingStage(stage);
@@ -2656,79 +3047,155 @@ export async function lockCourt(courtId: string, locked: boolean, stage: Schedul
   return { ok: true };
 }
 
-export async function backToQueue(courtId: string, stage: ScheduleStage) {
+export async function backToQueue(
+  courtId: string,
+  stage: ScheduleStage
+): Promise<ScheduleActionResponse> {
+  const perfEntries: PerfEntry[] = [];
   const guard = await requireAdmin({ onFail: "return" });
   if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
+  const readStartedAt = startPerfTimer();
   const config = await ensureScheduleSetup(stage);
   const assignment = await prisma.courtAssignment.findFirst({
     where: { courtId, status: "ACTIVE", stage },
+    select: assignmentScheduleSelect,
   });
-  if (!assignment) return { ok: true };
-
-  if (!config.autoScheduleEnabled) {
-    const before = await getBroadcastViewSignature(stage);
-    await prisma.courtAssignment.update({
-      where: { id: assignment.id },
-      data: { status: "CANCELED", clearedAt: new Date() },
-    });
-    await prisma.scheduleActionLog.create({
-      data: { action: "BACK_TO_QUEUE", payload: { stage, courtId } },
-    });
-    await publishBroadcastRefreshIfViewChanged({
-      stage,
-      source: "schedule-action",
-      before,
-    });
-    revalidatePath("/schedule");
-    await invalidatePresentingStage(stage);
-    return { ok: true };
+  stopPerfTimer(readStartedAt, perfEntries, "validate-read");
+  if (!assignment) {
+    logHotActionPerf({ action: "backToQueue", stage, entries: perfEntries, meta: { skipped: true } });
+    return { ok: true, action: "back-to-queue", stage, delta: {} };
   }
 
-  return swapBackToQueue(courtId, stage);
+  if (config.autoScheduleEnabled) {
+    const delegateStartedAt = startPerfTimer();
+    const result = await swapBackToQueue(courtId, stage);
+    stopPerfTimer(delegateStartedAt, perfEntries, "delegate-swap");
+    logHotActionPerf({ action: "backToQueue", stage, entries: perfEntries, meta: { delegated: true } });
+    return result;
+  }
+
+  const removedPlayerIds =
+    assignment.matchType === "GROUP" && assignment.groupMatch
+      ? getPlayersForGroupMatch(assignment.groupMatch)
+      : assignment.matchType === "KNOCKOUT" && assignment.knockoutMatch
+        ? getPlayersForKnockoutMatch(assignment.knockoutMatch)
+        : [];
+  const writeStartedAt = startPerfTimer();
+  await prisma.courtAssignment.update({
+    where: { id: assignment.id },
+    data: { status: "CANCELED", clearedAt: new Date() },
+  });
+  await prisma.scheduleActionLog.create({
+    data: { action: "BACK_TO_QUEUE", payload: { stage, courtId } },
+  });
+  stopPerfTimer(writeStartedAt, perfEntries, "write");
+
+  const deltaStartedAt = startPerfTimer();
+  const removedMatchKey =
+    assignment.matchType === "GROUP" && assignment.groupMatchId
+      ? buildMatchKey("GROUP", assignment.groupMatchId)
+      : assignment.matchType === "KNOCKOUT" && assignment.knockoutMatchId
+        ? buildMatchKey("KNOCKOUT", assignment.knockoutMatchId)
+        : null;
+  const addEligible: ScheduleMatchItem[] = [];
+  const uncheckedPlayerIds = await loadUncheckedPlayerIds();
+  let forcedRankMap: Map<string, number> | null = null;
+  const getForcedRank = async (matchType: MatchType, matchId: string) => {
+    if (!forcedRankMap) {
+      forcedRankMap = await loadForcedRankMap(stage);
+    }
+    return getForcedRankFromMap(forcedRankMap, stage, matchType, matchId);
+  };
+
+  if (assignment.matchType === "GROUP" && assignment.groupMatchId && assignment.groupMatch) {
+    const playerIds = getPlayersForGroupMatch(assignment.groupMatch);
+    const blocked = await prisma.blockedMatch.findFirst({
+      where: { matchType: "GROUP", groupMatchId: assignment.groupMatchId },
+      select: { id: true },
+    });
+    if (!blocked && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
+      const forcedRank = await getForcedRank("GROUP", assignment.groupMatchId);
+      const item = buildEligibleGroupItemFromMatch(assignment.groupMatch, forcedRank);
+      if (item) addEligible.push(item);
+    }
+  }
+
+  if (assignment.matchType === "KNOCKOUT" && assignment.knockoutMatchId && assignment.knockoutMatch) {
+    const playerIds = getPlayersForKnockoutMatch(assignment.knockoutMatch);
+    const blocked = await prisma.blockedMatch.findFirst({
+      where: { matchType: "KNOCKOUT", knockoutMatchId: assignment.knockoutMatchId },
+      select: { id: true },
+    });
+    if (!blocked && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
+      const forcedRank = await getForcedRank("KNOCKOUT", assignment.knockoutMatchId);
+      const item = buildEligibleKnockoutItemFromMatch(assignment.knockoutMatch, forcedRank);
+      if (item) addEligible.push(item);
+    }
+  }
+  stopPerfTimer(deltaStartedAt, perfEntries, "delta-build");
+
+  const invalidateStartedAt = startPerfTimer();
+  await invalidatePresentingStage(stage);
+  stopPerfTimer(invalidateStartedAt, perfEntries, "cache-invalidate");
+
+  const broadcastDispatchStartedAt = startPerfTimer();
+  dispatchBroadcastRefresh({
+    stage,
+    source: "schedule-action",
+    changeType: "both",
+  });
+  stopPerfTimer(broadcastDispatchStartedAt, perfEntries, "broadcast-dispatch");
+  logHotActionPerf({ action: "backToQueue", stage, entries: perfEntries });
+
+  return {
+    ok: true,
+    action: "back-to-queue",
+    stage,
+    delta: {
+      courtPatches: [{ courtId, playing: null }],
+      addEligible,
+      removeInPlayPlayerIds: removedPlayerIds,
+      changedMatchKeys: {
+        cleared: removedMatchKey ? [removedMatchKey] : [],
+      },
+    },
+  };
 }
 
-export async function swapBackToQueue(courtId: string, stage: ScheduleStage) {
+export async function swapBackToQueue(
+  courtId: string,
+  stage: ScheduleStage
+): Promise<ScheduleActionResponse> {
+  const perfEntries: PerfEntry[] = [];
   const guard = await requireAdmin({ onFail: "return" });
   if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
+  const readStartedAt = startPerfTimer();
   const config = await ensureScheduleSetup(stage);
   const assignment = await prisma.courtAssignment.findFirst({
     where: { courtId, status: "ACTIVE", stage },
+    select: assignmentScheduleSelect,
   });
-  if (!assignment) return { ok: true };
-  const before = await getBroadcastViewSignature(stage);
+  stopPerfTimer(readStartedAt, perfEntries, "validate-read");
+  if (!assignment) {
+    logHotActionPerf({ action: "swapBackToQueue", stage, entries: perfEntries, meta: { skipped: true } });
+    return { ok: true, action: "swap-back-to-queue", stage, delta: {} };
+  }
 
   const inPlayPlayerIds = await getInPlayPlayerIds(stage);
-  if (assignment.matchType === "GROUP" && assignment.groupMatchId) {
-    const match = await prisma.match.findUnique({
-      where: { id: assignment.groupMatchId },
-      include: {
-        homeTeam: { include: { members: { include: { player: true } } } },
-        awayTeam: { include: { members: { include: { player: true } } } },
-      },
-    });
-    if (match) {
-      getPlayersForGroupMatch(match).forEach((id) => inPlayPlayerIds.delete(id));
-    }
+  if (assignment.matchType === "GROUP" && assignment.groupMatch) {
+    getPlayersForGroupMatch(assignment.groupMatch).forEach((id) => inPlayPlayerIds.delete(id));
   }
-  if (assignment.matchType === "KNOCKOUT" && assignment.knockoutMatchId) {
-    const match = await prisma.knockoutMatch.findUnique({
-      where: { id: assignment.knockoutMatchId },
-      include: {
-        homeTeam: { include: { members: { include: { player: true } } } },
-        awayTeam: { include: { members: { include: { player: true } } } },
-      },
-    });
-    if (match) {
-      getPlayersForKnockoutMatch(match).forEach((id) => inPlayPlayerIds.delete(id));
-    }
+  if (assignment.matchType === "KNOCKOUT" && assignment.knockoutMatch) {
+    getPlayersForKnockoutMatch(assignment.knockoutMatch).forEach((id) => inPlayPlayerIds.delete(id));
   }
 
+  const queueReadStartedAt = startPerfTimer();
   const eligibleSorted = await buildListEligibleMatches({
     stage,
     category: "ALL",
@@ -2739,26 +3206,99 @@ export async function swapBackToQueue(courtId: string, stage: ScheduleStage) {
   const next = eligibleSorted.find((match) =>
     isAssignableNow(match.teams.playerIds, inPlayPlayerIds)
   );
+  stopPerfTimer(queueReadStartedAt, perfEntries, "queue-read");
 
+  const writeStartedAt = startPerfTimer();
   await prisma.courtAssignment.update({
     where: { id: assignment.id },
     data: { status: "CANCELED", clearedAt: new Date() },
   });
+  stopPerfTimer(writeStartedAt, perfEntries, "write-clear");
+
+  const deltaStartedAt = startPerfTimer();
+  const removedMatchKey =
+    assignment.matchType === "GROUP" && assignment.groupMatchId
+      ? buildMatchKey("GROUP", assignment.groupMatchId)
+      : assignment.matchType === "KNOCKOUT" && assignment.knockoutMatchId
+        ? buildMatchKey("KNOCKOUT", assignment.knockoutMatchId)
+        : null;
+  const addEligible: ScheduleMatchItem[] = [];
+  const uncheckedPlayerIds = await loadUncheckedPlayerIds();
+  let forcedRankMap: Map<string, number> | null = null;
+  const getForcedRank = async (matchType: MatchType, matchId: string) => {
+    if (!forcedRankMap) {
+      forcedRankMap = await loadForcedRankMap(stage);
+    }
+    return getForcedRankFromMap(forcedRankMap, stage, matchType, matchId);
+  };
+
+  if (assignment.matchType === "GROUP" && assignment.groupMatchId && assignment.groupMatch) {
+    const playerIds = getPlayersForGroupMatch(assignment.groupMatch);
+    const blocked = await prisma.blockedMatch.findFirst({
+      where: { matchType: "GROUP", groupMatchId: assignment.groupMatchId },
+      select: { id: true },
+    });
+    if (!blocked && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
+      const forcedRank = await getForcedRank("GROUP", assignment.groupMatchId);
+      const item = buildEligibleGroupItemFromMatch(assignment.groupMatch, forcedRank);
+      if (item) addEligible.push(item);
+    }
+  }
+  if (assignment.matchType === "KNOCKOUT" && assignment.knockoutMatchId && assignment.knockoutMatch) {
+    const playerIds = getPlayersForKnockoutMatch(assignment.knockoutMatch);
+    const blocked = await prisma.blockedMatch.findFirst({
+      where: { matchType: "KNOCKOUT", knockoutMatchId: assignment.knockoutMatchId },
+      select: { id: true },
+    });
+    if (!blocked && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
+      const forcedRank = await getForcedRank("KNOCKOUT", assignment.knockoutMatchId);
+      const item = buildEligibleKnockoutItemFromMatch(assignment.knockoutMatch, forcedRank);
+      if (item) addEligible.push(item);
+    }
+  }
+  stopPerfTimer(deltaStartedAt, perfEntries, "delta-build");
 
   if (!next) {
+    const emptyWriteStartedAt = startPerfTimer();
     await prisma.scheduleActionLog.create({
       data: { action: "BACK_TO_QUEUE_EMPTY", payload: { stage, courtId } },
     });
-    await publishBroadcastRefreshIfViewChanged({
+    stopPerfTimer(emptyWriteStartedAt, perfEntries, "write-log");
+
+    const invalidateStartedAt = startPerfTimer();
+    await invalidatePresentingStage(stage);
+    stopPerfTimer(invalidateStartedAt, perfEntries, "cache-invalidate");
+
+    const broadcastDispatchStartedAt = startPerfTimer();
+    dispatchBroadcastRefresh({
       stage,
       source: "schedule-action",
-      before,
+      changeType: "both",
     });
-    revalidatePath("/schedule");
-    await invalidatePresentingStage(stage);
-    return { error: "No assignable match available; court is now empty." };
+    stopPerfTimer(broadcastDispatchStartedAt, perfEntries, "broadcast-dispatch");
+    logHotActionPerf({
+      action: "swapBackToQueue",
+      stage,
+      entries: perfEntries,
+      meta: { assignedReplacement: false },
+    });
+    return {
+      ok: true,
+      action: "swap-back-to-queue",
+      stage,
+      delta: {
+        courtPatches: [{ courtId, playing: null }],
+        addEligible,
+        inPlayPlayerIds: Array.from(inPlayPlayerIds),
+        changedMatchKeys: {
+          cleared: removedMatchKey ? [removedMatchKey] : [],
+        },
+        infoMessage: "No assignable match available; court is now empty.",
+      },
+    };
   }
 
+  const assignWriteStartedAt = startPerfTimer();
   await prisma.courtAssignment.create({
     data: {
       courtId,
@@ -2768,30 +3308,65 @@ export async function swapBackToQueue(courtId: string, stage: ScheduleStage) {
       knockoutMatchId: next.matchType === "KNOCKOUT" ? next.matchId : null,
     },
   });
-
   await prisma.scheduleActionLog.create({
     data: {
       action: "BACK_TO_QUEUE_SWAP",
       payload: { stage, courtId, matchType: next.matchType, matchId: next.matchId },
     },
   });
+  stopPerfTimer(assignWriteStartedAt, perfEntries, "write-assign");
 
+  const lastBatchStartedAt = startPerfTimer();
   await updateLastBatch(config.id, buildMatchKey(next.matchType, next.matchId));
-  await publishBroadcastRefreshIfViewChanged({
+  stopPerfTimer(lastBatchStartedAt, perfEntries, "last-batch");
+  next.teams.playerIds.forEach((id) => inPlayPlayerIds.add(id));
+
+  const invalidateStartedAt = startPerfTimer();
+  await invalidatePresentingStage(stage);
+  stopPerfTimer(invalidateStartedAt, perfEntries, "cache-invalidate");
+
+  const broadcastDispatchStartedAt = startPerfTimer();
+  dispatchBroadcastRefresh({
     stage,
     source: "schedule-action",
-    before,
+    changeType: "both",
   });
-  revalidatePath("/schedule");
-  await invalidatePresentingStage(stage);
-  return { ok: true };
+  stopPerfTimer(broadcastDispatchStartedAt, perfEntries, "broadcast-dispatch");
+  logHotActionPerf({
+    action: "swapBackToQueue",
+    stage,
+    entries: perfEntries,
+    meta: { assignedReplacement: true },
+  });
+  return {
+    ok: true,
+    action: "swap-back-to-queue",
+    stage,
+    delta: {
+      courtPatches: [
+        {
+          courtId,
+          playing: buildPlayingFromScheduleMatchItem(next),
+        },
+      ],
+      addEligible,
+      removeEligibleKeys: [next.key],
+      inPlayPlayerIds: Array.from(inPlayPlayerIds),
+      addInPlayPlayerIds: next.teams.playerIds,
+      changedMatchKeys: {
+        assigned: [next.key],
+        cleared: removedMatchKey ? [removedMatchKey] : [],
+      },
+    },
+  };
 }
 
 export async function blockMatch(
   matchType: MatchType,
   matchId: string,
   stage: ScheduleStage
-) {
+): Promise<ScheduleActionResponse> {
+  const perfEntries: PerfEntry[] = [];
   const guard = await requireAdmin({ onFail: "return" });
   if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(matchType);
@@ -2800,9 +3375,33 @@ export async function blockMatch(
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (matchType !== stage) return { error: "Stage mismatch." };
 
-  const before = await getBroadcastViewSignature(stage);
-  const config = await ensureScheduleSetup(stage);
+  const readStartedAt = startPerfTimer();
+  await ensureScheduleSetup(stage);
+  const targetMatchKey = buildMatchKey(matchType, matchId);
+  const activeAssignments = await prisma.courtAssignment.findMany({
+    where:
+      matchType === "GROUP"
+        ? { status: "ACTIVE", stage, groupMatchId: matchId }
+        : { status: "ACTIVE", stage, knockoutMatchId: matchId },
+    select: { courtId: true },
+  });
+  const groupMatch =
+    matchType === "GROUP"
+      ? await prisma.match.findUnique({
+          where: { id: matchId },
+          select: scheduleGroupMatchSelect,
+        })
+      : null;
+  const knockoutMatch =
+    matchType === "KNOCKOUT"
+      ? await prisma.knockoutMatch.findUnique({
+          where: { id: matchId },
+          select: scheduleKnockoutMatchSelect,
+        })
+      : null;
+  stopPerfTimer(readStartedAt, perfEntries, "validate-read");
 
+  const writeStartedAt = startPerfTimer();
   await prisma.blockedMatch.deleteMany({
     where:
       matchType === "GROUP"
@@ -2827,24 +3426,72 @@ export async function blockMatch(
   await prisma.scheduleActionLog.create({
     data: { action: "BLOCK_MATCH", payload: { stage, matchType, matchId } },
   });
-  if (config.autoScheduleEnabled) {
-    await getScheduleState({ stage });
+  stopPerfTimer(writeStartedAt, perfEntries, "write");
+
+  const deltaStartedAt = startPerfTimer();
+  const addBlocked: ScheduleMatchItem[] = [];
+  if (groupMatch) {
+    const item = buildManualBlockedGroupItem(groupMatch);
+    if (item) addBlocked.push(item);
+  } else if (knockoutMatch) {
+    addBlocked.push(buildManualBlockedKnockoutItem(knockoutMatch));
   }
-  await publishBroadcastRefreshIfViewChanged({
+  const removeInPlayPlayerIds =
+    activeAssignments.length > 0
+      ? groupMatch
+        ? getPlayersForGroupMatch(groupMatch)
+        : knockoutMatch
+          ? getPlayersForKnockoutMatch(knockoutMatch)
+          : []
+      : [];
+  stopPerfTimer(deltaStartedAt, perfEntries, "delta-build");
+
+  const invalidateStartedAt = startPerfTimer();
+  await invalidatePresentingStage(stage);
+  stopPerfTimer(invalidateStartedAt, perfEntries, "cache-invalidate");
+
+  const broadcastDispatchStartedAt = startPerfTimer();
+  dispatchBroadcastRefresh({
     stage,
     source: "schedule-action",
-    before,
+    changeType: "both",
   });
-  revalidatePath("/schedule");
-  await invalidatePresentingStage(stage);
-  return { ok: true };
+  stopPerfTimer(broadcastDispatchStartedAt, perfEntries, "broadcast-dispatch");
+  logHotActionPerf({
+    action: "blockMatch",
+    stage,
+    entries: perfEntries,
+    meta: {
+      affectedCourts: activeAssignments.length,
+    },
+  });
+
+  return {
+    ok: true,
+    action: "block",
+    stage,
+    delta: {
+      courtPatches: activeAssignments.map((assignment) => ({
+        courtId: assignment.courtId,
+        playing: null,
+      })),
+      removeEligibleKeys: [targetMatchKey],
+      addBlocked,
+      removeInPlayPlayerIds,
+      changedMatchKeys: {
+        blocked: [targetMatchKey],
+        cleared: activeAssignments.length > 0 ? [targetMatchKey] : [],
+      },
+    },
+  };
 }
 
 export async function unblockMatch(
   matchType: MatchType,
   matchId: string,
   stage: ScheduleStage
-) {
+): Promise<ScheduleActionResponse> {
+  const perfEntries: PerfEntry[] = [];
   const guard = await requireAdmin({ onFail: "return" });
   if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(matchType);
@@ -2852,32 +3499,49 @@ export async function unblockMatch(
   if (!parsed.success) return { error: "Invalid match type." };
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (matchType !== stage) return { error: "Stage mismatch." };
+
+  const readStartedAt = startPerfTimer();
+  const targetMatchKey = buildMatchKey(matchType, matchId);
   const uncheckedPlayerIds = await loadUncheckedPlayerIds();
+  let addEligible: ScheduleMatchItem[] = [];
+  let forcedRankMap: Map<string, number> | null = null;
+  const getForcedRank = async (nextMatchType: MatchType, nextMatchId: string) => {
+    if (!forcedRankMap) {
+      forcedRankMap = await loadForcedRankMap(stage);
+    }
+    return getForcedRankFromMap(forcedRankMap, stage, nextMatchType, nextMatchId);
+  };
+
   if (matchType === "GROUP") {
     const match = await prisma.match.findUnique({
       where: { id: matchId },
-      include: {
-        homeTeam: { include: { members: { include: { player: true } } } },
-        awayTeam: { include: { members: { include: { player: true } } } },
-      },
+      select: scheduleGroupMatchSelect,
     });
     if (match && hasUncheckedPlayers(getPlayersForGroupMatch(match), uncheckedPlayerIds)) {
       return { error: "Match is pending checked in." };
     }
+    if (match) {
+      const forcedRank = await getForcedRank("GROUP", matchId);
+      const item = buildEligibleGroupItemFromMatch(match, forcedRank);
+      if (item) addEligible = [item];
+    }
   } else {
     const match = await prisma.knockoutMatch.findUnique({
       where: { id: matchId },
-      include: {
-        homeTeam: { include: { members: { include: { player: true } } } },
-        awayTeam: { include: { members: { include: { player: true } } } },
-      },
+      select: scheduleKnockoutMatchSelect,
     });
     if (match && hasUncheckedPlayers(getPlayersForKnockoutMatch(match), uncheckedPlayerIds)) {
       return { error: "Match is pending checked in." };
     }
+    if (match) {
+      const forcedRank = await getForcedRank("KNOCKOUT", matchId);
+      const item = buildEligibleKnockoutItemFromMatch(match, forcedRank);
+      if (item) addEligible = [item];
+    }
   }
-  const before = await getBroadcastViewSignature(stage);
+  stopPerfTimer(readStartedAt, perfEntries, "validate-read");
 
+  const writeStartedAt = startPerfTimer();
   await prisma.blockedMatch.deleteMany({
     where:
       matchType === "GROUP"
@@ -2887,47 +3551,80 @@ export async function unblockMatch(
   await prisma.scheduleActionLog.create({
     data: { action: "UNBLOCK_MATCH", payload: { stage, matchType, matchId } },
   });
-  await publishBroadcastRefreshIfViewChanged({
+  stopPerfTimer(writeStartedAt, perfEntries, "write");
+
+  const deltaStartedAt = startPerfTimer();
+  stopPerfTimer(deltaStartedAt, perfEntries, "delta-build");
+
+  const invalidateStartedAt = startPerfTimer();
+  await invalidatePresentingStage(stage);
+  stopPerfTimer(invalidateStartedAt, perfEntries, "cache-invalidate");
+
+  const broadcastDispatchStartedAt = startPerfTimer();
+  dispatchBroadcastRefresh({
     stage,
     source: "schedule-action",
-    before,
+    changeType: "upcoming",
   });
-  revalidatePath("/schedule");
-  await invalidatePresentingStage(stage);
-  return { ok: true };
+  stopPerfTimer(broadcastDispatchStartedAt, perfEntries, "broadcast-dispatch");
+  logHotActionPerf({ action: "unblockMatch", stage, entries: perfEntries });
+
+  return {
+    ok: true,
+    action: "unblock",
+    stage,
+    delta: {
+      removeBlockedKeys: [targetMatchKey],
+      addEligible,
+      changedMatchKeys: {
+        unblocked: [targetMatchKey],
+      },
+    },
+  };
 }
 
-export async function markCompleted(courtId: string, stage: ScheduleStage) {
+export async function markCompleted(
+  courtId: string,
+  stage: ScheduleStage
+): Promise<ScheduleActionResponse> {
+  const perfEntries: PerfEntry[] = [];
   const guard = await requireAdmin({ onFail: "return" });
   if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
 
-  const config = await ensureScheduleSetup(stage);
+  const readStartedAt = startPerfTimer();
+  await ensureScheduleSetup(stage);
   const assignment = await prisma.courtAssignment.findFirst({
     where: { courtId, status: "ACTIVE", stage },
+    select: assignmentPlayerIdOnlySelect,
   });
-  if (!assignment) return { ok: true };
-  const before = await getBroadcastViewSignature(stage);
+  stopPerfTimer(readStartedAt, perfEntries, "validate-read");
+  if (!assignment) {
+    logHotActionPerf({ action: "markCompleted", stage, entries: perfEntries, meta: { skipped: true } });
+    return { ok: true, action: "completed", stage, delta: {} };
+  }
+
+  const completedMatchKey =
+    assignment.matchType === "GROUP" && assignment.groupMatchId
+      ? buildMatchKey("GROUP", assignment.groupMatchId)
+      : assignment.matchType === "KNOCKOUT" && assignment.knockoutMatchId
+        ? buildMatchKey("KNOCKOUT", assignment.knockoutMatchId)
+        : null;
 
   if (assignment.matchType === "GROUP" && assignment.groupMatchId) {
-    const match = await prisma.match.findUnique({
-      where: { id: assignment.groupMatchId },
-    });
-    if (!match || !isCompletedMatch(match)) {
+    if (!assignment.groupMatch || !isCompletedMatch(assignment.groupMatch)) {
       return { error: "Match not completed yet." };
     }
   }
 
   if (assignment.matchType === "KNOCKOUT" && assignment.knockoutMatchId) {
-    const match = await prisma.knockoutMatch.findUnique({
-      where: { id: assignment.knockoutMatchId },
-    });
-    if (!match || !isCompletedMatch(match)) {
+    if (!assignment.knockoutMatch || !isCompletedMatch(assignment.knockoutMatch)) {
       return { error: "Match not completed yet." };
     }
   }
 
+  const writeStartedAt = startPerfTimer();
   await prisma.courtAssignment.update({
     where: { id: assignment.id },
     data: { status: "CLEARED", clearedAt: new Date() },
@@ -2935,19 +3632,43 @@ export async function markCompleted(courtId: string, stage: ScheduleStage) {
   await prisma.scheduleActionLog.create({
     data: { action: "MARK_COMPLETED", payload: { stage, courtId } },
   });
+  stopPerfTimer(writeStartedAt, perfEntries, "write");
 
-  if (config.autoScheduleEnabled) {
-    await getScheduleState({ stage });
-  }
+  const deltaStartedAt = startPerfTimer();
+  const removeInPlayPlayerIds =
+    assignment.matchType === "GROUP" && assignment.groupMatch
+      ? getPlayersForGroupMatchIds(assignment.groupMatch)
+      : assignment.matchType === "KNOCKOUT" && assignment.knockoutMatch
+        ? getPlayersForKnockoutMatchIds(assignment.knockoutMatch)
+        : [];
+  stopPerfTimer(deltaStartedAt, perfEntries, "delta-build");
 
-  await publishBroadcastRefreshIfViewChanged({
+  const invalidateStartedAt = startPerfTimer();
+  await invalidatePresentingStage(stage);
+  stopPerfTimer(invalidateStartedAt, perfEntries, "cache-invalidate");
+
+  const broadcastDispatchStartedAt = startPerfTimer();
+  dispatchBroadcastRefresh({
     stage,
     source: "schedule-action",
-    before,
+    changeType: "both",
   });
-  revalidatePath("/schedule");
-  await invalidatePresentingStage(stage);
-  return { ok: true };
+  stopPerfTimer(broadcastDispatchStartedAt, perfEntries, "broadcast-dispatch");
+  logHotActionPerf({ action: "markCompleted", stage, entries: perfEntries });
+
+  return {
+    ok: true,
+    action: "completed",
+    stage,
+    delta: {
+      courtPatches: [{ courtId, playing: null }],
+      removeInPlayPlayerIds,
+      changedMatchKeys: {
+        cleared: completedMatchKey ? [completedMatchKey] : [],
+        completed: completedMatchKey ? [completedMatchKey] : [],
+      },
+    },
+  };
 }
 
 export async function assignNext(params: {
@@ -2955,7 +3676,8 @@ export async function assignNext(params: {
   matchType: MatchType;
   matchId: string;
   stage: ScheduleStage;
-}) {
+}): Promise<ScheduleActionResponse> {
+  const perfEntries: PerfEntry[] = [];
   const guard = await requireAdmin({ onFail: "return" });
   if (guard) return guard;
   const parsed = matchTypeSchema.safeParse(params.matchType);
@@ -2964,19 +3686,29 @@ export async function assignNext(params: {
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (params.matchType !== params.stage) return { error: "Stage mismatch." };
 
+  const readStartedAt = startPerfTimer();
   const config = await ensureScheduleSetup(params.stage);
   const courtLock = await prisma.courtStageLock.findUnique({
     where: { courtId_stage: { courtId: params.courtId, stage: params.stage } },
   });
   if (courtLock?.locked) return { error: "Court is locked." };
-  const before = await getBroadcastViewSignature(params.stage);
 
-  await prisma.courtAssignment.updateMany({
+  const existingCourtAssignments = await prisma.courtAssignment.findMany({
     where: { courtId: params.courtId, status: "ACTIVE", stage: params.stage },
-    data: { status: "CANCELED", clearedAt: new Date() },
+    select: assignmentScheduleSelect,
   });
-
   const inPlayPlayerIds = await getInPlayPlayerIds(params.stage);
+  for (const assignment of existingCourtAssignments) {
+    if (assignment.matchType === "GROUP" && assignment.groupMatch) {
+      getPlayersForGroupMatch(assignment.groupMatch).forEach((id) => inPlayPlayerIds.delete(id));
+      continue;
+    }
+    if (assignment.matchType === "KNOCKOUT" && assignment.knockoutMatch) {
+      getPlayersForKnockoutMatch(assignment.knockoutMatch).forEach((id) =>
+        inPlayPlayerIds.delete(id)
+      );
+    }
+  }
   const uncheckedPlayerIds = await loadUncheckedPlayerIds();
 
   const blocked = await prisma.blockedMatch.findFirst({
@@ -2984,16 +3716,16 @@ export async function assignNext(params: {
       params.matchType === "GROUP"
         ? { matchType: params.matchType, groupMatchId: params.matchId }
         : { matchType: params.matchType, knockoutMatchId: params.matchId },
+    select: { id: true },
   });
   if (blocked) return { error: "Match is blocked." };
 
+  let selectedMatchItem: ScheduleMatchItem | null = null;
+  let selectedPlayerIds: string[] = [];
   if (params.matchType === "GROUP") {
     const match = await prisma.match.findUnique({
       where: { id: params.matchId },
-      include: {
-        homeTeam: { include: { members: { include: { player: true } } } },
-        awayTeam: { include: { members: { include: { player: true } } } },
-      },
+      select: scheduleGroupMatchSelect,
     });
     if (!match || !isListEligibleGroupMatch(match)) return { error: "Match not eligible." };
     const playerIds = getPlayersForGroupMatch(match);
@@ -3006,13 +3738,13 @@ export async function assignNext(params: {
     if (hasInPlayPlayers(playerIds, inPlayPlayerIds)) {
       return { error: "Match has players already on court." };
     }
+    selectedPlayerIds = playerIds;
+    selectedMatchItem = buildEligibleGroupItemFromMatch(match);
+    if (!selectedMatchItem) return { error: "Match not eligible." };
   } else {
     const match = await prisma.knockoutMatch.findUnique({
       where: { id: params.matchId },
-      include: {
-        homeTeam: { include: { members: { include: { player: true } } } },
-        awayTeam: { include: { members: { include: { player: true } } } },
-      },
+      select: scheduleKnockoutMatchSelect,
     });
     if (!match || !isListEligibleKnockoutMatch(match)) return { error: "Match not eligible." };
     const playerIds = getPlayersForKnockoutMatch(match);
@@ -3025,18 +3757,35 @@ export async function assignNext(params: {
     if (hasInPlayPlayers(playerIds, inPlayPlayerIds)) {
       return { error: "Match has players already on court." };
     }
+    selectedPlayerIds = playerIds;
+    selectedMatchItem = buildEligibleKnockoutItemFromMatch(match);
+    if (!selectedMatchItem) return { error: "Match not eligible." };
   }
+  stopPerfTimer(readStartedAt, perfEntries, "validate-read");
 
+  const writeStartedAt = startPerfTimer();
+  const existingCourtAssignmentIds = existingCourtAssignments.map((assignment) => assignment.id);
+  const existingWhere: Prisma.CourtAssignmentWhereInput = {
+    status: "ACTIVE",
+    stage: params.stage,
+    ...(params.matchType === "GROUP"
+      ? { groupMatchId: params.matchId }
+      : { knockoutMatchId: params.matchId }),
+  };
+  if (existingCourtAssignmentIds.length > 0) {
+    existingWhere.id = { notIn: existingCourtAssignmentIds };
+  }
   const existing = await prisma.courtAssignment.findFirst({
-    where: {
-      status: "ACTIVE",
-      stage: params.stage,
-      ...(params.matchType === "GROUP"
-        ? { groupMatchId: params.matchId }
-        : { knockoutMatchId: params.matchId }),
-    },
+    where: existingWhere,
   });
   if (existing) return { error: "Match already assigned." };
+
+  if (existingCourtAssignmentIds.length > 0) {
+    await prisma.courtAssignment.updateMany({
+      where: { id: { in: existingCourtAssignmentIds } },
+      data: { status: "CANCELED", clearedAt: new Date() },
+    });
+  }
 
   await prisma.courtAssignment.create({
     data: {
@@ -3059,16 +3808,111 @@ export async function assignNext(params: {
       },
     },
   });
+  stopPerfTimer(writeStartedAt, perfEntries, "write");
 
+  const deltaStartedAt = startPerfTimer();
+  for (const playerId of selectedPlayerIds) {
+    inPlayPlayerIds.add(playerId);
+  }
+
+  const assignedMatchKey = buildMatchKey(params.matchType, params.matchId);
+  const clearedMatchKeys: string[] = [];
+  const addEligible: ScheduleMatchItem[] = [];
+  let forcedRankMap: Map<string, number> | null = null;
+  const getForcedRank = async (matchType: MatchType, matchId: string) => {
+    if (!forcedRankMap) {
+      forcedRankMap = await loadForcedRankMap(params.stage);
+    }
+    return getForcedRankFromMap(forcedRankMap, params.stage, matchType, matchId);
+  };
+  for (const assignment of existingCourtAssignments) {
+    const clearedMatchKey =
+      assignment.matchType === "GROUP" && assignment.groupMatchId
+        ? buildMatchKey("GROUP", assignment.groupMatchId)
+        : assignment.matchType === "KNOCKOUT" && assignment.knockoutMatchId
+          ? buildMatchKey("KNOCKOUT", assignment.knockoutMatchId)
+          : null;
+    if (clearedMatchKey) {
+      clearedMatchKeys.push(clearedMatchKey);
+    }
+    if (!clearedMatchKey || clearedMatchKey === assignedMatchKey) {
+      continue;
+    }
+
+    if (assignment.matchType === "GROUP" && assignment.groupMatchId && assignment.groupMatch) {
+      const playerIds = getPlayersForGroupMatch(assignment.groupMatch);
+      const blockedCurrent = await prisma.blockedMatch.findFirst({
+        where: { matchType: "GROUP", groupMatchId: assignment.groupMatchId },
+        select: { id: true },
+      });
+      if (!blockedCurrent && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
+        const forcedRank = await getForcedRank("GROUP", assignment.groupMatchId);
+        const item = buildEligibleGroupItemFromMatch(assignment.groupMatch, forcedRank);
+        if (item) addEligible.push(item);
+      }
+      continue;
+    }
+
+    if (
+      assignment.matchType === "KNOCKOUT" &&
+      assignment.knockoutMatchId &&
+      assignment.knockoutMatch
+    ) {
+      const playerIds = getPlayersForKnockoutMatch(assignment.knockoutMatch);
+      const blockedCurrent = await prisma.blockedMatch.findFirst({
+        where: { matchType: "KNOCKOUT", knockoutMatchId: assignment.knockoutMatchId },
+        select: { id: true },
+      });
+      if (!blockedCurrent && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
+        const forcedRank = await getForcedRank("KNOCKOUT", assignment.knockoutMatchId);
+        const item = buildEligibleKnockoutItemFromMatch(assignment.knockoutMatch, forcedRank);
+        if (item) addEligible.push(item);
+      }
+    }
+  }
+  stopPerfTimer(deltaStartedAt, perfEntries, "delta-build");
+
+  const lastBatchStartedAt = startPerfTimer();
   await updateLastBatch(config.id, buildMatchKey(params.matchType, params.matchId));
-  await publishBroadcastRefreshIfViewChanged({
+  stopPerfTimer(lastBatchStartedAt, perfEntries, "last-batch");
+  const invalidateStartedAt = startPerfTimer();
+  await invalidatePresentingStage(params.stage);
+  stopPerfTimer(invalidateStartedAt, perfEntries, "cache-invalidate");
+
+  const broadcastDispatchStartedAt = startPerfTimer();
+  dispatchBroadcastRefresh({
     stage: params.stage,
     source: "schedule-action",
-    before,
+    changeType: "both",
   });
-  revalidatePath("/schedule");
-  await invalidatePresentingStage(params.stage);
-  return { ok: true };
+  stopPerfTimer(broadcastDispatchStartedAt, perfEntries, "broadcast-dispatch");
+  logHotActionPerf({
+    action: "assignNext",
+    stage: params.stage,
+    entries: perfEntries,
+    meta: { replacedAssignments: existingCourtAssignments.length },
+  });
+
+  return {
+    ok: true,
+    action: "assign",
+    stage: params.stage,
+    delta: {
+      courtPatches: [
+        {
+          courtId: params.courtId,
+          playing: buildPlayingFromScheduleMatchItem(selectedMatchItem),
+        },
+      ],
+      removeEligibleKeys: [assignedMatchKey],
+      addEligible,
+      inPlayPlayerIds: Array.from(inPlayPlayerIds),
+      changedMatchKeys: {
+        assigned: [assignedMatchKey],
+        cleared: Array.from(new Set(clearedMatchKeys)),
+      },
+    },
+  };
 }
 
 export async function forceNext(
@@ -3084,7 +3928,6 @@ export async function forceNext(
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (matchType !== stage) return { error: "Stage mismatch." };
   const uncheckedPlayerIds = await loadUncheckedPlayerIds();
-  const before = await getBroadcastViewSignature(stage);
 
   if (matchType === "GROUP") {
     const match = await prisma.match.findUnique({
@@ -3125,10 +3968,10 @@ export async function forceNext(
   await prisma.scheduleActionLog.create({
     data: { action: "FORCE_NEXT", payload: { stage, matchType, matchId } },
   });
-  await publishBroadcastRefreshIfViewChanged({
+  await publishBroadcastRefresh({
     stage,
     source: "schedule-action",
-    before,
+    changeType: "upcoming",
   });
   revalidatePath("/schedule");
   await invalidatePresentingStage(stage);
@@ -3147,7 +3990,6 @@ export async function clearForcedPriority(
   if (!parsed.success) return { error: "Invalid match type." };
   if (!parsedStage.success) return { error: "Invalid stage." };
   if (matchType !== stage) return { error: "Stage mismatch." };
-  const before = await getBroadcastViewSignature(stage);
 
   await prisma.forcedMatchPriority.deleteMany({
     where: { matchType, matchId },
@@ -3155,10 +3997,10 @@ export async function clearForcedPriority(
   await prisma.scheduleActionLog.create({
     data: { action: "FORCE_CLEAR", payload: { stage, matchType, matchId } },
   });
-  await publishBroadcastRefreshIfViewChanged({
+  await publishBroadcastRefresh({
     stage,
     source: "schedule-action",
-    before,
+    changeType: "upcoming",
   });
   revalidatePath("/schedule");
   await invalidatePresentingStage(stage);
@@ -3170,7 +4012,6 @@ export async function resetQueueForcedPriorities(stage: ScheduleStage) {
   if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
-  const before = await getBroadcastViewSignature(stage);
 
   await prisma.forcedMatchPriority.deleteMany({
     where: { matchType: stage === "GROUP" ? "GROUP" : "KNOCKOUT" },
@@ -3178,10 +4019,10 @@ export async function resetQueueForcedPriorities(stage: ScheduleStage) {
   await prisma.scheduleActionLog.create({
     data: { action: "FORCE_RESET", payload: { stage } },
   });
-  await publishBroadcastRefreshIfViewChanged({
+  await publishBroadcastRefresh({
     stage,
     source: "schedule-action",
-    before,
+    changeType: "upcoming",
   });
   revalidatePath("/schedule");
   await invalidatePresentingStage(stage);

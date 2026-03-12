@@ -6,7 +6,6 @@ import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
-import { getScheduleState } from "@/app/schedule/actions";
 import { requireAdmin } from "@/lib/auth";
 import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
 import {
@@ -14,10 +13,6 @@ import {
   generateGroupStageMatchesForCategory,
   publishKnockoutMatchesForCategory,
 } from "@/lib/match-management";
-import {
-  getBroadcastViewChangeType,
-  getBroadcastViewSignature,
-} from "@/lib/schedule/broadcast-view-signature";
 import { publishBroadcastRefreshEvent } from "@/lib/supabase/broadcast-refresh-publisher";
 import { publishScheduleCompletionEvent } from "@/lib/supabase/schedule-realtime-publisher";
 
@@ -59,20 +54,6 @@ type CompletionRealtimeParams = {
 async function reconcileScheduleAndBroadcastCompletion(
   params: CompletionRealtimeParams
 ) {
-  const before = await getBroadcastViewSignature(params.stage);
-
-  try {
-    await getScheduleState({ stage: params.stage }, { mode: "presenting" });
-  } catch (error) {
-    console.error("[schedule][completion] reconcile failed", {
-      stage: params.stage,
-      matchType: params.matchType,
-      matchId: params.matchId,
-      source: params.source,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-
   await publishScheduleCompletionEvent({
     stage: params.stage,
     source: params.source,
@@ -81,17 +62,11 @@ async function reconcileScheduleAndBroadcastCompletion(
     completedAt: params.completedAt,
   });
 
-  const after = await getBroadcastViewSignature(params.stage);
-  const changeType = getBroadcastViewChangeType(before, after);
-  if (!changeType) {
-    return;
-  }
-
   const broadcastResult = await publishBroadcastRefreshEvent({
     stage: params.stage,
     source: params.source,
     reason: "view-change",
-    changeType,
+    changeType: "both",
   });
   if (!broadcastResult.ok) {
     console.error("[broadcast][completion] publish failed", {
@@ -727,6 +702,14 @@ type ScoreUpsertResult =
   | { ok: true; categoryCode: "MD" | "WD" | "XD"; matchId: string }
   | { error: string; categoryCode?: "MD" | "WD" | "XD" };
 
+type UndoGroupMatchResult =
+  | { ok: true; categoryCode: "MD" | "WD" | "XD"; matchId: string }
+  | { error: string; categoryCode?: "MD" | "WD" | "XD" };
+
+type GroupStageLockResult =
+  | { ok: true; categoryCode: "MD" | "WD" | "XD"; locked: boolean }
+  | { error: string };
+
 type ScoreSubmissionActor = "admin" | "referee";
 
 async function upsertMatchScoreInternal(
@@ -1043,12 +1026,24 @@ export async function upsertMatchScoreNoRedirect(
   return { error: "Invalid score submission." };
 }
 
-export async function undoMatchResult(formData: FormData) {
-  await requireAdmin({ onFail: "redirect" });
+async function undoMatchResultInternal(
+  formData: FormData
+): Promise<UndoGroupMatchResult | void> {
+  const noRedirect = String(formData.get("noRedirect") ?? "") === "true";
+  const auth = await requireAdmin({ onFail: noRedirect ? "return" : "redirect" });
+  if (auth?.error) {
+    return { error: auth.error };
+  }
   const matchId = String(formData.get("matchId") ?? "");
   if (!matchId) {
     const redirectOptions = readMatchFilterRedirectOptions(formData);
     const parsedCategory = categorySchema.safeParse(formData.get("category"));
+    if (noRedirect) {
+      return {
+        error: "Match is required.",
+        ...(parsedCategory.success ? { categoryCode: parsedCategory.data } : {}),
+      };
+    }
     if (parsedCategory.success) {
       redirect(
         buildMatchesRedirect(parsedCategory.data, {
@@ -1066,13 +1061,27 @@ export async function undoMatchResult(formData: FormData) {
   });
 
   if (!match || match.stage !== "GROUP" || !match.group) {
+    if (noRedirect) {
+      return { error: "Match not found." };
+    }
     redirect(`/matches?error=${encodeURIComponent("Match not found.")}`);
   }
 
   const redirectOptions = readMatchFilterRedirectOptions(formData);
 
-  await assertGroupStageUnlocked(match.group.category.code);
-  const before = await getBroadcastViewSignature("GROUP");
+  if (noRedirect) {
+    const lock = await prisma.groupStageLock.findUnique({
+      where: { categoryCode: match.group.category.code },
+    });
+    if (lock?.locked) {
+      return {
+        error: "Group stage is locked for this category.",
+        categoryCode: match.group.category.code,
+      };
+    }
+  } else {
+    await assertGroupStageUnlocked(match.group.category.code);
+  }
 
   await prisma.$transaction([
     prisma.gameScore.deleteMany({ where: { matchId: match.id } }),
@@ -1091,47 +1100,82 @@ export async function undoMatchResult(formData: FormData) {
     categoryCodes: [match.group.category.code],
     groupIds: [match.group.id],
   });
-  const after = await getBroadcastViewSignature("GROUP");
-  const changeType = getBroadcastViewChangeType(before, after);
-  if (changeType) {
-    const broadcastResult = await publishBroadcastRefreshEvent({
+  const broadcastResult = await publishBroadcastRefreshEvent({
+    stage: "GROUP",
+    source: "matches-score-save",
+    reason: "view-change",
+    changeType: "both",
+  });
+  if (!broadcastResult.ok) {
+    console.error("[broadcast][undo] publish failed", {
       stage: "GROUP",
+      matchType: "GROUP",
+      matchId: match.id,
       source: "matches-score-save",
-      reason: "view-change",
-      changeType,
+      error: broadcastResult.error,
+      response: broadcastResult.response ?? null,
     });
-    if (!broadcastResult.ok) {
-      console.error("[broadcast][undo] publish failed", {
-        stage: "GROUP",
-        matchType: "GROUP",
-        matchId: match.id,
-        source: "matches-score-save",
-        error: broadcastResult.error,
-        response: broadcastResult.response ?? null,
-      });
-    }
   }
 
   revalidatePath("/matches");
+  if (noRedirect) {
+    return {
+      ok: true,
+      categoryCode: match.group.category.code,
+      matchId: match.id,
+    };
+  }
   redirect(buildMatchesRedirect(match.group.category.code, redirectOptions));
 }
 
-export async function lockGroupStage(formData: FormData) {
-  await requireAdmin({ onFail: "redirect" });
+export async function undoMatchResult(formData: FormData) {
+  await undoMatchResultInternal(formData);
+}
+
+export async function undoMatchResultNoRedirect(
+  formData: FormData
+): Promise<UndoGroupMatchResult> {
+  const working = new FormData();
+  formData.forEach((value, key) => {
+    working.append(key, value);
+  });
+  working.set("noRedirect", "true");
+  const result = await undoMatchResultInternal(working);
+  if (result && ("ok" in result || "error" in result)) {
+    return result;
+  }
+  return { error: "Invalid undo request." };
+}
+
+async function setGroupStageLockInternal(
+  formData: FormData,
+  locked: boolean
+): Promise<GroupStageLockResult | void> {
+  const noRedirect = String(formData.get("noRedirect") ?? "") === "true";
+  const auth = await requireAdmin({ onFail: noRedirect ? "return" : "redirect" });
+  if (auth?.error) {
+    return { error: auth.error };
+  }
   const redirectOptions = readMatchFilterRedirectOptions(formData);
   const parsed = categorySchema.safeParse(formData.get("category"));
   const pageCategoryParsed = pageCategorySchema.safeParse(formData.get("pageCategory"));
   if (!parsed.success) {
+    if (noRedirect) {
+      return { error: "Invalid category." };
+    }
     redirect(`/matches?error=${encodeURIComponent("Invalid category.")}`);
   }
 
   await prisma.groupStageLock.upsert({
     where: { categoryCode: parsed.data },
-    update: { locked: true, lockedAt: new Date() },
-    create: { categoryCode: parsed.data, locked: true, lockedAt: new Date() },
+    update: { locked, lockedAt: locked ? new Date() : null },
+    create: { categoryCode: parsed.data, locked, lockedAt: locked ? new Date() : null },
   });
 
   revalidatePath("/matches");
+  if (noRedirect) {
+    return { ok: true, categoryCode: parsed.data, locked };
+  }
   redirect(
     buildMatchesRedirect(
       pageCategoryParsed.success ? pageCategoryParsed.data : parsed.data,
@@ -1140,28 +1184,42 @@ export async function lockGroupStage(formData: FormData) {
   );
 }
 
-export async function unlockGroupStage(formData: FormData) {
-  await requireAdmin({ onFail: "redirect" });
-  const redirectOptions = readMatchFilterRedirectOptions(formData);
-  const parsed = categorySchema.safeParse(formData.get("category"));
-  const pageCategoryParsed = pageCategorySchema.safeParse(formData.get("pageCategory"));
-  if (!parsed.success) {
-    redirect(`/matches?error=${encodeURIComponent("Invalid category.")}`);
-  }
+export async function lockGroupStage(formData: FormData) {
+  await setGroupStageLockInternal(formData, true);
+}
 
-  await prisma.groupStageLock.upsert({
-    where: { categoryCode: parsed.data },
-    update: { locked: false, lockedAt: null },
-    create: { categoryCode: parsed.data, locked: false, lockedAt: null },
+export async function lockGroupStageNoRedirect(
+  formData: FormData
+): Promise<GroupStageLockResult> {
+  const working = new FormData();
+  formData.forEach((value, key) => {
+    working.append(key, value);
   });
+  working.set("noRedirect", "true");
+  const result = await setGroupStageLockInternal(working, true);
+  if (result && ("ok" in result || "error" in result)) {
+    return result;
+  }
+  return { error: "Unable to lock group stage." };
+}
 
-  revalidatePath("/matches");
-  redirect(
-    buildMatchesRedirect(
-      pageCategoryParsed.success ? pageCategoryParsed.data : parsed.data,
-      redirectOptions
-    )
-  );
+export async function unlockGroupStage(formData: FormData) {
+  await setGroupStageLockInternal(formData, false);
+}
+
+export async function unlockGroupStageNoRedirect(
+  formData: FormData
+): Promise<GroupStageLockResult> {
+  const working = new FormData();
+  formData.forEach((value, key) => {
+    working.append(key, value);
+  });
+  working.set("noRedirect", "true");
+  const result = await setGroupStageLockInternal(working, false);
+  if (result && ("ok" in result || "error" in result)) {
+    return result;
+  }
+  return { error: "Unable to unlock group stage." };
 }
 
 export async function generateMatchesKnockout(formData: FormData) {
@@ -1396,7 +1454,6 @@ export async function undoKnockoutMatchResult(formData: FormData) {
   if (!match) {
     return { error: "Match not found." };
   }
-  const before = await getBroadcastViewSignature("KNOCKOUT");
 
   await prisma.$transaction(async (tx) => {
     if (match.winnerTeamId) {
@@ -1420,25 +1477,21 @@ export async function undoKnockoutMatchResult(formData: FormData) {
     categoryCodes: [match.categoryCode],
     series: [match.series],
   });
-  const after = await getBroadcastViewSignature("KNOCKOUT");
-  const changeType = getBroadcastViewChangeType(before, after);
-  if (changeType) {
-    const broadcastResult = await publishBroadcastRefreshEvent({
+  const broadcastResult = await publishBroadcastRefreshEvent({
+    stage: "KNOCKOUT",
+    source: "matches-score-save",
+    reason: "view-change",
+    changeType: "both",
+  });
+  if (!broadcastResult.ok) {
+    console.error("[broadcast][undo] publish failed", {
       stage: "KNOCKOUT",
+      matchType: "KNOCKOUT",
+      matchId: match.id,
       source: "matches-score-save",
-      reason: "view-change",
-      changeType,
+      error: broadcastResult.error,
+      response: broadcastResult.response ?? null,
     });
-    if (!broadcastResult.ok) {
-      console.error("[broadcast][undo] publish failed", {
-        stage: "KNOCKOUT",
-        matchType: "KNOCKOUT",
-        matchId: match.id,
-        source: "matches-score-save",
-        error: broadcastResult.error,
-        response: broadcastResult.response ?? null,
-      });
-    }
   }
 
   revalidatePath("/matches");
