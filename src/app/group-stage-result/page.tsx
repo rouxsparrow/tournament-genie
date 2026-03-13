@@ -1,6 +1,6 @@
-import { Badge } from "@/components/ui/badge";
 import { loadGlobalGroupRanking } from "@/app/knockout/logic";
 import { prisma } from "@/lib/prisma";
+import { GroupStageResultRotator } from "@/app/group-stage-result/rotator";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Group Stage Result" };
@@ -50,88 +50,30 @@ export default async function GroupStageResultPage() {
 
       return {
         categoryCode,
+        categoryLabel: categoryLabelByCode[categoryCode],
         isLocked: lock?.locked ?? false,
-        globalRanking,
-        qualifiedSeriesByTeamId: new Map(
-          qualifiers.map((entry) => [entry.teamId, entry.series] as const)
-        ),
-        teamById: new Map(qualifiers.map((entry) => [entry.teamId, entry.team] as const)),
+        rows: globalRanking.map((entry) => {
+          const qualifier = qualifiers.find((qualifierEntry) => qualifierEntry.teamId === entry.teamId);
+          const team = qualifier?.team ?? null;
+
+          return {
+            teamId: entry.teamId,
+            globalRank: entry.globalRank,
+            teamLabel: team ? teamLabel(team) : entry.teamName,
+            groupLabel: `${entry.groupName} (#${entry.groupRank})`,
+            qualifierSeries: qualifier?.series ?? null,
+            avgPA: entry.avgPA,
+          };
+        }),
       };
     })
   );
 
   return (
-    <section className="rounded-2xl border border-border bg-card p-8">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Group Stage Result</h1>
-      </div>
-
-      <div className="mt-6 grid gap-4 xl:grid-cols-3">
-        {results.map((categoryResult) => (
-          <div key={categoryResult.categoryCode} className="rounded-xl border border-border p-5">
-            <h2 className="text-lg font-semibold text-foreground">
-              {categoryResult.categoryCode} · {categoryLabelByCode[categoryResult.categoryCode]}
-            </h2>
-
-            {!categoryResult.isLocked ? (
-              <p className="mt-3 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
-                Group stage is not locked for this category yet.
-              </p>
-            ) : categoryResult.globalRanking.length === 0 ? (
-              <p className="mt-3 text-sm text-muted-foreground">
-                No completed group standings available.
-              </p>
-            ) : (
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="text-xs uppercase text-muted-foreground">
-                    <tr>
-                      <th className="py-2 text-left">Rank</th>
-                      <th className="py-2 text-left">Team</th>
-                      <th className="py-2 text-left">Group</th>
-                      <th className="py-2 text-left">Status</th>
-                      <th className="py-2 text-right">Avg PA</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {categoryResult.globalRanking.map((entry) => {
-                      const team = categoryResult.teamById.get(entry.teamId);
-                      const qualifierSeries =
-                        categoryResult.qualifiedSeriesByTeamId.get(entry.teamId);
-                      return (
-                        <tr key={entry.teamId}>
-                          <td className="py-2 text-left">{entry.globalRank}</td>
-                          <td className="py-2 text-left">
-                            {team ? teamLabel(team) : entry.teamName}
-                          </td>
-                          <td className="py-2 text-left">
-                            {entry.groupName} (#{entry.groupRank})
-                          </td>
-                          <td className="py-2 text-left">
-                            {qualifierSeries === "A" ? (
-                              <Badge variant="default">Series A</Badge>
-                            ) : qualifierSeries === "B" ? (
-                              <Badge variant="secondary">Series B</Badge>
-                            ) : (
-                              <Badge
-                                variant="outline"
-                                className="border-red-300 text-red-700 dark:border-red-500/50 dark:text-red-300"
-                              >
-                                Eliminated
-                              </Badge>
-                            )}
-                          </td>
-                          <td className="py-2 text-right">{entry.avgPA.toFixed(2)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-    </section>
+    <div className="lg:relative lg:left-1/2 lg:right-1/2 lg:-mx-[50vw] lg:w-screen lg:px-6 xl:px-10">
+      <section className="rounded-2xl border border-border bg-card px-4 py-5 md:px-6 lg:mx-auto lg:max-w-[1560px] lg:px-8">
+        <GroupStageResultRotator results={results} />
+      </section>
+    </div>
   );
 }

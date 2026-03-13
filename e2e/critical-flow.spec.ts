@@ -17,6 +17,7 @@ test.describe.configure({ mode: "serial" });
 
 const TEST_REF_PREFIX = `test_ref_${Date.now()}`;
 const TEST_REF_PASSWORD = "TestRefPass123!";
+const REFEREE_COURTS = ["P5", "P6", "P7", "P8", "P9"] as const;
 
 async function createRefereeCredentials() {
   const account = await createTestRefereeAccount({
@@ -48,6 +49,52 @@ function getRefereeMatchTrigger(page: Page) {
     .locator("label", { hasText: "Match" })
     .locator("..")
     .locator('[role="combobox"]');
+}
+
+function getRefereeCourtSelect(page: Page) {
+  return page.getByLabel("Court");
+}
+
+function getRefereeStageSelect(page: Page) {
+  return page.getByLabel("Stage");
+}
+
+function getCourtLockButton(page: Page) {
+  return page.getByRole("button", { name: /^(Lock Court|Unlock Court)$/ });
+}
+
+async function getSelectableRefereeCourts(page: Page) {
+  const selectableCourts: (typeof REFEREE_COURTS)[number][] = [];
+  const courtSelect = getRefereeCourtSelect(page);
+  const matchTrigger = getRefereeMatchTrigger(page);
+
+  for (const court of REFEREE_COURTS) {
+    await courtSelect.selectOption(court);
+    await page.waitForTimeout(50);
+    if (!(await matchTrigger.isEnabled())) {
+      continue;
+    }
+
+    await matchTrigger.click();
+    await page.waitForTimeout(50);
+    const optionCount = await page.getByRole("option").count();
+    await page.keyboard.press("Escape");
+
+    if (optionCount > 0) {
+      selectableCourts.push(court);
+    }
+  }
+
+  return selectableCourts;
+}
+
+async function getRefereeMatchOptionTexts(page: Page) {
+  const trigger = getRefereeMatchTrigger(page);
+  await trigger.click();
+  await page.waitForTimeout(50);
+  const texts = (await page.getByRole("option").allTextContents()).map(normalizeText);
+  await page.keyboard.press("Escape");
+  return texts.filter(Boolean);
 }
 
 async function selectRefereeMatchByIndex(page: Page, index: number) {
@@ -176,6 +223,136 @@ test("Referee submit flow with account login @critical @smoke", async ({ page })
   await page.getByRole("button", { name: "Lock" }).click();
   await page.getByRole("button", { name: "Submit" }).click();
   await expect(page.getByText("Submitted")).toBeVisible();
+});
+
+test("Referee court lock persists across refresh and disables court changes @critical", async ({ page }) => {
+  const matchId = await ensureActiveGroupMatchId();
+  expect(matchId).toBeTruthy();
+
+  const credentials = await createRefereeCredentials();
+  await signInReferee(page, credentials);
+
+  const selectableCourts = await getSelectableRefereeCourts(page);
+  test.skip(selectableCourts.length === 0, "existing-group dataset needs at least one selectable referee court.");
+
+  const lockedCourt = selectableCourts[0];
+  const courtSelect = getRefereeCourtSelect(page);
+
+  await courtSelect.selectOption(lockedCourt);
+  await expect(courtSelect).toHaveValue(lockedCourt);
+  await getCourtLockButton(page).click();
+
+  await expect(page.getByText(`Court locked to ${lockedCourt}`)).toBeVisible();
+  await expect(courtSelect).toBeDisabled();
+  await expect(getCourtLockButton(page)).toHaveText("Unlock Court");
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Referee Scoresheet" })).toBeVisible();
+  await expect(page.getByText(`Court locked to ${lockedCourt}`)).toBeVisible();
+  await expect(courtSelect).toHaveValue(lockedCourt);
+  await expect(courtSelect).toBeDisabled();
+  await expect(getCourtLockButton(page)).toHaveText("Unlock Court");
+});
+
+test("Referee court lock scopes matches and unlock restores court selection @critical", async ({ page }) => {
+  const matchId = await ensureActiveGroupMatchId();
+  expect(matchId).toBeTruthy();
+
+  const credentials = await createRefereeCredentials();
+  await signInReferee(page, credentials);
+
+  const selectableCourts = await getSelectableRefereeCourts(page);
+  test.skip(selectableCourts.length === 0, "existing-group dataset needs at least one selectable referee court.");
+
+  const lockedCourt = selectableCourts[0];
+  const courtSelect = getRefereeCourtSelect(page);
+
+  await courtSelect.selectOption(lockedCourt);
+  await getCourtLockButton(page).click();
+
+  const optionTexts = await getRefereeMatchOptionTexts(page);
+  expect(optionTexts.length).toBeGreaterThan(0);
+  expect(optionTexts.every((text) => text.includes(`(${lockedCourt})`))).toBe(true);
+
+  await getCourtLockButton(page).click();
+  await expect(courtSelect).toBeEnabled();
+  await expect(courtSelect).toHaveValue(lockedCourt);
+  await expect(getCourtLockButton(page)).toHaveText("Lock Court");
+});
+
+test("Referee court lock keeps same-court match selection and survives stage switch @critical", async ({
+  page,
+}) => {
+  const matchId = await ensureActiveGroupMatchId();
+  expect(matchId).toBeTruthy();
+
+  const credentials = await createRefereeCredentials();
+  await signInReferee(page, credentials);
+
+  const selectableCourts = await getSelectableRefereeCourts(page);
+  test.skip(selectableCourts.length === 0, "existing-group dataset needs at least one selectable referee court.");
+
+  const lockedCourt = selectableCourts[0];
+  const courtSelect = getRefereeCourtSelect(page);
+  const stageSelect = getRefereeStageSelect(page);
+
+  await courtSelect.selectOption(lockedCourt);
+
+  const selected = await selectRefereeMatchByIndex(page, 0);
+  test.skip(!selected.selected, "selected referee court needs at least one match.");
+
+  const selectedBeforeLock = normalizeText(await getRefereeMatchTrigger(page).textContent());
+  await getCourtLockButton(page).click();
+  expect(normalizeText(await getRefereeMatchTrigger(page).textContent())).toBe(selectedBeforeLock);
+
+  await stageSelect.selectOption("KNOCKOUT");
+  await expect(page.getByText(`Court locked to ${lockedCourt}`)).toBeVisible();
+  await expect(courtSelect).toHaveValue(lockedCourt);
+  await expect(courtSelect).toBeDisabled();
+
+  await stageSelect.selectOption("GROUP");
+  await expect(page.getByText(`Court locked to ${lockedCourt}`)).toBeVisible();
+  await expect(courtSelect).toHaveValue(lockedCourt);
+});
+
+test("Referee court lock clears stale selected match when locking another court @critical", async ({
+  page,
+}) => {
+  const matchId = await ensureActiveGroupMatchId();
+  expect(matchId).toBeTruthy();
+
+  const credentials = await createRefereeCredentials();
+  await signInReferee(page, credentials);
+
+  const selectableCourts = await getSelectableRefereeCourts(page);
+  test.skip(
+    selectableCourts.length < 2,
+    "existing-group dataset needs at least two selectable referee courts for stale selection coverage."
+  );
+
+  const [firstCourt, secondCourt] = selectableCourts;
+  const courtSelect = getRefereeCourtSelect(page);
+
+  await courtSelect.selectOption(firstCourt);
+  const selected = await selectRefereeMatchByIndex(page, 0);
+  test.skip(!selected.selected, "first referee court needs at least one match.");
+
+  const storedBefore = await page.evaluate(() => window.sessionStorage.getItem("referee:selectedMatchId"));
+  expect(storedBefore).toBeTruthy();
+
+  await page.evaluate((court) => {
+    window.sessionStorage.setItem("referee:filter:court", court);
+    window.sessionStorage.removeItem("referee:lock:court");
+  }, secondCourt);
+
+  await page.reload();
+  await expect(courtSelect).toHaveValue(secondCourt);
+  await getCourtLockButton(page).click();
+  await expect(page.getByText(`Court locked to ${secondCourt}`)).toBeVisible();
+
+  const storedAfter = await page.evaluate(() => window.sessionStorage.getItem("referee:selectedMatchId"));
+  expect(storedAfter).toBeNull();
+  await expect(getRefereeMatchTrigger(page)).toContainText("Select match");
 });
 
 test("Referee can swap display sides and keep it after refresh @critical", async ({ page }) => {

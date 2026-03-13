@@ -75,6 +75,7 @@ type RefereeScoreboardProps = {
 const MAX_SCORE = 30;
 const REFEREE_STAGE_FILTER_KEY = "referee:filter:stage";
 const REFEREE_COURT_FILTER_KEY = "referee:filter:court";
+const REFEREE_LOCKED_COURT_KEY = "referee:lock:court";
 const REFEREE_DISPLAY_SWAP_KEY_PREFIX = "referee:displaySwap:";
 
 function teamLabel(team: Team | null) {
@@ -117,6 +118,7 @@ export function RefereeScoreboard({
   const [matchesState, setMatchesState] = useState<MatchItem[]>(matches);
   const [stage, setStage] = useState<Stage>("GROUP");
   const [selectedCourt, setSelectedCourt] = useState<CourtLabel | "">("");
+  const [lockedCourt, setLockedCourt] = useState<CourtLabel | "">("");
   const [selectedMatchId, setSelectedMatchId] = useState("");
   const [matchStates, setMatchStates] = useState<Record<string, MatchState>>({});
   const [submitMessage, setSubmitMessage] = useState<string | null>(null);
@@ -150,6 +152,12 @@ export function RefereeScoreboard({
     if (!storedCourt || ["P5", "P6", "P7", "P8", "P9"].includes(storedCourt)) {
       setSelectedCourt((storedCourt ?? "") as CourtLabel | "");
     }
+
+    const storedLockedCourt = window.sessionStorage.getItem(REFEREE_LOCKED_COURT_KEY);
+    if (storedLockedCourt && ["P5", "P6", "P7", "P8", "P9"].includes(storedLockedCourt)) {
+      setLockedCourt(storedLockedCourt as CourtLabel);
+      setSelectedCourt(storedLockedCourt as CourtLabel);
+    }
   }, []);
 
   useEffect(() => {
@@ -165,6 +173,15 @@ export function RefereeScoreboard({
     }
     window.sessionStorage.removeItem(REFEREE_COURT_FILTER_KEY);
   }, [selectedCourt]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (lockedCourt) {
+      window.sessionStorage.setItem(REFEREE_LOCKED_COURT_KEY, lockedCourt);
+      return;
+    }
+    window.sessionStorage.removeItem(REFEREE_LOCKED_COURT_KEY);
+  }, [lockedCourt]);
 
   const sessionMatchKey = (matchId: string) => `referee:scoresheet:${matchId}`;
   const swapKey = (matchId: string) => `${REFEREE_DISPLAY_SWAP_KEY_PREFIX}${matchId}`;
@@ -182,14 +199,15 @@ export function RefereeScoreboard({
     () => ""
   );
   const activeSelectedMatchId = selectedMatchId || selectedMatchIdFromStorage;
+  const effectiveSelectedCourt = lockedCourt || selectedCourt;
 
   const availableMatches = useMemo(() => {
     let filtered = matchesState.filter((match) => match.stage === stage);
-    if (selectedCourt) {
-      filtered = filtered.filter((match) => match.court === selectedCourt);
+    if (effectiveSelectedCourt) {
+      filtered = filtered.filter((match) => match.court === effectiveSelectedCourt);
     }
     return filtered;
-  }, [matchesState, selectedCourt, stage]);
+  }, [effectiveSelectedCourt, matchesState, stage]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -283,6 +301,22 @@ export function RefereeScoreboard({
   const handleCourtChange = (value: CourtLabel | "") => {
     setSelectedCourt(value);
     clearSelection();
+  };
+
+  const handleToggleCourtLock = () => {
+    if (lockedCourt) {
+      setLockedCourt("");
+      return;
+    }
+
+    if (!selectedCourt) return;
+
+    setLockedCourt(selectedCourt);
+    setSelectedCourt(selectedCourt);
+
+    if (!selectedMatch || selectedMatch.court !== selectedCourt) {
+      clearSelection();
+    }
   };
 
   const handleMatchChange = (value: string) => {
@@ -536,8 +570,11 @@ export function RefereeScoreboard({
         <MatchContextBar
           stage={stage}
           onStageChange={handleStageChange}
-          selectedCourt={selectedCourt}
+          selectedCourt={effectiveSelectedCourt}
           onCourtChange={handleCourtChange}
+          lockedCourt={lockedCourt}
+          onToggleCourtLock={handleToggleCourtLock}
+          canLockCourt={!!selectedCourt}
           matches={matchOptions}
           selectedMatchId={activeSelectedMatchId}
           onMatchChange={handleMatchChange}
