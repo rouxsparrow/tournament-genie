@@ -216,12 +216,21 @@ async function loadBracketsState(
 }
 
 export async function resolvePresentingStageForViewerFromNav(favouritePlayerId: string | null) {
-  const [hasAssignedGroup, hasFavouriteGroupScheduled] = await Promise.all([
+  const [hasAssignedGroup, hasAnyGroupScheduled, hasFavouriteGroupScheduled] = await Promise.all([
     prisma.courtAssignment.count({
       where: {
         stage: "GROUP",
         status: "ACTIVE",
         groupMatchId: { not: null },
+      },
+    }),
+    prisma.match.count({
+      where: {
+        stage: "GROUP",
+        status: "SCHEDULED",
+        groupId: { not: null },
+        homeTeamId: { not: null },
+        awayTeamId: { not: null },
       },
     }),
     favouritePlayerId
@@ -238,7 +247,7 @@ export async function resolvePresentingStageForViewerFromNav(favouritePlayerId: 
       : Promise.resolve(0),
   ]);
 
-  if (hasAssignedGroup > 0 || hasFavouriteGroupScheduled > 0) {
+  if (hasAssignedGroup > 0 || hasAnyGroupScheduled > 0 || hasFavouriteGroupScheduled > 0) {
     return "GROUP" as const;
   }
 

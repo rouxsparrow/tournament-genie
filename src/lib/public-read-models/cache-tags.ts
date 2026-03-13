@@ -1,4 +1,4 @@
-import { revalidateTag } from "next/cache";
+import { revalidateTag, updateTag } from "next/cache";
 import type { CategoryCode, PublicScheduleStage, SeriesCode } from "@/lib/public-read-models/types";
 
 export function standingsAllTag() {
@@ -45,71 +45,75 @@ const ALL_SERIES: SeriesCode[] = ["A", "B"];
 const ALL_STAGES: PublicScheduleStage[] = ["GROUP", "KNOCKOUT"];
 const REVALIDATE_PROFILE = "max";
 
-function invalidateTag(tag: string) {
+function revalidateTagLater(tag: string) {
   revalidateTag(tag, REVALIDATE_PROFILE);
+}
+
+function expireTagNow(tag: string) {
+  updateTag(tag);
 }
 
 export async function invalidatePublicReadModels(change: PublicChangeEvent) {
   if (change.type === "all") {
-    invalidateTag(standingsAllTag());
-    invalidateTag(presentingAllTag());
-    invalidateTag(bracketsAllTag());
+    revalidateTagLater(standingsAllTag());
+    revalidateTagLater(presentingAllTag());
+    revalidateTagLater(bracketsAllTag());
     ALL_CATEGORIES.forEach((categoryCode) => {
-      invalidateTag(standingsCategoryTag(categoryCode));
-      invalidateTag(bracketsCategoryTag(categoryCode));
+      revalidateTagLater(standingsCategoryTag(categoryCode));
+      revalidateTagLater(bracketsCategoryTag(categoryCode));
       ALL_SERIES.forEach((series) => {
-        invalidateTag(bracketsSeriesTag(categoryCode, series));
+        revalidateTagLater(bracketsSeriesTag(categoryCode, series));
       });
     });
     ALL_STAGES.forEach((stage) => {
-      invalidateTag(presentingStageTag(stage));
+      revalidateTagLater(presentingStageTag(stage));
     });
     return;
   }
 
   if (change.type === "group-results") {
-    invalidateTag(standingsAllTag());
-    invalidateTag(presentingAllTag());
-    invalidateTag(presentingStageTag("GROUP"));
+    expireTagNow(standingsAllTag());
+    revalidateTagLater(presentingAllTag());
+    revalidateTagLater(presentingStageTag("GROUP"));
     const categories = change.categoryCodes ?? ALL_CATEGORIES;
     categories.forEach((categoryCode) => {
-      invalidateTag(standingsCategoryTag(categoryCode));
+      expireTagNow(standingsCategoryTag(categoryCode));
     });
     (change.groupIds ?? []).forEach((groupId) => {
-      invalidateTag(standingsGroupMatchesTag(groupId));
+      expireTagNow(standingsGroupMatchesTag(groupId));
     });
     return;
   }
 
   if (change.type === "knockout-results") {
-    invalidateTag(bracketsAllTag());
-    invalidateTag(presentingAllTag());
-    invalidateTag(presentingStageTag("KNOCKOUT"));
+    revalidateTagLater(bracketsAllTag());
+    revalidateTagLater(presentingAllTag());
+    revalidateTagLater(presentingStageTag("KNOCKOUT"));
 
     const categories = change.categoryCodes ?? ALL_CATEGORIES;
     const seriesList = change.series ?? ALL_SERIES;
 
     categories.forEach((categoryCode) => {
-      invalidateTag(bracketsCategoryTag(categoryCode));
+      revalidateTagLater(bracketsCategoryTag(categoryCode));
       seriesList.forEach((series) => {
-        invalidateTag(bracketsSeriesTag(categoryCode, series));
+        revalidateTagLater(bracketsSeriesTag(categoryCode, series));
       });
     });
     return;
   }
 
   if (change.type === "presenting") {
-    invalidateTag(presentingAllTag());
+    revalidateTagLater(presentingAllTag());
     (change.stages ?? ALL_STAGES).forEach((stage) => {
-      invalidateTag(presentingStageTag(stage));
+      revalidateTagLater(presentingStageTag(stage));
     });
     return;
   }
 
   if (change.type === "player-checkin") {
-    invalidateTag(presentingAllTag());
+    revalidateTagLater(presentingAllTag());
     ALL_STAGES.forEach((stage) => {
-      invalidateTag(presentingStageTag(stage));
+      revalidateTagLater(presentingStageTag(stage));
     });
   }
 }
