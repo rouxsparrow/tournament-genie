@@ -1,5 +1,6 @@
 import "server-only";
 
+import { buildSecondChanceHomeAssignments } from "@/app/knockout/bracket-layout";
 import { prisma } from "@/lib/prisma";
 
 type CategoryCode = "MD" | "WD" | "XD";
@@ -99,6 +100,58 @@ export async function syncKnockoutPropagation(categoryCode: CategoryCode) {
         matches.map((match) => [match.id, match as KnockoutMatchSnapshot])
       );
 
+      async function clearDownstreamSlot(
+        matchId: string,
+        clearedTeamId: string
+      ) {
+        const match = matchById.get(matchId);
+        if (!match?.nextMatchId || !match.nextSlot) return;
+
+        const nextMatch = matchById.get(match.nextMatchId);
+        if (!nextMatch) return;
+
+        const slotField = match.nextSlot === 1 ? "homeTeamId" : "awayTeamId";
+        const currentSlot = nextMatch[slotField];
+        if (currentSlot !== clearedTeamId) return;
+
+        const previousWinner = nextMatch.winnerTeamId;
+        const shouldReset =
+          previousWinner === clearedTeamId ||
+          !nextMatch.homeTeamId ||
+          !nextMatch.awayTeamId;
+
+        if (shouldReset) {
+          await tx.knockoutGameScore.deleteMany({
+            where: { knockoutMatchId: nextMatch.id },
+          });
+        }
+
+        await tx.knockoutMatch.update({
+          where: { id: nextMatch.id },
+          data: {
+            [slotField]: null,
+            ...(shouldReset
+              ? {
+                  winnerTeamId: null,
+                  status: "SCHEDULED",
+                  completedAt: null,
+                }
+              : {}),
+          },
+        });
+
+        nextMatch[slotField] = null;
+        if (shouldReset) {
+          nextMatch.winnerTeamId = null;
+          nextMatch.status = "SCHEDULED";
+        }
+        changed += 1;
+
+        if (shouldReset && previousWinner) {
+          await clearDownstreamSlot(nextMatch.id, previousWinner);
+        }
+      }
+
       for (const match of matches as KnockoutMatchSnapshot[]) {
         let winnerTeamId = match.winnerTeamId;
         const derivedWinner =
@@ -134,6 +187,9 @@ export async function syncKnockoutPropagation(categoryCode: CategoryCode) {
         const currentSlot = nextMatch[slotField];
 
         if (currentSlot && currentSlot !== winnerTeamId) {
+          if (nextMatch.winnerTeamId) {
+            await clearDownstreamSlot(nextMatch.id, nextMatch.winnerTeamId);
+          }
           await tx.knockoutGameScore.deleteMany({
             where: { knockoutMatchId: nextMatch.id },
           });
@@ -143,6 +199,7 @@ export async function syncKnockoutPropagation(categoryCode: CategoryCode) {
               [slotField]: winnerTeamId,
               winnerTeamId: null,
               status: "SCHEDULED",
+              completedAt: null,
             },
           });
           nextMatch[slotField] = winnerTeamId;
@@ -164,6 +221,8 @@ export async function syncKnockoutPropagation(categoryCode: CategoryCode) {
 
       if (secondChanceEnabled) {
         const isDev = process.env.NODE_ENV !== "production";
+        const playInsEnabled =
+          categoryCode === "WD" ? false : config?.playInsEnabled ?? false;
         const maxRoundA = maxRoundForSeries(matches as KnockoutMatchSnapshot[], "A");
         const maxRoundB = maxRoundForSeries(matches as KnockoutMatchSnapshot[], "B");
         const qfRoundA = maxRoundA > 0 ? 2 : 0;
@@ -177,9 +236,6 @@ export async function syncKnockoutPropagation(categoryCode: CategoryCode) {
             .filter((match) => match.series === "B" && match.round === qfRoundB)
             .sort((a, b) => a.matchNo - b.matchNo);
 
-          const bqfHomeById = new Map(
-            seriesBQFs.map((match) => [match.id, match.homeTeamId])
-          );
           if (isDev) {
             const aLoserIds = seriesAQFs.flatMap((match) => {
               const winner =
@@ -200,59 +256,74 @@ export async function syncKnockoutPropagation(categoryCode: CategoryCode) {
             }
           }
 
-          for (let index = 0; index < seriesAQFs.length; index += 1) {
-            const match = seriesAQFs[index];
-            const target = seriesBQFs[index];
-            if (!target) continue;
-
+          const completedLosers = seriesAQFs.flatMap((match) => {
             const winnerTeamId =
               match.winnerTeamId ?? deriveWinnerFromGames(match, scoringMode);
-            if (!winnerTeamId || !match.homeTeamId || !match.awayTeamId) continue;
+            if (!winnerTeamId || !match.homeTeamId || !match.awayTeamId) {
+              return [];
+            }
+            return [
+              {
+                matchNo: match.matchNo,
+                teamId:
+                  winnerTeamId === match.homeTeamId
+                    ? match.awayTeamId
+                    : match.homeTeamId,
+              },
+            ];
+          });
 
-            const loserTeamId =
-              winnerTeamId === match.homeTeamId
-                ? match.awayTeamId
-                : match.homeTeamId;
+          const desiredHomeByMatchNo = new Map<number, string>();
+          if (playInsEnabled) {
+            completedLosers.forEach((loser) => {
+              desiredHomeByMatchNo.set(loser.matchNo, loser.teamId);
+            });
+          } else {
+            const loserSeeds = completedLosers.length
+              ? await tx.knockoutSeed.findMany({
+                  where: {
+                    categoryCode,
+                    series: "A",
+                    teamId: { in: completedLosers.map((loser) => loser.teamId) },
+                  },
+                  orderBy: { seedNo: "asc" },
+                })
+              : [];
+            buildSecondChanceHomeAssignments(
+              loserSeeds.map((seed) => seed.teamId)
+            ).forEach((assignment) => {
+              desiredHomeByMatchNo.set(assignment.matchNo, assignment.homeTeamId);
+            });
+          }
 
-            const existingElsewhere = seriesBQFs.find(
-              (entry) =>
-                entry.id !== target.id &&
-                (bqfHomeById.get(entry.id) ?? entry.homeTeamId) === loserTeamId
-            );
-            if (existingElsewhere) {
-              throw new Error(
-                `Second chance conflict: loser already assigned to B QF${existingElsewhere.matchNo}.`
-              );
+          for (const target of seriesBQFs) {
+            const desiredHomeTeamId =
+              desiredHomeByMatchNo.get(target.matchNo) ?? null;
+            if (target.homeTeamId === desiredHomeTeamId) continue;
+
+            if (target.winnerTeamId) {
+              await clearDownstreamSlot(target.id, target.winnerTeamId);
             }
 
-            const currentSlot = bqfHomeById.get(target.id) ?? target.homeTeamId;
-            if (currentSlot && currentSlot !== loserTeamId) {
+            if (target.homeTeamId || target.winnerTeamId) {
               await tx.knockoutGameScore.deleteMany({
                 where: { knockoutMatchId: target.id },
               });
-              await tx.knockoutMatch.update({
-                where: { id: target.id },
-                data: {
-                  homeTeamId: loserTeamId,
-                  winnerTeamId: null,
-                  status: "SCHEDULED",
-                },
-              });
-              bqfHomeById.set(target.id, loserTeamId);
-              target.winnerTeamId = null;
-              target.status = "SCHEDULED";
-              changed += 1;
-              continue;
             }
 
-            if (!currentSlot) {
-              await tx.knockoutMatch.update({
-                where: { id: target.id },
-                data: { homeTeamId: loserTeamId },
-              });
-              bqfHomeById.set(target.id, loserTeamId);
-              changed += 1;
-            }
+            await tx.knockoutMatch.update({
+              where: { id: target.id },
+              data: {
+                homeTeamId: desiredHomeTeamId,
+                winnerTeamId: null,
+                status: "SCHEDULED",
+                completedAt: null,
+              },
+            });
+            target.homeTeamId = desiredHomeTeamId;
+            target.winnerTeamId = null;
+            target.status = "SCHEDULED";
+            changed += 1;
           }
         }
       }

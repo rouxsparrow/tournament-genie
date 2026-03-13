@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
+import { buildSecondChanceHomeAssignments } from "@/app/knockout/bracket-layout";
 import { prisma } from "@/lib/prisma";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
 import { requireAdmin } from "@/lib/auth";
@@ -209,6 +210,7 @@ async function clearDownstreamSlot(
     awayTeamId?: string | null;
     winnerTeamId?: string | null;
     status?: "SCHEDULED";
+    completedAt?: null;
   } = {
     [slotField]: null,
   };
@@ -220,6 +222,7 @@ async function clearDownstreamSlot(
   if (shouldReset) {
     updates.winnerTeamId = null;
     updates.status = "SCHEDULED";
+    updates.completedAt = null;
     await tx.knockoutGameScore.deleteMany({
       where: { knockoutMatchId: nextMatch.id },
     });
@@ -260,6 +263,7 @@ async function applyWinnerToNextMatch(
     awayTeamId?: string | null;
     winnerTeamId?: string | null;
     status?: "SCHEDULED";
+    completedAt?: null;
   } = {
     [slotField]: winnerTeamId,
   };
@@ -267,6 +271,7 @@ async function applyWinnerToNextMatch(
   if (currentSlot && currentSlot != winnerTeamId) {
     updates.winnerTeamId = null;
     updates.status = "SCHEDULED";
+    updates.completedAt = null;
     await tx.knockoutGameScore.deleteMany({
       where: { knockoutMatchId: nextMatch.id },
     });
@@ -369,183 +374,120 @@ async function clearLoserFromBronzeMatch(
   });
 }
 
-async function applySecondChanceDrop(
+async function reconcileSecondChanceDrops(
   tx: Prisma.TransactionClient,
-  match: {
-    id: string;
-    categoryCode: "MD" | "WD" | "XD";
-    series: "A" | "B";
-    round: number;
-    matchNo: number;
-    winnerTeamId: string | null;
-    homeTeamId: string | null;
-    awayTeamId: string | null;
-  },
-  winnerTeamId: string
+  categoryCode: "MD" | "WD" | "XD"
 ) {
-  if (match.series !== "A" || match.categoryCode === "WD") return;
+  if (categoryCode === "WD") return;
 
   const config = await tx.categoryConfig.findUnique({
-    where: { categoryCode: match.categoryCode },
+    where: { categoryCode },
   });
   if (!(config?.secondChanceEnabled ?? true)) return;
 
+  const playInsEnabled = config?.playInsEnabled ?? false;
   const qfRoundA = 2;
-  if (match.round !== qfRoundA) return;
-
-  if (!match.homeTeamId || !match.awayTeamId) return;
-  const loserTeamId =
-    winnerTeamId === match.homeTeamId ? match.awayTeamId : match.homeTeamId;
-
-  const seriesAQFs = await tx.knockoutMatch.findMany({
-    where: {
-      categoryCode: match.categoryCode,
-      series: "A",
-      round: qfRoundA,
-    },
-    select: { id: true },
-    orderBy: { matchNo: "asc" },
-  });
-  const qfIndex = seriesAQFs.findIndex((entry) => entry.id === match.id);
-  if (qfIndex < 0) return;
-
   const qfRoundB = 2;
 
-  const seriesBQFs = await tx.knockoutMatch.findMany({
-    where: {
-      categoryCode: match.categoryCode,
-      series: "B",
-      round: qfRoundB,
-    },
-    orderBy: { matchNo: "asc" },
+  const [seriesAQFs, seriesBQFs] = await Promise.all([
+    tx.knockoutMatch.findMany({
+      where: {
+        categoryCode,
+        series: "A",
+        round: qfRoundA,
+      },
+      select: {
+        id: true,
+        matchNo: true,
+        winnerTeamId: true,
+        homeTeamId: true,
+        awayTeamId: true,
+      },
+      orderBy: { matchNo: "asc" },
+    }),
+    tx.knockoutMatch.findMany({
+      where: {
+        categoryCode,
+        series: "B",
+        round: qfRoundB,
+      },
+      select: {
+        id: true,
+        matchNo: true,
+        homeTeamId: true,
+        awayTeamId: true,
+        winnerTeamId: true,
+        status: true,
+        completedAt: true,
+      },
+      orderBy: { matchNo: "asc" },
+    }),
+  ]);
+
+  if (seriesBQFs.length === 0) return;
+
+  const completedLosers = seriesAQFs.flatMap((match) => {
+    if (!match.winnerTeamId || !match.homeTeamId || !match.awayTeamId) {
+      return [];
+    }
+    return [
+      {
+        matchNo: match.matchNo,
+        teamId:
+          match.winnerTeamId === match.homeTeamId
+            ? match.awayTeamId
+            : match.homeTeamId,
+      },
+    ];
   });
-  const target = seriesBQFs[qfIndex];
-  if (!target) return;
 
-  const existingElsewhere = await tx.knockoutMatch.findFirst({
-    where: {
-      categoryCode: match.categoryCode,
-      series: "B",
-      round: qfRoundB,
-      homeTeamId: loserTeamId,
-      NOT: { id: target.id },
-    },
-    select: { id: true, matchNo: true },
-  });
-  if (existingElsewhere) {
-    throw new Error(
-      `Second chance conflict: loser already assigned to B QF${existingElsewhere.matchNo}.`
-    );
-  }
+  const desiredHomeByMatchNo = new Map<number, string>();
 
-  if (target.homeTeamId && target.homeTeamId !== loserTeamId) {
-    throw new Error(
-      `Second chance slot already occupied for B QF${target.matchNo}.`
-    );
-  }
-
-  if (target.homeTeamId === loserTeamId) return;
-
-  const previousTeamId = target.homeTeamId;
-  const previousWinner = target.winnerTeamId;
-  const updates: {
-    homeTeamId?: string | null;
-    winnerTeamId?: string | null;
-    status?: "SCHEDULED";
-  } = { homeTeamId: loserTeamId };
-
-  if (previousTeamId && previousTeamId !== loserTeamId) {
-    updates.winnerTeamId = null;
-    updates.status = "SCHEDULED";
-    await tx.knockoutGameScore.deleteMany({
-      where: { knockoutMatchId: target.id },
+  if (playInsEnabled) {
+    completedLosers.forEach((loser) => {
+      desiredHomeByMatchNo.set(loser.matchNo, loser.teamId);
+    });
+  } else {
+    const loserSeeds = completedLosers.length
+      ? await tx.knockoutSeed.findMany({
+          where: {
+            categoryCode,
+            series: "A",
+            teamId: { in: completedLosers.map((loser) => loser.teamId) },
+          },
+          orderBy: { seedNo: "asc" },
+        })
+      : [];
+    buildSecondChanceHomeAssignments(
+      loserSeeds.map((seed) => seed.teamId)
+    ).forEach((assignment) => {
+      desiredHomeByMatchNo.set(assignment.matchNo, assignment.homeTeamId);
     });
   }
 
-  await tx.knockoutMatch.update({
-    where: { id: target.id },
-    data: updates,
-  });
+  for (const target of seriesBQFs) {
+    const desiredHomeTeamId = desiredHomeByMatchNo.get(target.matchNo) ?? null;
+    if (target.homeTeamId === desiredHomeTeamId) continue;
 
-  if (previousTeamId && previousTeamId !== loserTeamId && previousWinner) {
-    await clearDownstreamSlot(tx, target.id, previousWinner);
-  }
-}
+    if (target.winnerTeamId) {
+      await clearDownstreamSlot(tx, target.id, target.winnerTeamId);
+    }
 
-async function clearSecondChanceDrop(
-  tx: Prisma.TransactionClient,
-  match: {
-    id: string;
-    categoryCode: "MD" | "WD" | "XD";
-    series: "A" | "B";
-    round: number;
-    matchNo: number;
-    winnerTeamId: string | null;
-    homeTeamId: string | null;
-    awayTeamId: string | null;
-  }
-) {
-  if (match.series !== "A" || match.categoryCode === "WD") return;
+    if (target.homeTeamId || target.winnerTeamId || target.completedAt) {
+      await tx.knockoutGameScore.deleteMany({
+        where: { knockoutMatchId: target.id },
+      });
+    }
 
-  const config = await tx.categoryConfig.findUnique({
-    where: { categoryCode: match.categoryCode },
-  });
-  if (!(config?.secondChanceEnabled ?? true)) return;
-
-  const qfRoundA = 2;
-  if (match.round !== qfRoundA) return;
-
-  if (!match.winnerTeamId || !match.homeTeamId || !match.awayTeamId) return;
-  const loserTeamId =
-    match.winnerTeamId === match.homeTeamId ? match.awayTeamId : match.homeTeamId;
-
-  const seriesAQFs = await tx.knockoutMatch.findMany({
-    where: {
-      categoryCode: match.categoryCode,
-      series: "A",
-      round: qfRoundA,
-    },
-    select: { id: true },
-    orderBy: { matchNo: "asc" },
-  });
-  const qfIndex = seriesAQFs.findIndex((entry) => entry.id === match.id);
-  if (qfIndex < 0) return;
-
-  const qfRoundB = 2;
-
-  const seriesBQFs = await tx.knockoutMatch.findMany({
-    where: {
-      categoryCode: match.categoryCode,
-      series: "B",
-      round: qfRoundB,
-    },
-    orderBy: { matchNo: "asc" },
-  });
-  const target = seriesBQFs[qfIndex];
-  if (!target) return;
-
-  if (target.homeTeamId !== loserTeamId) return;
-
-  const previousWinner = target.winnerTeamId;
-  const shouldReset =
-    previousWinner === loserTeamId || !target.awayTeamId;
-
-  if (shouldReset) {
-    await tx.knockoutGameScore.deleteMany({
-      where: { knockoutMatchId: target.id },
+    await tx.knockoutMatch.update({
+      where: { id: target.id },
+      data: {
+        homeTeamId: desiredHomeTeamId,
+        winnerTeamId: null,
+        status: "SCHEDULED",
+        completedAt: null,
+      },
     });
-  }
-
-  await tx.knockoutMatch.update({
-    where: { id: target.id },
-    data: {
-      homeTeamId: null,
-      ...(shouldReset ? { winnerTeamId: null, status: "SCHEDULED" } : {}),
-    },
-  });
-
-  if (shouldReset && previousWinner) {
-    await clearDownstreamSlot(tx, target.id, previousWinner);
   }
 }
 
@@ -1316,7 +1258,6 @@ export async function upsertKnockoutMatchScore(
       if (match.winnerTeamId) {
         await clearDownstreamSlot(tx, match.id, match.winnerTeamId);
       }
-      await clearSecondChanceDrop(tx, match);
       await clearLoserFromBronzeMatch(tx, match);
       await tx.knockoutGameScore.deleteMany({
         where: { knockoutMatchId: match.id },
@@ -1329,6 +1270,7 @@ export async function upsertKnockoutMatchScore(
           completedAt: null,
         },
       });
+      await reconcileSecondChanceDrops(tx, match.categoryCode);
     });
     await invalidatePublicReadModels({
       type: "knockout-results",
@@ -1416,7 +1358,7 @@ export async function upsertKnockoutMatchScore(
     });
     if (winnerTeamId) {
       await applyWinnerToNextMatch(tx, match.id, winnerTeamId);
-      await applySecondChanceDrop(tx, match, winnerTeamId);
+      await reconcileSecondChanceDrops(tx, match.categoryCode);
       await applyLoserToBronzeMatch(tx, match, winnerTeamId);
     }
   });
@@ -1459,7 +1401,6 @@ export async function undoKnockoutMatchResult(formData: FormData) {
     if (match.winnerTeamId) {
       await clearDownstreamSlot(tx, match.id, match.winnerTeamId);
     }
-    await clearSecondChanceDrop(tx, match);
     await clearLoserFromBronzeMatch(tx, match);
     await tx.knockoutGameScore.deleteMany({ where: { knockoutMatchId: match.id } });
     await tx.knockoutMatch.update({
@@ -1470,6 +1411,7 @@ export async function undoKnockoutMatchResult(formData: FormData) {
         completedAt: null,
       },
     });
+    await reconcileSecondChanceDrops(tx, match.categoryCode);
   });
 
   await invalidatePublicReadModels({

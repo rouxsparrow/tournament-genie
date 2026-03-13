@@ -7,6 +7,12 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
 import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
 import { publishBroadcastRefreshEvent } from "@/lib/supabase/broadcast-refresh-publisher";
+import {
+  buildGroupRemainingLoadMap,
+  buildUpcomingFromSortedQueue,
+  computeGroupBottleneckForPlayers,
+  sortQueueMatches,
+} from "@/lib/schedule/group-priority";
 
 type CategoryFilter = "ALL" | "MD" | "WD" | "XD";
 type MatchType = "GROUP" | "KNOCKOUT";
@@ -59,6 +65,8 @@ type ScheduleMatchItem = {
     playerIds: string[];
   };
   restScore: number;
+  bottleneckMaxLoad: number;
+  bottleneckSumLoad: number;
   forcedRank?: number;
   isForced?: boolean;
   blockReason?: BlockReason;
@@ -593,6 +601,8 @@ function buildMatchItem(params: {
   homeTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
   awayTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
   restScore: number;
+  bottleneckMaxLoad?: number;
+  bottleneckSumLoad?: number;
   forcedRank?: number;
   isForced?: boolean;
   blockReason?: BlockReason;
@@ -627,6 +637,8 @@ function buildMatchItem(params: {
       playerIds: [...home.playerIds, ...away.playerIds],
     },
     restScore: params.restScore,
+    bottleneckMaxLoad: params.bottleneckMaxLoad ?? 0,
+    bottleneckSumLoad: params.bottleneckSumLoad ?? 0,
     forcedRank: params.forcedRank,
     isForced:
       typeof params.isForced === "boolean"
@@ -651,6 +663,8 @@ function buildMatchItemLite(params: {
   homeTeam: { name: string; members: { playerId: string }[] } | null;
   awayTeam: { name: string; members: { playerId: string }[] } | null;
   restScore: number;
+  bottleneckMaxLoad?: number;
+  bottleneckSumLoad?: number;
   forcedRank?: number;
   isForced?: boolean;
   blockReason?: BlockReason;
@@ -681,6 +695,8 @@ function buildMatchItemLite(params: {
       playerIds: [...homeIds, ...awayIds],
     },
     restScore: params.restScore,
+    bottleneckMaxLoad: params.bottleneckMaxLoad ?? 0,
+    bottleneckSumLoad: params.bottleneckSumLoad ?? 0,
     forcedRank: params.forcedRank,
     isForced:
       typeof params.isForced === "boolean"
@@ -760,11 +776,17 @@ function buildEligibleGroupItemFromMatch(
     homeTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
     awayTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
   },
-  forcedRank?: number
+  forcedRank?: number,
+  groupRemainingLoadMap?: Map<string, number>
 ) {
   if (!match.group?.category || !isListEligibleGroupMatch(match)) {
     return null;
   }
+  const playerIds = getPlayersForGroupMatch(match);
+  const bottleneck =
+    groupRemainingLoadMap
+      ? computeGroupBottleneckForPlayers(playerIds, groupRemainingLoadMap)
+      : { bottleneckMaxLoad: 0, bottleneckSumLoad: 0 };
   return buildMatchItem({
     matchType: "GROUP",
     matchId: match.id,
@@ -774,6 +796,8 @@ function buildEligibleGroupItemFromMatch(
     homeTeam: match.homeTeam,
     awayTeam: match.awayTeam,
     restScore: 0,
+    bottleneckMaxLoad: bottleneck.bottleneckMaxLoad,
+    bottleneckSumLoad: bottleneck.bottleneckSumLoad,
     forcedRank,
     isForced: typeof forcedRank === "number",
   });
@@ -1001,93 +1025,14 @@ async function listRefereeNotifications(
 function buildUpcoming(
   queueMatches: ScheduleMatchItem[],
   playingPlayerIds: Set<string>,
+  stage: ScheduleStage,
   limit = 5
 ) {
-  const forcedCandidates = queueMatches.filter((match) => match.isForced);
-  const normalCandidates = queueMatches.filter((match) => !match.isForced);
-  const upcoming: ScheduleMatchItem[] = [];
-  const pickedPlayerIds = new Set<string>();
-
-  if (SCHEDULE_DEBUG) {
-    console.log("[schedule][debug] upcoming candidates", {
-      forcedCount: forcedCandidates.length,
-      normalCount: normalCandidates.length,
-      playingCount: playingPlayerIds.size,
-      limit,
-    });
-  }
-
-  const logConsider = (
-    tier: string,
-    match: ScheduleMatchItem,
-    overlapsPicked: boolean,
-    overlapsPlaying: boolean,
-    decision: "PICK" | "SKIP",
-    reason?: string
-  ) => {
-    if (!SCHEDULE_DEBUG) return;
-    console.log(
-      `[schedule][debug] ${tier} key=${match.key} forced=${match.isForced ? "y" : "n"} ` +
-        `overlapsPicked=${overlapsPicked ? "y" : "n"} overlapsPlaying=${overlapsPlaying ? "y" : "n"} ` +
-        `=> ${decision}${reason ? `(${reason})` : ""}`
-    );
-  };
-
-  const pickFrom = (
-    candidates: ScheduleMatchItem[],
-    requireAssignable: boolean,
-    tierLabel: string
-  ) => {
-    let tierCount = 0;
-    let logCount = 0;
-    for (const match of candidates) {
-      const overlapsPicked = hasInPlayPlayers(match.teams.playerIds, pickedPlayerIds);
-      const overlapsPlaying = hasInPlayPlayers(match.teams.playerIds, playingPlayerIds);
-      if (upcoming.length >= limit) {
-        if (SCHEDULE_DEBUG && logCount < 30) {
-          logConsider(tierLabel, match, overlapsPicked, overlapsPlaying, "SKIP", "full");
-          logCount += 1;
-        }
-        break;
-      }
-      if (overlapsPicked) {
-        if (SCHEDULE_DEBUG && logCount < 30) {
-          logConsider(tierLabel, match, overlapsPicked, overlapsPlaying, "SKIP", "pickedPlayers");
-          logCount += 1;
-        }
-        continue;
-      }
-      if (requireAssignable && overlapsPlaying) {
-        if (SCHEDULE_DEBUG && logCount < 30) {
-          logConsider(tierLabel, match, overlapsPicked, overlapsPlaying, "SKIP", "playingConflict");
-          logCount += 1;
-        }
-        continue;
-      }
-      if (SCHEDULE_DEBUG && logCount < 30) {
-        logConsider(
-          tierLabel,
-          match,
-          overlapsPicked,
-          overlapsPlaying,
-          "PICK",
-          overlapsPlaying ? "waiting" : "assignable"
-        );
-        logCount += 1;
-      }
-      upcoming.push(match);
-      match.teams.playerIds.forEach((id) => pickedPlayerIds.add(id));
-      tierCount += 1;
-    }
-    if (SCHEDULE_DEBUG) {
-      console.log(`[schedule][debug] ${tierLabel} picked=${tierCount}`);
-    }
-  };
-
-  pickFrom(forcedCandidates, true, "tier1 forced+assignable");
-  pickFrom(forcedCandidates, false, "tier2 forced+waiting");
-  pickFrom(normalCandidates, true, "tier3 normal+assignable");
-  pickFrom(normalCandidates, false, "tier4 normal+waiting");
+  const upcoming = buildUpcomingFromSortedQueue(queueMatches, {
+    stage,
+    inPlayPlayerIds: playingPlayerIds,
+    limit,
+  });
 
   if (SCHEDULE_DEBUG) {
     console.log(
@@ -1124,29 +1069,12 @@ function computeRestScore(
   return rested;
 }
 
-function sortEligible(matches: ScheduleMatchItem[]) {
-  return [...matches].sort((a, b) => {
-    const aForced = a.forcedRank ?? Number.POSITIVE_INFINITY;
-    const bForced = b.forcedRank ?? Number.POSITIVE_INFINITY;
-    if (aForced !== bForced) return aForced - bForced;
-
-    const aType = a.matchType === "GROUP" ? 0 : 1;
-    const bType = b.matchType === "GROUP" ? 0 : 1;
-    if (aType !== bType) return aType - bType;
-    if (a.restScore !== b.restScore) return b.restScore - a.restScore;
-    // KO tie-break: earlier rounds first (progression-first).
-    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.round !== b.round) {
-      return (a.round ?? 0) - (b.round ?? 0);
-    }
-    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.series !== b.series) {
-      const seriesRank: Record<string, number> = { B: 0, A: 1 };
-      const aSeries = a.series ? seriesRank[a.series] ?? 2 : 2;
-      const bSeries = b.series ? seriesRank[b.series] ?? 2 : 2;
-      if (aSeries !== bSeries) return aSeries - bSeries;
-    }
-    if (a.matchNo !== b.matchNo) return (a.matchNo ?? 0) - (b.matchNo ?? 0);
-    return a.matchId.localeCompare(b.matchId);
-  });
+function sortEligible(
+  matches: ScheduleMatchItem[],
+  stage: ScheduleStage,
+  inPlayPlayerIds: Set<string>
+) {
+  return sortQueueMatches(matches, { stage, inPlayPlayerIds });
 }
 
 async function buildLastBatchData(matchKeys: string[]): Promise<LastBatchPayload> {
@@ -1290,6 +1218,33 @@ async function getRecentCompletedPlayerIds(stage: ScheduleStage, limit = 5) {
     getPlayersForKnockoutMatchIds(match).forEach((id) => playerIds.add(id));
   }
   return playerIds;
+}
+
+async function loadGroupRemainingLoadMapFromDb() {
+  const groupMatches = await prisma.match.findMany({
+    where: {
+      stage: "GROUP",
+      status: "SCHEDULED",
+      homeTeamId: { not: null },
+      awayTeamId: { not: null },
+    },
+    select: {
+      status: true,
+      homeTeamId: true,
+      awayTeamId: true,
+      homeTeam: scheduleTeamIdOnlySelect,
+      awayTeam: scheduleTeamIdOnlySelect,
+    },
+  });
+
+  return buildGroupRemainingLoadMap(
+    groupMatches.map((match) => ({
+      status: match.status,
+      homeTeamId: match.homeTeamId,
+      awayTeamId: match.awayTeamId,
+      playerIds: getPlayersForGroupMatchIds(match),
+    }))
+  );
 }
 
 async function getLastBatchFromAssignments(stage: ScheduleStage) {
@@ -1506,6 +1461,17 @@ async function buildListEligibleMatches(params: {
   const uncheckedPlayerIds = params.uncheckedPlayerIds ?? (await loadUncheckedPlayerIds());
   const playingSet = params.playingSet;
   const recentlyPlayedSet = params.recentlyPlayedSet;
+  const groupRemainingLoadMap =
+    params.stage === "GROUP"
+      ? buildGroupRemainingLoadMap(
+          groupMatches.map((match) => ({
+            status: match.status,
+            homeTeamId: match.homeTeamId,
+            awayTeamId: match.awayTeamId,
+            playerIds: getPlayersForGroupMatch(match),
+          }))
+        )
+      : new Map<string, number>();
 
   const blockedKeys = buildBlockedKeys(blocked);
 
@@ -1530,6 +1496,7 @@ async function buildListEligibleMatches(params: {
       if (blockedKeys.has(matchKey)) continue;
       if (!isListEligibleGroupMatch(match)) continue;
       const playerIds = getPlayersForGroupMatch(match);
+      const bottleneck = computeGroupBottleneckForPlayers(playerIds, groupRemainingLoadMap);
       if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) continue;
       eligible.push(
         buildMatchItem({
@@ -1541,6 +1508,8 @@ async function buildListEligibleMatches(params: {
           homeTeam: match.homeTeam,
           awayTeam: match.awayTeam,
           restScore: computeRestScore(playerIds, playingSet, recentlyPlayedSet),
+          bottleneckMaxLoad: bottleneck.bottleneckMaxLoad,
+          bottleneckSumLoad: bottleneck.bottleneckSumLoad,
           forcedRank: forcedData.rankMap.get(matchKey),
           isForced: forcedData.forcedSet.has(matchKey),
         })
@@ -1576,7 +1545,7 @@ async function buildListEligibleMatches(params: {
     }
   }
 
-  return sortEligible(eligible);
+  return sortEligible(eligible, params.stage, playingSet);
 }
 
 async function clearInvalidAssignments(params: {
@@ -1781,6 +1750,17 @@ async function applyAutoSchedule(params: {
         blocked,
         forcedData,
       } = snapshot;
+      const groupRemainingLoadMap =
+        params.stage === "GROUP"
+          ? buildGroupRemainingLoadMap(
+              eligibleSource.groupMatches.map((match) => ({
+                status: match.status,
+                homeTeamId: match.homeTeamId,
+                awayTeamId: match.awayTeamId,
+                playerIds: getPlayersForGroupMatch(match),
+              }))
+            )
+          : new Map<string, number>();
 
       if (SCHEDULE_DEBUG) {
         console.log("[schedule] active assignments", {
@@ -1847,6 +1827,7 @@ async function applyAutoSchedule(params: {
           if (blockedKeys.has(matchKey)) continue;
           if (!isListEligibleGroupMatch(match)) continue;
           const playerIds = getPlayersForGroupMatch(match);
+          const bottleneck = computeGroupBottleneckForPlayers(playerIds, groupRemainingLoadMap);
           if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) continue;
           eligible.push(
             buildMatchItem({
@@ -1858,6 +1839,8 @@ async function applyAutoSchedule(params: {
               homeTeam: match.homeTeam,
               awayTeam: match.awayTeam,
               restScore: computeRestScore(playerIds, inPlayPlayerIds, lastBatchPlayerIds),
+              bottleneckMaxLoad: bottleneck.bottleneckMaxLoad,
+              bottleneckSumLoad: bottleneck.bottleneckSumLoad,
               forcedRank: forcedData.rankMap.get(matchKey),
             })
           );
@@ -1891,7 +1874,7 @@ async function applyAutoSchedule(params: {
         }
       }
 
-      const eligibleSorted = sortEligible(eligible);
+      const eligibleSorted = sortEligible(eligible, params.stage, inPlayPlayerIds);
       const assignableNow = eligibleSorted.filter((match) =>
         isAssignableNow(match.teams.playerIds, inPlayPlayerIds)
       );
@@ -2360,7 +2343,7 @@ export async function getScheduleState(
       ).length
     : 0;
   const upcomingAssignableCount = includeCounts
-    ? buildUpcoming(eligibleFinal, inPlayPlayerIds, 5).filter((match) =>
+    ? buildUpcoming(eligibleFinal, inPlayPlayerIds, stage, 5).filter((match) =>
         isAssignableNow(match.teams.playerIds, inPlayPlayerIds)
       ).length
     : 0;
@@ -2516,12 +2499,12 @@ export async function getScheduleState(
           }
         }
 
-        return sortEligible([...blockedByKey.values()]);
+        return sortEligible([...blockedByKey.values()], stage, new Set<string>());
       })()
     : [];
 
   const finalAssemblyStartedAt = startPerfTimer();
-  const upcoming = buildUpcoming(eligibleFinal, inPlayPlayerIds, 5);
+  const upcoming = buildUpcoming(eligibleFinal, inPlayPlayerIds, stage, 5);
 
   if (SCHEDULE_DEBUG) {
     console.log(
@@ -2817,6 +2800,14 @@ export async function getPresentingState(filters?: {
       },
       orderBy: [{ group: { name: "asc" } }, { createdAt: "asc" }],
     });
+    const groupRemainingLoadMap = buildGroupRemainingLoadMap(
+      groupMatches.map((match) => ({
+        status: match.status,
+        homeTeamId: match.homeTeamId,
+        awayTeamId: match.awayTeamId,
+        playerIds: [...getLitePlayerIds(match.homeTeam), ...getLitePlayerIds(match.awayTeam)],
+      }))
+    );
 
     eligible = groupMatches.flatMap((match) => {
       if (!match.group || !match.group.category) return [];
@@ -2827,6 +2818,7 @@ export async function getPresentingState(filters?: {
         ...getLitePlayerIds(match.homeTeam),
         ...getLitePlayerIds(match.awayTeam),
       ];
+      const bottleneck = computeGroupBottleneckForPlayers(playerIds, groupRemainingLoadMap);
       if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) return [];
       return [
         buildMatchItemLite({
@@ -2838,6 +2830,8 @@ export async function getPresentingState(filters?: {
           homeTeam: match.homeTeam,
           awayTeam: match.awayTeam,
           restScore: computeRestScore(playerIds, inPlayPlayerIds, recentlyPlayedSet),
+          bottleneckMaxLoad: bottleneck.bottleneckMaxLoad,
+          bottleneckSumLoad: bottleneck.bottleneckSumLoad,
           forcedRank: forcedData.rankMap.get(matchKey),
           isForced: forcedData.forcedSet.has(matchKey),
         }),
@@ -2885,8 +2879,8 @@ export async function getPresentingState(filters?: {
     });
   }
 
-  const eligibleSorted = sortEligible(eligible);
-  const upcoming = buildUpcoming(eligibleSorted, inPlayPlayerIds, 5);
+  const eligibleSorted = sortEligible(eligible, stage, inPlayPlayerIds);
+  const upcoming = buildUpcoming(eligibleSorted, inPlayPlayerIds, stage, 5);
 
   return {
     stage,
@@ -3103,11 +3097,18 @@ export async function backToQueue(
   const addEligible: ScheduleMatchItem[] = [];
   const uncheckedPlayerIds = await loadUncheckedPlayerIds();
   let forcedRankMap: Map<string, number> | null = null;
+  let groupRemainingLoadMap: Map<string, number> | null = null;
   const getForcedRank = async (matchType: MatchType, matchId: string) => {
     if (!forcedRankMap) {
       forcedRankMap = await loadForcedRankMap(stage);
     }
     return getForcedRankFromMap(forcedRankMap, stage, matchType, matchId);
+  };
+  const getGroupRemainingLoadMap = async () => {
+    if (!groupRemainingLoadMap) {
+      groupRemainingLoadMap = await loadGroupRemainingLoadMapFromDb();
+    }
+    return groupRemainingLoadMap;
   };
 
   if (assignment.matchType === "GROUP" && assignment.groupMatchId && assignment.groupMatch) {
@@ -3118,7 +3119,11 @@ export async function backToQueue(
     });
     if (!blocked && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
       const forcedRank = await getForcedRank("GROUP", assignment.groupMatchId);
-      const item = buildEligibleGroupItemFromMatch(assignment.groupMatch, forcedRank);
+      const item = buildEligibleGroupItemFromMatch(
+        assignment.groupMatch,
+        forcedRank,
+        await getGroupRemainingLoadMap()
+      );
       if (item) addEligible.push(item);
     }
   }
@@ -3225,11 +3230,18 @@ export async function swapBackToQueue(
   const addEligible: ScheduleMatchItem[] = [];
   const uncheckedPlayerIds = await loadUncheckedPlayerIds();
   let forcedRankMap: Map<string, number> | null = null;
+  let groupRemainingLoadMap: Map<string, number> | null = null;
   const getForcedRank = async (matchType: MatchType, matchId: string) => {
     if (!forcedRankMap) {
       forcedRankMap = await loadForcedRankMap(stage);
     }
     return getForcedRankFromMap(forcedRankMap, stage, matchType, matchId);
+  };
+  const getGroupRemainingLoadMap = async () => {
+    if (!groupRemainingLoadMap) {
+      groupRemainingLoadMap = await loadGroupRemainingLoadMapFromDb();
+    }
+    return groupRemainingLoadMap;
   };
 
   if (assignment.matchType === "GROUP" && assignment.groupMatchId && assignment.groupMatch) {
@@ -3240,7 +3252,11 @@ export async function swapBackToQueue(
     });
     if (!blocked && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
       const forcedRank = await getForcedRank("GROUP", assignment.groupMatchId);
-      const item = buildEligibleGroupItemFromMatch(assignment.groupMatch, forcedRank);
+      const item = buildEligibleGroupItemFromMatch(
+        assignment.groupMatch,
+        forcedRank,
+        await getGroupRemainingLoadMap()
+      );
       if (item) addEligible.push(item);
     }
   }
@@ -3505,11 +3521,18 @@ export async function unblockMatch(
   const uncheckedPlayerIds = await loadUncheckedPlayerIds();
   let addEligible: ScheduleMatchItem[] = [];
   let forcedRankMap: Map<string, number> | null = null;
+  let groupRemainingLoadMap: Map<string, number> | null = null;
   const getForcedRank = async (nextMatchType: MatchType, nextMatchId: string) => {
     if (!forcedRankMap) {
       forcedRankMap = await loadForcedRankMap(stage);
     }
     return getForcedRankFromMap(forcedRankMap, stage, nextMatchType, nextMatchId);
+  };
+  const getGroupRemainingLoadMap = async () => {
+    if (!groupRemainingLoadMap) {
+      groupRemainingLoadMap = await loadGroupRemainingLoadMapFromDb();
+    }
+    return groupRemainingLoadMap;
   };
 
   if (matchType === "GROUP") {
@@ -3522,7 +3545,11 @@ export async function unblockMatch(
     }
     if (match) {
       const forcedRank = await getForcedRank("GROUP", matchId);
-      const item = buildEligibleGroupItemFromMatch(match, forcedRank);
+      const item = buildEligibleGroupItemFromMatch(
+        match,
+        forcedRank,
+        await getGroupRemainingLoadMap()
+      );
       if (item) addEligible = [item];
     }
   } else {
@@ -3819,11 +3846,18 @@ export async function assignNext(params: {
   const clearedMatchKeys: string[] = [];
   const addEligible: ScheduleMatchItem[] = [];
   let forcedRankMap: Map<string, number> | null = null;
+  let groupRemainingLoadMap: Map<string, number> | null = null;
   const getForcedRank = async (matchType: MatchType, matchId: string) => {
     if (!forcedRankMap) {
       forcedRankMap = await loadForcedRankMap(params.stage);
     }
     return getForcedRankFromMap(forcedRankMap, params.stage, matchType, matchId);
+  };
+  const getGroupRemainingLoadMap = async () => {
+    if (!groupRemainingLoadMap) {
+      groupRemainingLoadMap = await loadGroupRemainingLoadMapFromDb();
+    }
+    return groupRemainingLoadMap;
   };
   for (const assignment of existingCourtAssignments) {
     const clearedMatchKey =
@@ -3847,7 +3881,11 @@ export async function assignNext(params: {
       });
       if (!blockedCurrent && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
         const forcedRank = await getForcedRank("GROUP", assignment.groupMatchId);
-        const item = buildEligibleGroupItemFromMatch(assignment.groupMatch, forcedRank);
+        const item = buildEligibleGroupItemFromMatch(
+          assignment.groupMatch,
+          forcedRank,
+          await getGroupRemainingLoadMap()
+        );
         if (item) addEligible.push(item);
       }
       continue;

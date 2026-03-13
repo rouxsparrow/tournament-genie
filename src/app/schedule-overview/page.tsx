@@ -10,6 +10,13 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  buildGroupRemainingLoadMap,
+  buildUpcomingFromSortedQueue,
+  computeGroupBottleneckForPlayers,
+  sortQueueMatches,
+  type QueuePriorityMatch,
+} from "@/lib/schedule/group-priority";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Schedule Overview" };
@@ -191,10 +198,6 @@ function getCategoryCode(match: CategoryMatch): CategoryCode {
   );
 }
 
-function hasOverlap(playerIds: string[], playingSet: Set<string>) {
-  return playerIds.some((id) => playingSet.has(id));
-}
-
 function hashString(value: string) {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -291,98 +294,90 @@ export default async function ScheduleOverviewPage({
   const matchPlayers = new Map<string, string[]>(
     remainingPool.map((match) => [match.id, extractPlayerIdList(match)])
   );
-  const plannedTotalMatches = new Map<string, number>();
-  matchPlayers.forEach((players) => {
-    players.forEach((playerId) => {
-      plannedTotalMatches.set(playerId, (plannedTotalMatches.get(playerId) ?? 0) + 1);
-    });
-  });
   for (let slotIndex = 0; slotIndex < MAX_SLOTS; slotIndex += 1) {
     if (remainingPool.length === 0) break;
-    const slotPickedPlayers = new Set<string>();
     const slotEntries: {
       match: CategoryMatch | null;
       restCount: number;
       playerWouldBe: Map<string, number>;
     }[] = [];
     const playedThisSlot = new Set<string>();
-
-    for (let courtIndex = 0; courtIndex < COURT_COUNT; courtIndex += 1) {
-      const sortedCandidates = [...remainingPool].sort((a, b) => {
-        const aPlayers = matchPlayers.get(a.id) ?? extractPlayerIdList(a);
-        const bPlayers = matchPlayers.get(b.id) ?? extractPlayerIdList(b);
-
-        const aPenalty = aPlayers.reduce((sum, id) => {
-          if (lastPlayedSlot.get(id) !== slotIndex - 1) return sum;
-          const matchCount = plannedTotalMatches.get(id) ?? 0;
-          return sum + matchCount;
-        }, 0);
-        const bPenalty = bPlayers.reduce((sum, id) => {
-          if (lastPlayedSlot.get(id) !== slotIndex - 1) return sum;
-          const matchCount = plannedTotalMatches.get(id) ?? 0;
-          return sum + matchCount;
-        }, 0);
-        if (aPenalty !== bPenalty) return aPenalty - bPenalty;
-
-        const aRest = aPlayers.reduce((count, id) => {
-          return lastPlayedSlot.get(id) === slotIndex - 1 ? count : count + 1;
-        }, 0);
-        const bRest = bPlayers.reduce((count, id) => {
-          return lastPlayedSlot.get(id) === slotIndex - 1 ? count : count + 1;
-        }, 0);
-        if (aRest !== bRest) return bRest - aRest;
-
-        const categoryA = getCategoryCode(a);
-        const categoryB = getCategoryCode(b);
-        const categoryOrder =
-          (categoryRank.get(categoryA) ?? 0) - (categoryRank.get(categoryB) ?? 0);
-        if (categoryOrder !== 0) return categoryOrder;
-
-        const groupA = a.group?.name ?? "";
-        const groupB = b.group?.name ?? "";
-        if (groupA !== groupB) return groupA.localeCompare(groupB);
-        return a.id.localeCompare(b.id);
+    const groupRemainingLoadMap = buildGroupRemainingLoadMap(
+      remainingPool.map((match) => ({
+        status: match.status,
+        homeTeamId: match.homeTeam ? "HOME" : null,
+        awayTeamId: match.awayTeam ? "AWAY" : null,
+        playerIds: matchPlayers.get(match.id) ?? extractPlayerIdList(match),
+      }))
+    );
+    type OverviewCandidate = QueuePriorityMatch & {
+      match: CategoryMatch;
+      playerIds: string[];
+    };
+    const candidateQueue: OverviewCandidate[] = remainingPool.flatMap((match) => {
+      const playerIds = matchPlayers.get(match.id) ?? extractPlayerIdList(match);
+      const eligibleByConsecutive = playerIds.every((id) => {
+        const slots = playedSlotsByPlayer.get(id) ?? [];
+        const last = slots[slots.length - 1];
+        const prev = slots[slots.length - 2];
+        if (last === slotIndex - 1 && prev === slotIndex - 2) return false;
+        const wouldInc = last === slotIndex - 1 ? 1 : 0;
+        const currentTotal = totalConsecutiveMatches.get(id) ?? 0;
+        return currentTotal + wouldInc <= 2;
       });
+      if (!eligibleByConsecutive) return [];
 
-      const candidate = sortedCandidates.find((match) => {
-        const playerIds = matchPlayers.get(match.id) ?? extractPlayerIdList(match);
-        if (hasOverlap(playerIds, slotPickedPlayers)) return false;
-        return playerIds.every((id) => {
-          const slots = playedSlotsByPlayer.get(id) ?? [];
-          const last = slots[slots.length - 1];
-          const prev = slots[slots.length - 2];
-          if (last === slotIndex - 1 && prev === slotIndex - 2) return false;
-          const wouldInc = last === slotIndex - 1 ? 1 : 0;
-          const currentTotal = totalConsecutiveMatches.get(id) ?? 0;
-          return currentTotal + wouldInc <= 2;
-        });
-      });
+      const restCount = playerIds.reduce((count, id) => {
+        return lastPlayedSlot.get(id) === slotIndex - 1 ? count : count + 1;
+      }, 0);
+      const bottleneck = computeGroupBottleneckForPlayers(playerIds, groupRemainingLoadMap);
+      return [
+        {
+          match,
+          playerIds,
+          matchId: match.id,
+          matchType: "GROUP",
+          restScore: restCount,
+          isForced: false,
+          bottleneckMaxLoad: bottleneck.bottleneckMaxLoad,
+          bottleneckSumLoad: bottleneck.bottleneckSumLoad,
+          teams: { playerIds },
+        },
+      ];
+    });
+    const sortedQueue = sortQueueMatches(candidateQueue, {
+      stage: "GROUP",
+      inPlayPlayerIds: new Set<string>(),
+    });
+    const selectedMatches = buildUpcomingFromSortedQueue(sortedQueue, {
+      stage: "GROUP",
+      inPlayPlayerIds: new Set<string>(),
+      limit: COURT_COUNT,
+    });
 
-      if (!candidate) {
-        slotEntries.push({ match: null, restCount: 0, playerWouldBe: new Map() });
-        continue;
-      }
-
-      const candidatePlayers =
-        matchPlayers.get(candidate.id) ?? extractPlayerIdList(candidate);
-      const restCount = candidatePlayers.reduce((count, id) => {
+    selectedMatches.forEach((candidate) => {
+      const restCount = candidate.playerIds.reduce((count, id) => {
         return lastPlayedSlot.get(id) === slotIndex - 1 ? count : count + 1;
       }, 0);
       const playerWouldBe = new Map<string, number>();
-      candidatePlayers.forEach((id) => {
-        playerWouldBe.set(
-          id,
-          streakLenIfPicked(id, slotIndex, playedSlotsByPlayer)
-        );
+      candidate.playerIds.forEach((id) => {
+        playerWouldBe.set(id, streakLenIfPicked(id, slotIndex, playedSlotsByPlayer));
       });
-
-      slotEntries.push({ match: candidate, restCount, playerWouldBe });
-      candidatePlayers.forEach((id) => {
-        slotPickedPlayers.add(id);
+      slotEntries.push({ match: candidate.match, restCount, playerWouldBe });
+      candidate.playerIds.forEach((id) => {
         playedThisSlot.add(id);
       });
-      const pickedIndex = remainingPool.findIndex((match) => match.id === candidate.id);
-      if (pickedIndex >= 0) remainingPool.splice(pickedIndex, 1);
+    });
+
+    for (let index = slotEntries.length; index < COURT_COUNT; index += 1) {
+      slotEntries.push({ match: null, restCount: 0, playerWouldBe: new Map() });
+    }
+
+    const selectedIds = new Set(selectedMatches.map((candidate) => candidate.match.id));
+    for (let index = remainingPool.length - 1; index >= 0; index -= 1) {
+      if (selectedIds.has(remainingPool[index].id)) {
+        remainingPool.splice(index, 1);
+      }
     }
 
     scheduledSlots.push(slotEntries);
