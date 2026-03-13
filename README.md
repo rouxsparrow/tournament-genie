@@ -26,6 +26,12 @@ cp .env.example .env
 3. Update env values:
    - `DATABASE_URL` and `DIRECT_URL` with your Supabase Postgres values
    - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` for Broadcast realtime updates
+   - `AUTH_SECRET` and `ADMIN_PASSWORD` for admin authentication
+
+4. Optional cross-environment cache revalidation (when non-prod app mutates prod DB):
+   - `PUBLIC_REVALIDATE_SECRET`: shared secret used by the revalidation webhook
+   - `PUBLIC_REVALIDATE_FORWARD_URL`: set only on non-prod caller environments (e.g. local)
+     to `https://<prod-host>/api/internal/public-read-models/revalidate`
 
 2. Run the dev server:
 

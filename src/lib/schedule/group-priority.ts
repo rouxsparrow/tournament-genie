@@ -7,6 +7,7 @@ export type QueuePriorityMatch = {
   matchId: string;
   matchType: MatchType;
   restScore: number;
+  unlockPotential?: number;
   forcedRank?: number;
   isForced?: boolean;
   series?: "A" | "B";
@@ -223,14 +224,15 @@ export function sortQueueMatches<T extends QueuePriorityMatch>(
       if (aSumLoad !== bSumLoad) return bSumLoad - aSumLoad;
     }
 
+    if (
+      a.matchType === "KNOCKOUT" &&
+      b.matchType === "KNOCKOUT" &&
+      (a.unlockPotential ?? 0) !== (b.unlockPotential ?? 0)
+    ) {
+      return (b.unlockPotential ?? 0) - (a.unlockPotential ?? 0);
+    }
     if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.round !== b.round) {
       return (a.round ?? 0) - (b.round ?? 0);
-    }
-    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.series !== b.series) {
-      const seriesRank: Record<string, number> = { B: 0, A: 1 };
-      const aSeries = a.series ? seriesRank[a.series] ?? 2 : 2;
-      const bSeries = b.series ? seriesRank[b.series] ?? 2 : 2;
-      if (aSeries !== bSeries) return aSeries - bSeries;
     }
     if (a.matchNo !== b.matchNo) return (a.matchNo ?? 0) - (b.matchNo ?? 0);
     return a.matchId.localeCompare(b.matchId);
@@ -300,7 +302,8 @@ export function buildUpcomingFromSortedQueue<T extends QueuePriorityMatch>(
     }
   };
 
-  const pickFrom = params.stage === "GROUP" ? pickGroupLookahead : pickGreedy;
+  const useLookahead = params.stage === "GROUP" || params.stage === "KNOCKOUT";
+  const pickFrom = useLookahead ? pickGroupLookahead : pickGreedy;
 
   pickFrom(forcedCandidates, true);
   pickFrom(forcedCandidates, false);

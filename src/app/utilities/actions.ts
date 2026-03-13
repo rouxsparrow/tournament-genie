@@ -46,6 +46,7 @@ type LegacyCourtRow = {
 
 type RefereeSubmissionMatchFilter = "ALL" | "GROUP" | "KNOCKOUT";
 type RefereeSubmissionCategoryFilter = "ALL" | "MD" | "WD" | "XD";
+type CategoryCode = "MD" | "WD" | "XD";
 
 export type LegacyCourtSummary = {
   legacyCourtRows: number;
@@ -85,6 +86,19 @@ export type BulkCleanupResult = {
   };
 };
 
+export type ComputeSeriesSplitCleanupSummary = {
+  forcedMatchPriorities: number;
+  blockedMatches: number;
+  courtAssignments: number;
+  refereeSubmissions: number;
+  knockoutGameScores: number;
+  knockoutMatches: number;
+  knockoutSeeds: number;
+  knockoutRandomDraws: number;
+  seriesQualifiers: number;
+  total: number;
+};
+
 const TEST_PLAYER_PREFIXES = ["E2E ", "KR ", "Import "] as const;
 const TEST_TEAM_PREFIXES = ["E2E-", "KR-", "Import "] as const;
 const TEST_CLEANUP_CONFIRM_TOKEN = "CONFIRM_TEST_DELETE";
@@ -103,6 +117,15 @@ const UTILITIES_CLEANUP_REVALIDATE_PATHS = [
   "/presenting",
   "/referee",
   "/player-checkin",
+] as const;
+const COMPUTE_SERIES_SPLIT_REVALIDATE_PATHS = [
+  "/utilities",
+  "/knockout",
+  "/brackets",
+  "/matches",
+  "/schedule",
+  "/tie-breaks",
+  "/referee",
 ] as const;
 
 export type TestDataCleanupSummary = {
@@ -608,6 +631,105 @@ export async function clearRefereeSubmissions(filters: {
 
 export async function clearMdGroupRefereeSubmissions() {
   return clearRefereeSubmissions({ matchType: "GROUP", categoryCode: "MD" });
+}
+
+function zeroComputeSeriesSplitCleanupSummary(): ComputeSeriesSplitCleanupSummary {
+  return {
+    forcedMatchPriorities: 0,
+    blockedMatches: 0,
+    courtAssignments: 0,
+    refereeSubmissions: 0,
+    knockoutGameScores: 0,
+    knockoutMatches: 0,
+    knockoutSeeds: 0,
+    knockoutRandomDraws: 0,
+    seriesQualifiers: 0,
+    total: 0,
+  };
+}
+
+export async function clearComputeSeriesSplitData(input: { categoryCode: CategoryCode }) {
+  const guard = await requireAdmin({ onFail: "return" });
+  if (guard) return guard;
+
+  const categoryCode = input?.categoryCode;
+  if (categoryCode !== "MD" && categoryCode !== "WD" && categoryCode !== "XD") {
+    return { error: "Invalid category code." } as const;
+  }
+
+  try {
+    const deleted = await prisma.$transaction(async (tx) => {
+      const summary = zeroComputeSeriesSplitCleanupSummary();
+      const knockoutMatches = await tx.knockoutMatch.findMany({
+        where: { categoryCode },
+        select: { id: true },
+      });
+      const knockoutMatchIds = knockoutMatches.map((match) => match.id);
+
+      if (knockoutMatchIds.length > 0) {
+        summary.forcedMatchPriorities = (
+          await tx.forcedMatchPriority.deleteMany({
+            where: { matchType: "KNOCKOUT", matchId: { in: knockoutMatchIds } },
+          })
+        ).count;
+        summary.blockedMatches = (
+          await tx.blockedMatch.deleteMany({
+            where: { matchType: "KNOCKOUT", knockoutMatchId: { in: knockoutMatchIds } },
+          })
+        ).count;
+        summary.courtAssignments = (
+          await tx.courtAssignment.deleteMany({
+            where: { matchType: "KNOCKOUT", knockoutMatchId: { in: knockoutMatchIds } },
+          })
+        ).count;
+        summary.knockoutGameScores = (
+          await tx.knockoutGameScore.deleteMany({
+            where: { knockoutMatchId: { in: knockoutMatchIds } },
+          })
+        ).count;
+      }
+
+      summary.refereeSubmissions = (
+        await tx.refereeSubmission.deleteMany({
+          where: { matchType: "KNOCKOUT", categoryCode },
+        })
+      ).count;
+      summary.knockoutMatches = (await tx.knockoutMatch.deleteMany({ where: { categoryCode } })).count;
+      summary.knockoutSeeds = (await tx.knockoutSeed.deleteMany({ where: { categoryCode } })).count;
+      summary.knockoutRandomDraws = (
+        await tx.knockoutRandomDraw.deleteMany({
+          where: {
+            categoryCode,
+            NOT: { drawKey: { startsWith: "global:" } },
+          },
+        })
+      ).count;
+      summary.seriesQualifiers = (
+        await tx.seriesQualifier.deleteMany({
+          where: { categoryCode },
+        })
+      ).count;
+      summary.total = Object.values(summary).reduce((sum, value) => sum + value, 0);
+      return summary;
+    });
+
+    for (const path of COMPUTE_SERIES_SPLIT_REVALIDATE_PATHS) {
+      revalidatePath(path);
+    }
+    await invalidatePublicReadModels({
+      type: "knockout-results",
+      categoryCodes: [categoryCode],
+    });
+
+    return {
+      ok: true as const,
+      categoryCode,
+      deleted,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to clear Compute Series Split data.";
+    return { error: message } as const;
+  }
 }
 
 export async function getAutoScheduleFunctionState() {

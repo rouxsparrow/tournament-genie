@@ -10,6 +10,7 @@ import {
   clearMdGroupRefereeSubmissions,
   clearRefereeSubmissions,
   clearDuplicateAssignments,
+  clearComputeSeriesSplitData,
   type DuplicateAssignmentSummary,
   fixLegacyCourtIds,
   type LegacyCourtSummary,
@@ -77,6 +78,7 @@ export function UtilitiesClient({
 }: UtilitiesClientProps) {
   const [refereeMatchType, setRefereeMatchType] = useState<"ALL" | "GROUP" | "KNOCKOUT">("ALL");
   const [refereeCategory, setRefereeCategory] = useState<"ALL" | "MD" | "WD" | "XD">("ALL");
+  const [splitCleanupCategory, setSplitCleanupCategory] = useState<"MD" | "WD" | "XD">("MD");
   const [testPreview, setTestPreview] = useState<TestDataCleanupPreview | null>(null);
   const [confirmToken, setConfirmToken] = useState("");
   const [summary, setSummary] = useState(initialSummary);
@@ -249,6 +251,22 @@ export function UtilitiesClient({
     });
   };
 
+  const runClearComputeSeriesSplitData = () => {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await clearComputeSeriesSplitData({
+        categoryCode: splitCleanupCategory,
+      });
+      if (!result || "error" in result) {
+        setMessage(result?.error ?? "Failed to clear Compute Series Split data.");
+        return;
+      }
+      setMessage(
+        `Compute Series Split cleanup complete for ${result.categoryCode}. Deleted qualifiers: ${result.deleted.seriesQualifiers}; knockout matches: ${result.deleted.knockoutMatches}; seeds: ${result.deleted.knockoutSeeds}; random draws: ${result.deleted.knockoutRandomDraws}; total rows: ${result.deleted.total}.`
+      );
+    });
+  };
+
   const canRunTestCleanup = Boolean(
     testPreview && testPreview.totalRows > 0 && confirmToken === "CONFIRM_TEST_DELETE"
   );
@@ -340,6 +358,59 @@ export function UtilitiesClient({
                   className="bg-destructive text-white hover:bg-destructive/90"
                 >
                   Delete all players
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </SectionShell>
+
+      <SectionShell
+        title="Compute Series Split Cleanup"
+        subtitle="Clear series qualifiers and full knockout artifacts for one category."
+      >
+        <div className="grid gap-2 sm:grid-cols-[180px_1fr] sm:items-center">
+          <label htmlFor="split-cleanup-category" className="text-sm text-muted-foreground">
+            Category
+          </label>
+          <select
+            id="split-cleanup-category"
+            value={splitCleanupCategory}
+            onChange={(event) =>
+              setSplitCleanupCategory(event.target.value as "MD" | "WD" | "XD")
+            }
+            disabled={pending}
+            className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <option value="MD">MD</option>
+            <option value="WD">WD</option>
+            <option value="XD">XD</option>
+          </select>
+        </div>
+
+        <div className="flex justify-end">
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button type="button" variant="destructive" disabled={pending}>
+                Clear Compute Series Split data
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Clear {splitCleanupCategory} Compute Series Split data?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  This removes Series Split qualifiers, knockout matches, seeds, non-global random draws, and knockout schedule/referee artifacts for {splitCleanupCategory}. This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={runClearComputeSeriesSplitData}
+                  className="bg-destructive text-white hover:bg-destructive/90"
+                >
+                  Clear Compute Series Split data
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

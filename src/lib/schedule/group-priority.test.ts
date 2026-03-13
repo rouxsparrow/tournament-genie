@@ -12,6 +12,7 @@ function makeMatch(params: {
   matchId: string;
   matchType?: "GROUP" | "KNOCKOUT";
   restScore?: number;
+  unlockPotential?: number;
   forcedRank?: number;
   isForced?: boolean;
   series?: "A" | "B";
@@ -25,6 +26,7 @@ function makeMatch(params: {
     matchId: params.matchId,
     matchType: params.matchType ?? "GROUP",
     restScore: params.restScore ?? 0,
+    unlockPotential: params.unlockPotential,
     forcedRank: params.forcedRank,
     isForced: params.isForced ?? false,
     series: params.series,
@@ -192,6 +194,115 @@ test("KO sort stays progression-first (round tie-break) and ignores assignable-f
 
   assert.equal(sorted[0].matchId, "ko-r1-waiting");
   assert.equal(sorted[1].matchId, "ko-r2");
+});
+
+test("KO sort prioritizes unlockPotential before round when rest is tied", () => {
+  const sorted = sortQueueMatches(
+    [
+      makeMatch({
+        matchId: "ko-round1-unlock1",
+        matchType: "KNOCKOUT",
+        restScore: 4,
+        unlockPotential: 1,
+        round: 1,
+        matchNo: 1,
+        playerIds: ["r1a", "r1b", "r1c", "r1d"],
+      }),
+      makeMatch({
+        matchId: "ko-round2-unlock2",
+        matchType: "KNOCKOUT",
+        restScore: 4,
+        unlockPotential: 2,
+        round: 2,
+        matchNo: 1,
+        playerIds: ["r2a", "r2b", "r2c", "r2d"],
+      }),
+    ],
+    { stage: "KNOCKOUT", inPlayPlayerIds: new Set<string>() }
+  );
+
+  assert.equal(sorted[0].matchId, "ko-round2-unlock2");
+  assert.equal(sorted[1].matchId, "ko-round1-unlock1");
+});
+
+test("KO sort no longer prioritizes series B over A", () => {
+  const sorted = sortQueueMatches(
+    [
+      makeMatch({
+        matchId: "a-series",
+        matchType: "KNOCKOUT",
+        restScore: 4,
+        round: 2,
+        series: "A",
+        matchNo: 1,
+        playerIds: ["a1", "a2", "a3", "a4"],
+      }),
+      makeMatch({
+        matchId: "b-series",
+        matchType: "KNOCKOUT",
+        restScore: 4,
+        round: 2,
+        series: "B",
+        matchNo: 1,
+        playerIds: ["b1", "b2", "b3", "b4"],
+      }),
+    ],
+    { stage: "KNOCKOUT", inPlayPlayerIds: new Set<string>() }
+  );
+
+  assert.deepEqual(
+    sorted.map((match) => match.matchId),
+    ["a-series", "b-series"]
+  );
+});
+
+test("KO upcoming uses lookahead packing to avoid greedy underfill", () => {
+  const queue = [
+    makeMatch({
+      matchId: "ko-m1",
+      matchType: "KNOCKOUT",
+      restScore: 4,
+      round: 2,
+      matchNo: 1,
+      playerIds: ["A", "B", "C", "D"],
+    }),
+    makeMatch({
+      matchId: "ko-m2",
+      matchType: "KNOCKOUT",
+      restScore: 4,
+      round: 2,
+      matchNo: 2,
+      playerIds: ["A", "E", "F", "G"],
+    }),
+    makeMatch({
+      matchId: "ko-m3",
+      matchType: "KNOCKOUT",
+      restScore: 4,
+      round: 2,
+      matchNo: 3,
+      playerIds: ["B", "H", "I", "J"],
+    }),
+    makeMatch({
+      matchId: "ko-m4",
+      matchType: "KNOCKOUT",
+      restScore: 4,
+      round: 2,
+      matchNo: 4,
+      playerIds: ["K", "L", "M", "N"],
+    }),
+  ];
+
+  const upcoming = buildUpcomingFromSortedQueue(queue, {
+    stage: "KNOCKOUT",
+    inPlayPlayerIds: new Set<string>(),
+    limit: 3,
+  });
+
+  assert.equal(upcoming.length, 3);
+  assert.deepEqual(
+    upcoming.map((match) => match.matchId),
+    ["ko-m2", "ko-m3", "ko-m4"]
+  );
 });
 
 test("Group remaining-load map and bottleneck metrics are computed correctly", () => {

@@ -580,6 +580,9 @@ export function ScheduleClient({
 
         stateRef.current = nextState;
         setState(nextState);
+        if (stage === "KNOCKOUT" && result.action === "completed") {
+          void refreshState();
+        }
         if (result.delta.infoMessage) {
           setError(result.delta.infoMessage);
         }
@@ -590,7 +593,7 @@ export function ScheduleClient({
         setIsHotActionInFlight(false);
       }
     },
-    [isHotActionInFlight, stage]
+    [isHotActionInFlight, refreshState, stage]
   );
 
   const eligibleFiltered = useMemo(() => {
