@@ -1,7 +1,44 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { loginAsAdmin } from "./helpers/auth";
+import {
+  closeDb,
+  deleteTestRefereeAccountsByPrefix,
+  ensureActiveGroupMatchId,
+  ensureActiveKnockoutMatchId,
+  getActiveGroupAssignmentSnapshot,
+  getActiveKnockoutAssignmentSnapshot,
+} from "./helpers/db";
+import {
+  createRefereeCredentials,
+  signInReferee,
+  submitRefereeScoreForCourt,
+} from "./helpers/referee";
+
+test.describe.configure({ mode: "serial" });
+
+const TEST_REF_PREFIX = `broadcast_ref_${Date.now()}`;
+const COURT_ID_TO_LABEL: Record<string, string> = {
+  C1: "P5",
+  C2: "P6",
+  C3: "P7",
+  C4: "P8",
+  C5: "P9",
+};
 
 const COURT_LABELS = ["P5", "P6", "P7", "P8", "P9"] as const;
+
+function courtLabel(courtId: string) {
+  return COURT_ID_TO_LABEL[courtId] ?? courtId;
+}
+
+test.afterEach(async () => {
+  await deleteTestRefereeAccountsByPrefix(TEST_REF_PREFIX);
+});
+
+test.afterAll(async () => {
+  await deleteTestRefereeAccountsByPrefix(TEST_REF_PREFIX);
+  await closeDb();
+});
 
 function courtCard(page: Page, courtLabel: string): Locator {
   const heading = page.getByRole("heading", { name: courtLabel, exact: true }).first();
@@ -157,4 +194,102 @@ test("Broadcast updates via realtime when admin assigns on empty court @broadcas
 
   await operatorContext.close();
   await observerContext.close();
+});
+
+test("Broadcast clears GROUP court via realtime when referee submits score @broadcast-realtime @regression", async ({
+  browser,
+}) => {
+  await ensureActiveGroupMatchId();
+  const snapshot = await getActiveGroupAssignmentSnapshot();
+  test.skip(!snapshot, "No active group-stage assignment available.");
+  if (!snapshot) return;
+
+  const observerContext = await browser.newContext();
+  const refereeContext = await browser.newContext();
+  const observerPage = await observerContext.newPage();
+  const refereePage = await refereeContext.newPage();
+
+  await loginAsAdmin(observerPage);
+  const credentials = await createRefereeCredentials(TEST_REF_PREFIX);
+  await signInReferee(refereePage, credentials);
+
+  const targetCourt = courtLabel(snapshot.courtId);
+  await observerPage.goto("/broadcast?stage=group");
+
+  const broadcastCard = courtCard(observerPage, targetCourt);
+  await expect(broadcastCard.getByText(snapshot.homeTeamName, { exact: false })).toBeVisible();
+  await expect(broadcastCard.getByText(snapshot.awayTeamName, { exact: false })).toBeVisible();
+
+  const submitted = await submitRefereeScoreForCourt(refereePage, {
+    stage: "GROUP",
+    court: targetCourt,
+  });
+  if (!submitted) {
+    await observerContext.close();
+    await refereeContext.close();
+    test.skip(true, "Could not submit referee group score for active court.");
+    return;
+  }
+
+  await expect(broadcastCard.getByText(snapshot.homeTeamName, { exact: false })).toHaveCount(0, {
+    timeout: 20_000,
+  });
+  await expect(broadcastCard.getByText(snapshot.awayTeamName, { exact: false })).toHaveCount(0, {
+    timeout: 20_000,
+  });
+  await expect(broadcastCard.getByText("No match assigned.")).toBeVisible({
+    timeout: 20_000,
+  });
+
+  await observerContext.close();
+  await refereeContext.close();
+});
+
+test("Broadcast clears KNOCKOUT court via realtime when referee submits score @broadcast-realtime @regression", async ({
+  browser,
+}) => {
+  await ensureActiveKnockoutMatchId();
+  const snapshot = await getActiveKnockoutAssignmentSnapshot();
+  test.skip(!snapshot, "No active knockout assignment available.");
+  if (!snapshot) return;
+
+  const observerContext = await browser.newContext();
+  const refereeContext = await browser.newContext();
+  const observerPage = await observerContext.newPage();
+  const refereePage = await refereeContext.newPage();
+
+  await loginAsAdmin(observerPage);
+  const credentials = await createRefereeCredentials(TEST_REF_PREFIX);
+  await signInReferee(refereePage, credentials);
+
+  const targetCourt = courtLabel(snapshot.courtId);
+  await observerPage.goto("/broadcast?stage=ko");
+
+  const broadcastCard = courtCard(observerPage, targetCourt);
+  await expect(broadcastCard.getByText(snapshot.homeTeamName, { exact: false })).toBeVisible();
+  await expect(broadcastCard.getByText(snapshot.awayTeamName, { exact: false })).toBeVisible();
+
+  const submitted = await submitRefereeScoreForCourt(refereePage, {
+    stage: "KNOCKOUT",
+    court: targetCourt,
+  });
+  if (!submitted) {
+    await observerContext.close();
+    await refereeContext.close();
+    test.skip(true, "Could not submit referee knockout score for active court.");
+    return;
+  }
+
+  await expect(broadcastCard.getByText(snapshot.homeTeamName, { exact: false })).toHaveCount(0, {
+    timeout: 20_000,
+  });
+  await expect(broadcastCard.getByText(snapshot.awayTeamName, { exact: false })).toHaveCount(0, {
+    timeout: 20_000,
+  });
+  await expect(broadcastCard.getByText("No match assigned.")).toBeVisible({
+    timeout: 20_000,
+  });
+
+  await observerContext.close();
+  await refereeContext.close();
 });
