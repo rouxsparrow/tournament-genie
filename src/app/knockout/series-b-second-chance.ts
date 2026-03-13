@@ -1,11 +1,5 @@
 import { buildProtectedSeriesBFourTeamAwaySlots } from "@/app/knockout/bracket-layout";
-
-type SeriesBRankingEntry = {
-  teamId: string;
-  groupRank: number;
-  avgPA: number;
-  groupId: string;
-};
+import { sortSeriesBRankingEntries, type SeriesBRankingEntry } from "./series-b-ranking";
 
 type SeriesBPlayInMatch = {
   round: 1;
@@ -45,14 +39,7 @@ export function buildSeriesBWithSecondChance(
 ): SeriesBSecondChanceResult | null {
   if (!secondChanceEnabled) return null;
 
-  const ranked = [...teamsB].sort((a, b) => {
-    const rankA = rankingMap.get(a.teamId) ?? Number.MAX_SAFE_INTEGER;
-    const rankB = rankingMap.get(b.teamId) ?? Number.MAX_SAFE_INTEGER;
-    if (rankA !== rankB) return rankA - rankB;
-    if (a.groupRank !== b.groupRank) return a.groupRank - b.groupRank;
-    if (a.avgPA !== b.avgPA) return a.avgPA - b.avgPA;
-    return a.teamId.localeCompare(b.teamId);
-  });
+  const ranked = sortSeriesBRankingEntries(teamsB, rankingMap);
 
   const teamCount = ranked.length;
   if (teamCount < 4 || teamCount > 8) {
@@ -158,7 +145,7 @@ export function runSeriesBSecondChanceDevTest() {
     const teams = Array.from({ length: size }, (_, index) => ({
       teamId: `XD${size}-${index + 1}`,
       groupRank: Math.floor(index / 2) + 1,
-      avgPA: index + 1,
+      avgPD: size - index,
       groupId: `G${Math.floor(index / 2) + 1}`,
     }));
     const rankingMap = new Map(

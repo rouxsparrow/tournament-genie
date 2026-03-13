@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { formatAverageMetric } from "@/lib/format-average-metric";
 import type {
   CategoryCode,
   PublicCompletedMatch,
@@ -352,7 +353,9 @@ export function StandingsClient({
                     <span className="rounded-md bg-muted/60 px-2 py-0.5">L = Losses</span>
                     <span className="rounded-md bg-muted/60 px-2 py-0.5">PF = Points For</span>
                     <span className="rounded-md bg-muted/60 px-2 py-0.5">PA = Points Against</span>
-                    <span className="rounded-md bg-muted/60 px-2 py-0.5">PD = Point Diff</span>
+                    <span className="rounded-md bg-muted/60 px-2 py-0.5">
+                      Avg PD = Point Diff / Matches Played
+                    </span>
                   </div>
 
                   <div className="mt-4 hidden overflow-x-auto md:block">
@@ -365,7 +368,7 @@ export function StandingsClient({
                           <th className="w-12 py-2 pr-2 text-right">L</th>
                           <th className="w-16 py-2 pr-2 text-right">PF</th>
                           <th className="w-16 py-2 pr-2 text-right">PA</th>
-                          <th className="w-16 py-2 pr-2 text-right">PD</th>
+                          <th className="w-20 py-2 pr-2 text-right">Avg PD</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -391,7 +394,7 @@ export function StandingsClient({
                               <td className="py-2 pr-2 text-right tabular-nums">{row.pointsFor}</td>
                               <td className="py-2 pr-2 text-right tabular-nums">{row.pointsAgainst}</td>
                               <td className="py-2 pr-2 text-right tabular-nums">
-                                {row.pointDiff > 0 ? `+${row.pointDiff}` : row.pointDiff}
+                                {formatAverageMetric(row.avgPointDiff)}
                               </td>
                             </tr>
                           );
@@ -420,9 +423,9 @@ export function StandingsClient({
                             <span className="text-rose-300">L</span>{" "}
                             <span className="font-semibold text-rose-300">{row.losses}</span> · PF{" "}
                             <span className="font-semibold text-foreground">{row.pointsFor}</span> · PA{" "}
-                            <span className="font-semibold text-foreground">{row.pointsAgainst}</span> · PD{" "}
+                            <span className="font-semibold text-foreground">{row.pointsAgainst}</span> · Avg PD{" "}
                             <span className="font-semibold text-foreground">
-                              {row.pointDiff > 0 ? `+${row.pointDiff}` : row.pointDiff}
+                              {formatAverageMetric(row.avgPointDiff)}
                             </span>
                           </p>
                         </div>

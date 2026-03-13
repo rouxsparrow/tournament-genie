@@ -1,19 +1,13 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import {
+  finalizeStandingMetrics,
+  resolveStandingRows,
+  type StandingRow,
+} from "@/app/standings/logic";
 
 export type StandingsCategoryCode = "MD" | "WD" | "XD";
-
-type StandingRow = {
-  teamId: string;
-  teamName: string;
-  wins: number;
-  losses: number;
-  played: number;
-  pointsFor: number;
-  pointsAgainst: number;
-  pointDiff: number;
-};
 
 type GroupForStandings = {
   id: string;
@@ -144,6 +138,8 @@ async function resolveStandingsForGroup(
       pointsFor: 0,
       pointsAgainst: 0,
       pointDiff: 0,
+      avgPointDiff: 0,
+      avgPointsFor: 0,
     });
   }
 
@@ -174,64 +170,11 @@ async function resolveStandingsForGroup(
     }
   }
 
-  for (const entry of stats.values()) {
-    entry.pointDiff = entry.pointsFor - entry.pointsAgainst;
-  }
-
-  const baseSorted = Array.from(stats.values()).sort((a, b) => {
-    if (b.wins !== a.wins) return b.wins - a.wins;
-    if (b.pointDiff !== a.pointDiff) return b.pointDiff - a.pointDiff;
-    if (b.pointsFor !== a.pointsFor) return b.pointsFor - a.pointsFor;
-    return a.teamName.localeCompare(b.teamName);
+  const resolved = await resolveStandingRows({
+    rows: Array.from(stats.values(), finalizeStandingMetrics),
+    completedMatches,
+    getRandomDrawOrder: (teamIds) => randomDrawResolver.getOrder(teamIds),
   });
-
-  const resolved: StandingRow[] = [];
-  let index = 0;
-
-  while (index < baseSorted.length) {
-    let nextIndex = index + 1;
-    while (
-      nextIndex < baseSorted.length &&
-      baseSorted[nextIndex].wins === baseSorted[index].wins &&
-      baseSorted[nextIndex].pointDiff === baseSorted[index].pointDiff &&
-      baseSorted[nextIndex].pointsFor === baseSorted[index].pointsFor
-    ) {
-      nextIndex += 1;
-    }
-
-    const tieGroup = baseSorted.slice(index, nextIndex);
-
-    if (tieGroup.length === 2) {
-      const [first, second] = tieGroup;
-      const headToHead = completedMatches.find(
-        (match) =>
-          (match.homeTeamId === first.teamId && match.awayTeamId === second.teamId) ||
-          (match.homeTeamId === second.teamId && match.awayTeamId === first.teamId)
-      );
-
-      if (headToHead?.winnerTeamId === first.teamId) {
-        resolved.push(first, second);
-      } else if (headToHead?.winnerTeamId === second.teamId) {
-        resolved.push(second, first);
-      } else {
-        const order = await randomDrawResolver.getOrder([first.teamId, second.teamId]);
-        const ordered = order
-          .map((id) => tieGroup.find((team) => team.teamId === id))
-          .filter((team): team is StandingRow => Boolean(team));
-        resolved.push(...ordered);
-      }
-    } else if (tieGroup.length > 2) {
-      const order = await randomDrawResolver.getOrder(tieGroup.map((team) => team.teamId));
-      const ordered = order
-        .map((id) => tieGroup.find((team) => team.teamId === id))
-        .filter((team): team is StandingRow => Boolean(team));
-      resolved.push(...ordered);
-    } else {
-      resolved.push(...tieGroup);
-    }
-
-    index = nextIndex;
-  }
 
   return {
     group,

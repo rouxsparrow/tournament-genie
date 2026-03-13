@@ -11,6 +11,7 @@ import { loadGlobalGroupRanking } from "@/app/knockout/logic";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
 import { KnockoutBracketControls } from "@/app/knockout/knockout-bracket-controls";
 import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
+import { formatAverageMetric } from "@/lib/format-average-metric";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Knockout" };
@@ -315,7 +316,7 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
                     <th className="py-2 text-left">Team</th>
                     <th className="py-2 text-left">Group</th>
                     <th className="py-2 text-left">Status</th>
-                    <th className="py-2 text-right">Avg PA</th>
+                    <th className="py-2 text-right">Avg PD</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -343,7 +344,7 @@ export default async function KnockoutPage({ searchParams }: KnockoutPageProps) 
                           )}
                         </td>
                         <td className="py-2 text-right">
-                          {entry.avgPA.toFixed(2)}
+                          {formatAverageMetric(entry.avgPD)}
                         </td>
                       </tr>
                     );

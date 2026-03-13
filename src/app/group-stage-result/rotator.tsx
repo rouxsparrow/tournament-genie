@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { formatAverageMetric } from "@/lib/format-average-metric";
 
 const NORMAL_ROTATION_MS = 8_000;
 const OVERFLOW_ROTATION_MS = 14_000;
@@ -15,7 +16,7 @@ type ResultRow = {
   teamLabel: string;
   groupLabel: string;
   qualifierSeries: "A" | "B" | null;
-  avgPA: number;
+  avgPD: number;
 };
 
 type CategoryResult = {
@@ -224,7 +225,7 @@ export function GroupStageResultRotator({ results }: { results: CategoryResult[]
                   <th className="py-1 text-left">Team</th>
                   <th className="w-28 py-1 text-left">Group</th>
                   <th className="w-36 py-1 text-left">Status</th>
-                  <th className="w-20 py-1 text-right">Avg PA</th>
+                  <th className="w-20 py-1 text-right">Avg PD</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -239,7 +240,9 @@ export function GroupStageResultRotator({ results }: { results: CategoryResult[]
                     <td className="py-1 text-left">
                       <StatusBadge qualifierSeries={row.qualifierSeries} />
                     </td>
-                    <td className="py-1 text-right whitespace-nowrap">{row.avgPA.toFixed(2)}</td>
+                    <td className="py-1 text-right whitespace-nowrap">
+                      {formatAverageMetric(row.avgPD)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

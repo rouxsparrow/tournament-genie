@@ -95,8 +95,8 @@ When randomizing groups:
 ## Group Standings & Measurements
 Group standings are calculated from match results using:
 1. Wins
-2. Point difference (pointsFor - pointsAgainst)
-3. Points scored
+2. Average point difference per match ((pointsFor - pointsAgainst) / matchesPlayed)
+3. Average points scored per match (pointsFor / matchesPlayed)
 4. Head-to-head (only if tied teams played each other)
 5. Random draw (stored; last resort)
 
@@ -156,7 +156,7 @@ After group stage is locked:
 
 ### Decider for equal-tier opponent choice
 - If multiple valid opponents exist and they are the same group-rank tier (e.g., both are "#2 in their group"), decide using:
-  1) **Average PA per match** (PA / matchesPlayed) -- **higher Avg PA is weaker**
+  1) **Average PD per match** ((PF - PA) / matchesPlayed) -- **lower Avg PD is weaker**
   2) If still tied, **random draw (stored)**
 
 ### No byes
@@ -184,7 +184,10 @@ After group stage is locked:
 - Series A is determined from the **Global Group Stage Ranking** (within the same category):
   - MD/XD: **top 8**
   - WD: **top 8** when total teams > 8, otherwise **top 4**
-- Global Group Stage Ranking order is based on the locked standings tie-break rules (wins, point difference, points for, head-to-head, stored random draw).
+- Global Group Stage Ranking order is based on:
+  1. Final group rank
+  2. Average point difference per match ((PF - PA) / matchesPlayed)
+  3. Stored random draw
 - Series A must contain exactly those qualified teams.
 - Teams outside the qualification boundary must not appear in Series A.
 
@@ -199,7 +202,7 @@ After group stage is locked:
 - WD **minimum teams: 4**
 - WD **do NOT have Play-ins**
 - If WD has **4-8 teams**, Series A starts at **Semifinals** using the **top 4** from group stage ranking
-- If WD has **> 8 teams**, Series A starts at **Quarterfinals** using top-8 group stage ranking + Avg PA seeding rules
+- If WD has **> 8 teams**, Series A starts at **Quarterfinals** using top-8 group stage ranking + Avg PD seeding rules
 - WD teams outside qualified top cutoff are **eliminated**
 - **Second chance is not available** for WD
 
@@ -237,7 +240,7 @@ Let `B` be the number of original Series B teams.
 ### Selecting teams that wait for QF (strongest)
 Select the strongest `8 - B` teams from Series B using:
 1) groupRank tier (e.g., #1 > #2 > #3)
-2) Avg PA per match (lower is stronger)
+2) Avg PD per match (higher is stronger)
 3) stored random draw
 
 Implementation note: Series B second-chance bracket generation supports B=4..8 with deterministic
@@ -250,10 +253,10 @@ Implementation note: Knockout round numbers follow the global stage mapping abov
 ### Pairing play-ins
 Pair the play-in teams using:
 - avoid same-group pairing whenever possible
-- if multiple valid opponents in same tier exist, use Avg PA per match (higher = weaker) as decider; if still tied use stored random draw
+- if multiple valid opponents in same tier exist, use Avg PD per match (lower = weaker) as decider; if still tied use stored random draw
 - A-drop losers never play each other in Series B Quarterfinals; each QF match contains exactly one A-drop loser.
-- Series B Play-ins use: avoid same-group where possible + groupRank tier + Avg PA + stored draw.
-- Series B Quarterfinals pairing uses only: groupRank tier + Avg PA + stored draw (no highest-vs-lowest seeding rule; no same-group constraint unless later specified).
+- Series B Play-ins use: avoid same-group where possible + groupRank tier + Avg PD + stored draw.
+- Series B Quarterfinals pairing uses only: groupRank tier + Avg PD + stored draw (no highest-vs-lowest seeding rule; no same-group constraint unless later specified).
 - A-drop vs B-opponent pairing: best A-drop faces weakest B-opponent.
 
 ---

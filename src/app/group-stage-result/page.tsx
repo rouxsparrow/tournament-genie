@@ -62,7 +62,7 @@ export default async function GroupStageResultPage() {
             teamLabel: team ? teamLabel(team) : entry.teamName,
             groupLabel: `${entry.groupName} (#${entry.groupRank})`,
             qualifierSeries: qualifier?.series ?? null,
-            avgPA: entry.avgPA,
+            avgPD: entry.avgPD,
           };
         }),
       };
