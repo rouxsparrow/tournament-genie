@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import { computeStandings } from "@/app/standings/actions";
+import {
+  resolveGlobalRanking,
+  type GlobalRankingEntry,
+} from "@/app/knockout/ranking";
 
 type CategoryCode = "MD" | "WD" | "XD";
 
@@ -10,14 +14,14 @@ type StandingStats = {
   pointsFor: number;
   pointsAgainst: number;
   played: number;
-  avgPA: number;
+  avgPD: number;
 };
 
 type SeedInput = {
   teamId: string;
   groupRank: number;
   groupId: string;
-  avgPA: number;
+  avgPD: number;
   stats: StandingStats;
   isKnockOutSeed: boolean;
 };
@@ -66,7 +70,6 @@ export async function loadSeedInputs(categoryCode: CategoryCode, series: "A" | "
   for (const entry of standingsList) {
     if (!entry) continue;
     for (const row of entry.standings) {
-      const avgPA = row.played > 0 ? row.pointsAgainst / row.played : 0;
       standingsByTeam.set(row.teamId, {
         teamId: row.teamId,
         wins: row.wins,
@@ -74,7 +77,7 @@ export async function loadSeedInputs(categoryCode: CategoryCode, series: "A" | "
         pointsFor: row.pointsFor,
         pointsAgainst: row.pointsAgainst,
         played: row.played,
-        avgPA,
+        avgPD: row.avgPointDiff,
       });
     }
   }
@@ -83,7 +86,7 @@ export async function loadSeedInputs(categoryCode: CategoryCode, series: "A" | "
     teamId: qualifier.teamId,
     groupRank: qualifier.groupRank,
     groupId: qualifier.groupId,
-    avgPA: standingsByTeam.get(qualifier.teamId)?.avgPA ?? 0,
+    avgPD: standingsByTeam.get(qualifier.teamId)?.avgPD ?? 0,
     stats: standingsByTeam.get(qualifier.teamId) ?? {
       teamId: qualifier.teamId,
       wins: 0,
@@ -91,21 +94,11 @@ export async function loadSeedInputs(categoryCode: CategoryCode, series: "A" | "
       pointsFor: 0,
       pointsAgainst: 0,
       played: 0,
-      avgPA: 0,
+      avgPD: 0,
     },
     isKnockOutSeed: qualifier.team.flags?.isKnockOutSeed ?? false,
   }));
 }
-
-type GlobalRankingEntry = {
-  teamId: string;
-  teamName: string;
-  groupId: string;
-  groupName: string;
-  groupRank: number;
-  avgPA: number;
-  played: number;
-};
 
 async function getGlobalDrawOrder(params: {
   categoryCode: CategoryCode;
@@ -169,59 +162,27 @@ export async function loadGlobalGroupRanking(categoryCode: CategoryCode) {
   for (const result of standingsList) {
     if (!result) continue;
     result.standings.forEach((row, index) => {
-      const avgPA = row.played > 0 ? row.pointsAgainst / row.played : 0;
       entries.push({
         teamId: row.teamId,
         teamName: row.teamName,
         groupId: result.group.id,
         groupName: result.group.name,
         groupRank: index + 1,
-        avgPA,
+        avgPD: row.avgPointDiff,
         played: row.played,
       });
     });
   }
 
-  const sorted = [...entries].sort((a, b) => {
-    if (a.groupRank !== b.groupRank) return a.groupRank - b.groupRank;
-    if (a.avgPA !== b.avgPA) return a.avgPA - b.avgPA;
-    return a.teamId.localeCompare(b.teamId);
-  });
-
-  const resolved: GlobalRankingEntry[] = [];
-  let index = 0;
-  while (index < sorted.length) {
-    let nextIndex = index + 1;
-    const key = `${sorted[index].groupRank}:${sorted[index].avgPA.toFixed(4)}`;
-    while (
-      nextIndex < sorted.length &&
-      `${sorted[nextIndex].groupRank}:${sorted[nextIndex].avgPA.toFixed(4)}` === key
-    ) {
-      nextIndex += 1;
-    }
-
-    const tieGroup = sorted.slice(index, nextIndex);
-    if (tieGroup.length > 1) {
-      const order = await getGlobalDrawOrder({
+  return resolveGlobalRanking({
+    entries,
+    getRandomDrawOrder: (tieKey, teamIds) =>
+      getGlobalDrawOrder({
         categoryCode,
-        tieKey: key,
-        teamIds: tieGroup.map((entry) => entry.teamId),
-      });
-      const ordered = order
-        .map((id) => tieGroup.find((entry) => entry.teamId === id))
-        .filter((entry): entry is GlobalRankingEntry => Boolean(entry));
-      resolved.push(...ordered);
-    } else {
-      resolved.push(...tieGroup);
-    }
-
-    index = nextIndex;
-  }
-
-  return resolved.map((entry, idx) => ({
-    ...entry,
-    globalRank: idx + 1,
-  }));
+        tieKey,
+        teamIds,
+      }),
+  });
 }
 
 export function buildStandardBracket(teamIds: string[], startRound = 2) {

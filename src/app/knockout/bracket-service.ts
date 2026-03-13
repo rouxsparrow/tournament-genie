@@ -17,7 +17,7 @@ type SeedEntry = {
   seedNo: number;
   groupId: string;
   groupRank: number;
-  avgPA: number;
+  avgPD: number;
 };
 
 export class BracketError extends Error {
@@ -224,7 +224,7 @@ export async function generateKnockoutBracketInternal(params: {
       seedNo: index + 1,
       groupId: entry.groupId,
       groupRank: entry.groupRank,
-      avgPA: entry.avgPA,
+      avgPD: entry.avgPD,
     }));
   } else {
     if (categoryCode === "WD") {
@@ -241,7 +241,7 @@ export async function generateKnockoutBracketInternal(params: {
       seedNo: index + 1,
       groupId: seed.groupId,
       groupRank: seed.groupRank,
-      avgPA: seed.avgPA,
+      avgPD: seed.avgPD,
     }));
   }
 
@@ -310,7 +310,7 @@ export async function generateKnockoutBracketInternal(params: {
     const rankedB = seriesBSeeds.map((seed) => ({
       teamId: seed.teamId,
       groupRank: seed.groupRank,
-      avgPA: seed.avgPA,
+      avgPD: seed.avgPD,
       groupId: seed.groupId,
     }));
 

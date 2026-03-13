@@ -21,6 +21,8 @@ export type PublicStandingRow = {
   pointsFor: number;
   pointsAgainst: number;
   pointDiff: number;
+  avgPointDiff: number;
+  avgPointsFor: number;
 };
 
 export type PublicGroupSummary = {
