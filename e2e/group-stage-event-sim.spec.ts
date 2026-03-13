@@ -171,9 +171,7 @@ async function markUnreadNotificationForCourt(adminPage: Page, courtLabel: strin
 async function selectRefereeMatch(page: Page, teams: TeamPair, courtLabel: string) {
   await page.reload({ waitUntil: "domcontentloaded" });
 
-  const courtSelect = page
-    .locator("label", { hasText: "Court" })
-    .locator("xpath=following-sibling::select[1]");
+  const courtSelect = page.getByLabel("Court");
   await expect(courtSelect).toBeVisible();
   await courtSelect.selectOption(courtLabel);
   const matchContainer = page.locator("label", { hasText: "Match" }).locator("..");

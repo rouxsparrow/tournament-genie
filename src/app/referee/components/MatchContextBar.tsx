@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -20,6 +21,9 @@ type MatchContextBarProps = {
   onStageChange: (value: Stage) => void;
   selectedCourt: "P5" | "P6" | "P7" | "P8" | "P9" | "";
   onCourtChange: (value: "P5" | "P6" | "P7" | "P8" | "P9" | "") => void;
+  lockedCourt: "P5" | "P6" | "P7" | "P8" | "P9" | "";
+  onToggleCourtLock: () => void;
+  canLockCourt?: boolean;
   matches: MatchOption[];
   selectedMatchId: string;
   onMatchChange: (value: string) => void;
@@ -31,6 +35,9 @@ export function MatchContextBar({
   onStageChange,
   selectedCourt,
   onCourtChange,
+  lockedCourt,
+  onToggleCourtLock,
+  canLockCourt = false,
   matches,
   selectedMatchId,
   onMatchChange,
@@ -51,27 +58,49 @@ export function MatchContextBar({
 
       <div className="mt-4 grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs font-medium text-muted-foreground">Court</label>
-          <select
-            value={selectedCourt}
-            disabled={disabled}
-            onChange={(event) =>
-              onCourtChange(event.target.value as "P5" | "P6" | "P7" | "P8" | "P9" | "")
-            }
-            className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
-          >
-            <option value="">All courts</option>
-            <option value="P5">P5</option>
-            <option value="P6">P6</option>
-            <option value="P7">P7</option>
-            <option value="P8">P8</option>
-            <option value="P9">P9</option>
-          </select>
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor="referee-court" className="text-xs font-medium text-muted-foreground">
+              Court
+            </label>
+            {lockedCourt ? (
+              <span className="text-xs font-medium text-foreground">Court locked to {lockedCourt}</span>
+            ) : null}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <select
+              id="referee-court"
+              value={selectedCourt}
+              disabled={disabled || !!lockedCourt}
+              onChange={(event) =>
+                onCourtChange(event.target.value as "P5" | "P6" | "P7" | "P8" | "P9" | "")
+              }
+              className="min-w-0 flex-1 rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
+            >
+              <option value="">All courts</option>
+              <option value="P5">P5</option>
+              <option value="P6">P6</option>
+              <option value="P7">P7</option>
+              <option value="P8">P8</option>
+              <option value="P9">P9</option>
+            </select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onToggleCourtLock}
+              disabled={disabled || (!lockedCourt && !canLockCourt)}
+            >
+              {lockedCourt ? "Unlock Court" : "Lock Court"}
+            </Button>
+          </div>
         </div>
 
         <div>
-          <label className="text-xs font-medium text-muted-foreground">Stage</label>
+          <label htmlFor="referee-stage" className="text-xs font-medium text-muted-foreground">
+            Stage
+          </label>
           <select
+            id="referee-stage"
             value={stage}
             disabled={disabled}
             onChange={(event) => onStageChange(event.target.value as Stage)}
