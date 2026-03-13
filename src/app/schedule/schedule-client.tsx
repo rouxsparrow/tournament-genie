@@ -458,7 +458,7 @@ export function ScheduleClient({
   }, [isAdmin, stage]);
 
   useEffect(() => {
-    if (!isAdmin || !autoSchedule) return;
+    if (!isAdmin) return;
 
     const supabase = getRealtimeBrowserClient();
     if (!supabase) return;

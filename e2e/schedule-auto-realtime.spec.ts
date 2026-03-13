@@ -2,16 +2,29 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import { loginAsAdmin } from "./helpers/auth";
 import {
   closeDb,
+  deleteTestRefereeAccountsByPrefix,
   ensureActiveGroupMatchId,
   ensureActiveKnockoutMatchId,
   getActiveGroupAssignmentSnapshot,
   getActiveKnockoutAssignmentSnapshot,
 } from "./helpers/db";
+import {
+  createRefereeCredentials,
+  signInReferee,
+  submitRefereeScoreForCourt,
+} from "./helpers/referee";
 
 test.describe.configure({ mode: "serial" });
 
+const TEST_REF_PREFIX = `schedule_ref_${Date.now()}`;
+
 test.afterAll(async () => {
+  await deleteTestRefereeAccountsByPrefix(TEST_REF_PREFIX);
   await closeDb();
+});
+
+test.afterEach(async () => {
+  await deleteTestRefereeAccountsByPrefix(TEST_REF_PREFIX);
 });
 
 const COURT_LABELS: Record<string, string> = {
@@ -180,19 +193,22 @@ test("Schedule realtime refreshes on KNOCKOUT completion when Auto Schedule is O
   await observerContext.close();
 });
 
-test("Schedule does not realtime-refresh when Auto Schedule is OFF @regression", async ({ browser }) => {
+test("Schedule realtime refreshes on GROUP completion when Auto Schedule is OFF and referee submits @regression", async ({
+  browser,
+}) => {
   await ensureActiveGroupMatchId();
   const snapshot = await getActiveGroupAssignmentSnapshot();
   test.skip(!snapshot, "No active group-stage assignment available.");
   if (!snapshot) return;
 
-  const operatorContext = await browser.newContext();
   const observerContext = await browser.newContext();
-  const operatorPage = await operatorContext.newPage();
+  const refereeContext = await browser.newContext();
   const observerPage = await observerContext.newPage();
+  const refereePage = await refereeContext.newPage();
 
-  await loginAsAdmin(operatorPage);
   await loginAsAdmin(observerPage);
+  const credentials = await createRefereeCredentials(TEST_REF_PREFIX);
+  await signInReferee(refereePage, credentials);
 
   await observerPage.goto("/schedule?stage=group");
   await setAutoSchedule(observerPage, false);
@@ -201,23 +217,82 @@ test("Schedule does not realtime-refresh when Auto Schedule is OFF @regression",
   await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toBeVisible();
   await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toBeVisible();
 
-  const submitted = await submitGroupMatchFromMatches(operatorPage, snapshot.matchId);
+  const submitted = await submitRefereeScoreForCourt(refereePage, {
+    stage: "GROUP",
+    court: courtLabel(snapshot.courtId),
+  });
   if (!submitted) {
-    await operatorContext.close();
     await observerContext.close();
-    test.skip(true, "Could not submit group score for active match in /matches.");
+    await refereeContext.close();
+    test.skip(true, "Could not submit referee group score for active court.");
     return;
   }
 
-  await observerPage.waitForTimeout(4000);
-  await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toBeVisible();
-  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toBeVisible();
-
-  await observerPage.reload();
   await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toHaveCount(0, {
     timeout: 20_000,
   });
+  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toHaveCount(0, {
+    timeout: 20_000,
+  });
+  await expect(targetCourt.getByText("No match assigned.")).toBeVisible({
+    timeout: 20_000,
+  });
 
-  await operatorContext.close();
+  await observerPage.waitForTimeout(2000);
+  await expect(targetCourt.getByText("No match assigned.")).toBeVisible();
+
   await observerContext.close();
+  await refereeContext.close();
+});
+
+test("Schedule realtime refreshes on KNOCKOUT completion when Auto Schedule is OFF and referee submits @regression", async ({
+  browser,
+}) => {
+  await ensureActiveKnockoutMatchId();
+  const snapshot = await getActiveKnockoutAssignmentSnapshot();
+  test.skip(!snapshot, "No active knockout assignment available.");
+  if (!snapshot) return;
+
+  const observerContext = await browser.newContext();
+  const refereeContext = await browser.newContext();
+  const observerPage = await observerContext.newPage();
+  const refereePage = await refereeContext.newPage();
+
+  await loginAsAdmin(observerPage);
+  const credentials = await createRefereeCredentials(TEST_REF_PREFIX);
+  await signInReferee(refereePage, credentials);
+
+  await observerPage.goto("/schedule?stage=ko");
+  await setAutoSchedule(observerPage, false);
+
+  const targetCourt = courtCard(observerPage, courtLabel(snapshot.courtId));
+  await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toBeVisible();
+  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toBeVisible();
+
+  const submitted = await submitRefereeScoreForCourt(refereePage, {
+    stage: "KNOCKOUT",
+    court: courtLabel(snapshot.courtId),
+  });
+  if (!submitted) {
+    await observerContext.close();
+    await refereeContext.close();
+    test.skip(true, "Could not submit referee knockout score for active court.");
+    return;
+  }
+
+  await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toHaveCount(0, {
+    timeout: 20_000,
+  });
+  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toHaveCount(0, {
+    timeout: 20_000,
+  });
+  await expect(targetCourt.getByText("No match assigned.")).toBeVisible({
+    timeout: 20_000,
+  });
+
+  await observerPage.waitForTimeout(2000);
+  await expect(targetCourt.getByText("No match assigned.")).toBeVisible();
+
+  await observerContext.close();
+  await refereeContext.close();
 });
