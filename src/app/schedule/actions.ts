@@ -13,6 +13,7 @@ import {
   computeGroupBottleneckForPlayers,
   sortQueueMatches,
 } from "@/lib/schedule/group-priority";
+import { buildKnockoutUnlockPotentialMap } from "@/lib/schedule/knockout-unlock";
 
 type CategoryFilter = "ALL" | "MD" | "WD" | "XD";
 type MatchType = "GROUP" | "KNOCKOUT";
@@ -65,6 +66,7 @@ type ScheduleMatchItem = {
     playerIds: string[];
   };
   restScore: number;
+  unlockPotential?: number;
   bottleneckMaxLoad: number;
   bottleneckSumLoad: number;
   forcedRank?: number;
@@ -609,6 +611,7 @@ function buildMatchItem(params: {
   homeTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
   awayTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
   restScore: number;
+  unlockPotential?: number;
   bottleneckMaxLoad?: number;
   bottleneckSumLoad?: number;
   forcedRank?: number;
@@ -645,6 +648,7 @@ function buildMatchItem(params: {
       playerIds: [...home.playerIds, ...away.playerIds],
     },
     restScore: params.restScore,
+    unlockPotential: params.unlockPotential,
     bottleneckMaxLoad: params.bottleneckMaxLoad ?? 0,
     bottleneckSumLoad: params.bottleneckSumLoad ?? 0,
     forcedRank: params.forcedRank,
@@ -767,7 +771,8 @@ function buildEligibleKnockoutItemFromMatch(
     homeTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
     awayTeam: { name: string; members: { player: { id: string; name: string } }[] } | null;
   },
-  forcedRank?: number
+  forcedRank?: number,
+  unlockPotential?: number
 ) {
   if (!isListEligibleKnockoutMatch(match)) {
     return null;
@@ -784,6 +789,7 @@ function buildEligibleKnockoutItemFromMatch(
     homeTeam: match.homeTeam,
     awayTeam: match.awayTeam,
     restScore: 0,
+    unlockPotential,
     forcedRank,
     isForced: typeof forcedRank === "number",
   });
@@ -1197,6 +1203,18 @@ async function loadGroupRemainingLoadMapFromDb() {
   );
 }
 
+async function loadKnockoutUnlockPotentialMapFromDb() {
+  const knockoutMatches = await prisma.knockoutMatch.findMany({
+    select: {
+      id: true,
+      nextMatchId: true,
+      status: true,
+      winnerTeamId: true,
+    },
+  });
+  return buildKnockoutUnlockPotentialMap(knockoutMatches);
+}
+
 async function getLastBatchFromAssignments(stage: ScheduleStage) {
   const assignments = await prisma.courtAssignment.findMany({
     where: { status: { in: ["ACTIVE", "CLEARED"] }, stage },
@@ -1422,6 +1440,17 @@ async function buildListEligibleMatches(params: {
           }))
         )
       : new Map<string, number>();
+  const knockoutUnlockPotentialMap =
+    params.stage === "KNOCKOUT"
+      ? buildKnockoutUnlockPotentialMap(
+          knockoutMatches.map((match) => ({
+            id: match.id,
+            nextMatchId: match.nextMatchId,
+            status: match.status,
+            winnerTeamId: match.winnerTeamId,
+          }))
+        )
+      : new Map<string, number>();
 
   const blockedKeys = buildBlockedKeys(blocked);
 
@@ -1488,6 +1517,7 @@ async function buildListEligibleMatches(params: {
           homeTeam: match.homeTeam,
           awayTeam: match.awayTeam,
           restScore: computeRestScore(playerIds, playingSet, recentlyPlayedSet),
+          unlockPotential: knockoutUnlockPotentialMap.get(match.id) ?? 0,
           forcedRank: forcedData.rankMap.get(matchKey),
           isForced: forcedData.forcedSet.has(matchKey),
         })
@@ -1711,6 +1741,17 @@ async function applyAutoSchedule(params: {
               }))
             )
           : new Map<string, number>();
+      const knockoutUnlockPotentialMap =
+        params.stage === "KNOCKOUT"
+          ? buildKnockoutUnlockPotentialMap(
+              eligibleSource.knockoutMatches.map((match) => ({
+                id: match.id,
+                nextMatchId: match.nextMatchId,
+                status: match.status,
+                winnerTeamId: match.winnerTeamId,
+              }))
+            )
+          : new Map<string, number>();
 
       if (SCHEDULE_DEBUG) {
         console.log("[schedule] active assignments", {
@@ -1818,6 +1859,7 @@ async function applyAutoSchedule(params: {
               homeTeam: match.homeTeam,
               awayTeam: match.awayTeam,
               restScore: computeRestScore(playerIds, inPlayPlayerIds, lastBatchPlayerIds),
+              unlockPotential: knockoutUnlockPotentialMap.get(match.id) ?? 0,
               forcedRank: forcedData.rankMap.get(matchKey),
             })
           );
@@ -2713,6 +2755,7 @@ export async function backToQueue(
   const uncheckedPlayerIds = await loadUncheckedPlayerIds();
   let forcedRankMap: Map<string, number> | null = null;
   let groupRemainingLoadMap: Map<string, number> | null = null;
+  let knockoutUnlockPotentialMap: Map<string, number> | null = null;
   const getForcedRank = async (matchType: MatchType, matchId: string) => {
     if (!forcedRankMap) {
       forcedRankMap = await loadForcedRankMap(stage);
@@ -2724,6 +2767,12 @@ export async function backToQueue(
       groupRemainingLoadMap = await loadGroupRemainingLoadMapFromDb();
     }
     return groupRemainingLoadMap;
+  };
+  const getKnockoutUnlockPotentialMap = async () => {
+    if (!knockoutUnlockPotentialMap) {
+      knockoutUnlockPotentialMap = await loadKnockoutUnlockPotentialMapFromDb();
+    }
+    return knockoutUnlockPotentialMap;
   };
 
   if (assignment.matchType === "GROUP" && assignment.groupMatchId && assignment.groupMatch) {
@@ -2751,7 +2800,11 @@ export async function backToQueue(
     });
     if (!blocked && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
       const forcedRank = await getForcedRank("KNOCKOUT", assignment.knockoutMatchId);
-      const item = buildEligibleKnockoutItemFromMatch(assignment.knockoutMatch, forcedRank);
+      const item = buildEligibleKnockoutItemFromMatch(
+        assignment.knockoutMatch,
+        forcedRank,
+        (await getKnockoutUnlockPotentialMap()).get(assignment.knockoutMatchId) ?? 0
+      );
       if (item) addEligible.push(item);
     }
   }
@@ -2846,6 +2899,7 @@ export async function swapBackToQueue(
   const uncheckedPlayerIds = await loadUncheckedPlayerIds();
   let forcedRankMap: Map<string, number> | null = null;
   let groupRemainingLoadMap: Map<string, number> | null = null;
+  let knockoutUnlockPotentialMap: Map<string, number> | null = null;
   const getForcedRank = async (matchType: MatchType, matchId: string) => {
     if (!forcedRankMap) {
       forcedRankMap = await loadForcedRankMap(stage);
@@ -2857,6 +2911,12 @@ export async function swapBackToQueue(
       groupRemainingLoadMap = await loadGroupRemainingLoadMapFromDb();
     }
     return groupRemainingLoadMap;
+  };
+  const getKnockoutUnlockPotentialMap = async () => {
+    if (!knockoutUnlockPotentialMap) {
+      knockoutUnlockPotentialMap = await loadKnockoutUnlockPotentialMapFromDb();
+    }
+    return knockoutUnlockPotentialMap;
   };
 
   if (assignment.matchType === "GROUP" && assignment.groupMatchId && assignment.groupMatch) {
@@ -2883,7 +2943,11 @@ export async function swapBackToQueue(
     });
     if (!blocked && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
       const forcedRank = await getForcedRank("KNOCKOUT", assignment.knockoutMatchId);
-      const item = buildEligibleKnockoutItemFromMatch(assignment.knockoutMatch, forcedRank);
+      const item = buildEligibleKnockoutItemFromMatch(
+        assignment.knockoutMatch,
+        forcedRank,
+        (await getKnockoutUnlockPotentialMap()).get(assignment.knockoutMatchId) ?? 0
+      );
       if (item) addEligible.push(item);
     }
   }
@@ -3137,6 +3201,7 @@ export async function unblockMatch(
   let addEligible: ScheduleMatchItem[] = [];
   let forcedRankMap: Map<string, number> | null = null;
   let groupRemainingLoadMap: Map<string, number> | null = null;
+  let knockoutUnlockPotentialMap: Map<string, number> | null = null;
   const getForcedRank = async (nextMatchType: MatchType, nextMatchId: string) => {
     if (!forcedRankMap) {
       forcedRankMap = await loadForcedRankMap(stage);
@@ -3148,6 +3213,12 @@ export async function unblockMatch(
       groupRemainingLoadMap = await loadGroupRemainingLoadMapFromDb();
     }
     return groupRemainingLoadMap;
+  };
+  const getKnockoutUnlockPotentialMap = async () => {
+    if (!knockoutUnlockPotentialMap) {
+      knockoutUnlockPotentialMap = await loadKnockoutUnlockPotentialMapFromDb();
+    }
+    return knockoutUnlockPotentialMap;
   };
 
   if (matchType === "GROUP") {
@@ -3177,7 +3248,11 @@ export async function unblockMatch(
     }
     if (match) {
       const forcedRank = await getForcedRank("KNOCKOUT", matchId);
-      const item = buildEligibleKnockoutItemFromMatch(match, forcedRank);
+      const item = buildEligibleKnockoutItemFromMatch(
+        match,
+        forcedRank,
+        (await getKnockoutUnlockPotentialMap()).get(matchId) ?? 0
+      );
       if (item) addEligible = [item];
     }
   }
@@ -3462,6 +3537,7 @@ export async function assignNext(params: {
   const addEligible: ScheduleMatchItem[] = [];
   let forcedRankMap: Map<string, number> | null = null;
   let groupRemainingLoadMap: Map<string, number> | null = null;
+  let knockoutUnlockPotentialMap: Map<string, number> | null = null;
   const getForcedRank = async (matchType: MatchType, matchId: string) => {
     if (!forcedRankMap) {
       forcedRankMap = await loadForcedRankMap(params.stage);
@@ -3473,6 +3549,12 @@ export async function assignNext(params: {
       groupRemainingLoadMap = await loadGroupRemainingLoadMapFromDb();
     }
     return groupRemainingLoadMap;
+  };
+  const getKnockoutUnlockPotentialMap = async () => {
+    if (!knockoutUnlockPotentialMap) {
+      knockoutUnlockPotentialMap = await loadKnockoutUnlockPotentialMapFromDb();
+    }
+    return knockoutUnlockPotentialMap;
   };
   for (const assignment of existingCourtAssignments) {
     const clearedMatchKey =
@@ -3518,7 +3600,11 @@ export async function assignNext(params: {
       });
       if (!blockedCurrent && !hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) {
         const forcedRank = await getForcedRank("KNOCKOUT", assignment.knockoutMatchId);
-        const item = buildEligibleKnockoutItemFromMatch(assignment.knockoutMatch, forcedRank);
+        const item = buildEligibleKnockoutItemFromMatch(
+          assignment.knockoutMatch,
+          forcedRank,
+          (await getKnockoutUnlockPotentialMap()).get(assignment.knockoutMatchId) ?? 0
+        );
         if (item) addEligible.push(item);
       }
     }

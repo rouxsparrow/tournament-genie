@@ -5,6 +5,7 @@ import {
   computeGroupBottleneckForPlayers,
   sortQueueMatches,
 } from "@/lib/schedule/group-priority";
+import { buildKnockoutUnlockPotentialMap } from "@/lib/schedule/knockout-unlock";
 
 type ScheduleStage = "GROUP" | "KNOCKOUT";
 type MatchType = "GROUP" | "KNOCKOUT";
@@ -19,6 +20,7 @@ type EligibleMatch = {
   matchId: string;
   matchType: MatchType;
   restScore: number;
+  unlockPotential?: number;
   bottleneckMaxLoad: number;
   bottleneckSumLoad: number;
   forcedRank?: number;
@@ -305,6 +307,14 @@ export async function getUpcomingSignature(stage: ScheduleStage) {
       },
       orderBy: [{ series: "asc" }, { round: "asc" }, { matchNo: "asc" }],
     });
+    const knockoutUnlockPotentialMap = buildKnockoutUnlockPotentialMap(
+      knockoutMatches.map((match) => ({
+        id: match.id,
+        nextMatchId: match.nextMatchId,
+        status: match.status,
+        winnerTeamId: match.winnerTeamId,
+      }))
+    );
 
     for (const match of knockoutMatches) {
       if (
@@ -332,6 +342,7 @@ export async function getUpcomingSignature(stage: ScheduleStage) {
           context.inPlayPlayerIds,
           recentlyPlayedIds
         ),
+        unlockPotential: knockoutUnlockPotentialMap.get(match.id) ?? 0,
         bottleneckMaxLoad: 0,
         bottleneckSumLoad: 0,
         forcedRank: forcedData.rankMap.get(key),

@@ -29,10 +29,10 @@ type CategoryResult = {
 
 function StatusBadge({ qualifierSeries }: { qualifierSeries: ResultRow["qualifierSeries"] }) {
   if (qualifierSeries === "A") {
-    return <Badge variant="default">Series A</Badge>;
+    return <Badge className="border-emerald-600 bg-emerald-600 text-white">Series A</Badge>;
   }
   if (qualifierSeries === "B") {
-    return <Badge variant="secondary">Series B</Badge>;
+    return <Badge className="border-orange-500 bg-orange-500 text-white">Series B</Badge>;
   }
   return (
     <Badge

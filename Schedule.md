@@ -58,7 +58,7 @@ Scheduling is **rolling**, not fixed-slot:
 - **Upcoming** = next playable set of up to 5 matches from the sorted Queue
 - Upcoming avoids duplicate players within itself
 - Upcoming prioritizes Force Next matches first (assignable, then waiting) before normal matches
-- Group-stage Upcoming uses bounded lookahead (top 14 candidates per tier) to improve non-overlap packing
+- Upcoming uses bounded lookahead (top 14 candidates per tier) to improve non-overlap packing
 - Upcoming is recalculated whenever scheduling runs
 - Assign modal shows two assignable-only sections: `Upcoming` first, then `More from Queue`
 
@@ -97,9 +97,10 @@ Use the following deterministic order:
 1) Group stage only: assignable-now first (no in-play player conflict)
 2) Group stage only: bottleneck max load (higher first)
 3) Group stage only: bottleneck sum load (higher first)
-4) KO round (earlier rounds first)
-5) Series (B before A)
-6) Match ID (stable fallback)
+4) KO unlock potential (higher first: immediate next-round gate > downstream-linked > no next link)
+5) KO round (earlier rounds first)
+6) KO match number (lower first)
+7) Match ID (stable fallback)
 
 ---
 

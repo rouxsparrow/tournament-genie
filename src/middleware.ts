@@ -20,6 +20,7 @@ const PUBLIC_API = new Set([
   "/api/public/standings/group-matches",
   "/api/public/presenting",
   "/api/public/brackets",
+  "/api/internal/public-read-models/revalidate",
 ]);
 
 function normalizePath(pathname: string) {
