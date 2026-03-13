@@ -1203,6 +1203,7 @@ export async function generateMatchesKnockout(formData: FormData) {
     categoryCodes: [categoryCode],
     series: series ? [series] : undefined,
   });
+  revalidatePath("/brackets");
   revalidatePath("/matches");
   return { ok: true };
 }
@@ -1277,6 +1278,7 @@ export async function upsertKnockoutMatchScore(
       categoryCodes: [match.categoryCode],
       series: [match.series],
     });
+    revalidatePath("/brackets");
     revalidatePath("/matches");
     revalidatePath("/knockout");
     return { ok: true };
@@ -1376,6 +1378,7 @@ export async function upsertKnockoutMatchScore(
     categoryCodes: [match.categoryCode],
     series: [match.series],
   });
+  revalidatePath("/brackets");
   revalidatePath("/schedule");
   revalidatePath("/matches");
   revalidatePath("/knockout");
@@ -1436,6 +1439,7 @@ export async function undoKnockoutMatchResult(formData: FormData) {
     });
   }
 
+  revalidatePath("/brackets");
   revalidatePath("/matches");
   revalidatePath("/knockout");
   return { ok: true };
@@ -1463,6 +1467,7 @@ export async function clearMatchesKnockout(formData: FormData) {
     categoryCodes: [categoryCode],
     series: series ? [series] : undefined,
   });
+  revalidatePath("/brackets");
   revalidatePath("/matches");
   return { ok: true };
 }
@@ -1567,6 +1572,7 @@ export async function randomizeAllKnockoutResultsDev(formData: FormData) {
     categoryCodes: [categoryCode],
     series: series ? [series] : undefined,
   });
+  revalidatePath("/brackets");
   revalidatePath("/matches");
   return { ok: true };
 }
@@ -1659,6 +1665,7 @@ export async function setFinalBestOf3(formData: FormData) {
     categoryCodes: [match.categoryCode],
     series: [match.series],
   });
+  revalidatePath("/brackets");
   revalidatePath("/matches");
   revalidatePath("/knockout");
   return { ok: true };

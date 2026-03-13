@@ -51,6 +51,7 @@ async function isCourtEmpty(page: Page, courtLabel: string) {
 
 async function ensureAutoScheduleOff(page: Page) {
   const button = page.getByRole("button", { name: /Auto Schedule/i });
+  if ((await button.count()) === 0) return;
   await expect(button).toBeVisible();
   const text = (await button.textContent()) ?? "";
   if (text.includes("ON")) {

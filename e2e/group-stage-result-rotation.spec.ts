@@ -23,6 +23,12 @@ test("Group stage result uses a wide rotator with overflow scroll and manual con
   const viewport = page.getByTestId("table-viewport");
   await expect(viewport).toBeVisible();
   await expect(page.getByTestId("table-header")).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Avg PD" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Avg PF" })).toBeVisible();
+  const firstRow = page.locator("[data-testid^='result-row-MD-']").first();
+  await expect(firstRow).toBeVisible();
+  await expect(firstRow.locator("td").nth(4)).not.toHaveText("");
+  await expect(firstRow.locator("td").nth(5)).not.toHaveText("");
 
   await page.waitForTimeout(4_500);
   const mdScrollTop = await viewport.evaluate((element) => element.scrollTop);

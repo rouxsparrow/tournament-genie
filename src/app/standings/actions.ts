@@ -6,6 +6,13 @@ import {
   resolveStandingRows,
   type StandingRow,
 } from "@/app/standings/logic";
+import {
+  buildGroupRandomDrawTieKey,
+  buildGroupStandingOverrideTieKey,
+  isValidTieOrder,
+  normalizeOrderedTeamIds,
+  type RankingTieOrderSource,
+} from "@/lib/ranking-tie-override";
 
 export type StandingsCategoryCode = "MD" | "WD" | "XD";
 
@@ -34,20 +41,29 @@ type GroupForStandings = {
   }[];
 };
 
-type GroupResolvedStandings = {
+export type GroupStandingFallbackTie = {
+  tieKey: string;
+  source: RankingTieOrderSource;
+  orderedTeamIds: string[];
+  rows: StandingRow[];
+};
+
+export type GroupResolvedStandings = {
   group: GroupForStandings;
   matches: GroupForStandings["matches"];
   standings: StandingRow[];
+  fallbackTies: GroupStandingFallbackTie[];
 };
 
-type RandomDrawResolver = {
-  getOrder: (teamIds: string[]) => Promise<string[]>;
+type TieOrderResolver = {
+  getOrder: (params: {
+    exactTieKey: string;
+    teamIds: string[];
+  }) => Promise<{
+    orderedTeamIds: string[];
+    source: RankingTieOrderSource;
+  }>;
 };
-
-function buildTieKey(groupId: string, teamIds: string[]) {
-  const sortedIds = [...teamIds].sort();
-  return `${groupId}:${sortedIds.join(",")}`;
-}
 
 function shuffleIds(teamIds: string[]) {
   const shuffled = [...teamIds];
@@ -58,29 +74,57 @@ function shuffleIds(teamIds: string[]) {
   return shuffled;
 }
 
-async function createGroupRandomDrawResolver(
+async function createGroupTieOrderResolver(
   groupId: string,
   categoryCode: StandingsCategoryCode
-): Promise<RandomDrawResolver> {
-  const existing = await prisma.groupRandomDraw.findMany({
-    where: { groupId, categoryCode },
-    select: { tieKey: true, orderedTeamIds: true },
-  });
+): Promise<TieOrderResolver> {
+  const [existingRandom, existingManual] = await Promise.all([
+    prisma.groupRandomDraw.findMany({
+      where: { groupId, categoryCode },
+      select: { tieKey: true, orderedTeamIds: true },
+    }),
+    prisma.rankingTieOverride.findMany({
+      where: { scope: "GROUP_STANDINGS", categoryCode, groupId },
+      select: { tieKey: true, orderedTeamIds: true },
+    }),
+  ]);
 
-  const orderByTieKey = new Map<string, string[]>();
-  for (const row of existing) {
-    if (Array.isArray(row.orderedTeamIds)) {
-      orderByTieKey.set(row.tieKey, row.orderedTeamIds as string[]);
+  const randomOrderByTieKey = new Map<string, string[]>();
+  for (const row of existingRandom) {
+    const orderedTeamIds = normalizeOrderedTeamIds(row.orderedTeamIds);
+    if (orderedTeamIds.length > 0) {
+      randomOrderByTieKey.set(row.tieKey, orderedTeamIds);
+    }
+  }
+
+  const manualOrderByTieKey = new Map<string, string[]>();
+  for (const row of existingManual) {
+    const orderedTeamIds = normalizeOrderedTeamIds(row.orderedTeamIds);
+    if (orderedTeamIds.length > 0) {
+      manualOrderByTieKey.set(row.tieKey, orderedTeamIds);
     }
   }
 
   return {
-    async getOrder(teamIds: string[]) {
-      const tieKey = buildTieKey(groupId, teamIds);
-      const cached = orderByTieKey.get(tieKey);
-      if (cached && cached.length > 0) return cached;
+    async getOrder(params) {
+      const manualOrder = manualOrderByTieKey.get(params.exactTieKey);
+      if (manualOrder && isValidTieOrder(params.teamIds, manualOrder)) {
+        return {
+          orderedTeamIds: manualOrder,
+          source: "manual" as const,
+        };
+      }
 
-      const sortedIds = [...teamIds].sort();
+      const tieKey = buildGroupRandomDrawTieKey(groupId, params.teamIds);
+      const cached = randomOrderByTieKey.get(tieKey);
+      if (cached && isValidTieOrder(params.teamIds, cached)) {
+        return {
+          orderedTeamIds: cached,
+          source: "random" as const,
+        };
+      }
+
+      const sortedIds = [...params.teamIds].sort();
       const shuffled = shuffleIds(sortedIds);
 
       try {
@@ -96,20 +140,27 @@ async function createGroupRandomDrawResolver(
           select: { orderedTeamIds: true },
         });
 
-        const ordered = Array.isArray(row.orderedTeamIds)
-          ? (row.orderedTeamIds as string[])
-          : shuffled;
-        orderByTieKey.set(tieKey, ordered);
-        return ordered;
+        const ordered = normalizeOrderedTeamIds(row.orderedTeamIds);
+        const resolvedOrder = isValidTieOrder(params.teamIds, ordered) ? ordered : shuffled;
+        randomOrderByTieKey.set(tieKey, resolvedOrder);
+        return {
+          orderedTeamIds: resolvedOrder,
+          source: "random" as const,
+        };
       } catch {
         const fallback = await prisma.groupRandomDraw.findUnique({
           where: { tieKey },
           select: { orderedTeamIds: true },
         });
-        if (fallback && Array.isArray(fallback.orderedTeamIds)) {
-          const ordered = fallback.orderedTeamIds as string[];
-          orderByTieKey.set(tieKey, ordered);
-          return ordered;
+        if (fallback) {
+          const ordered = normalizeOrderedTeamIds(fallback.orderedTeamIds);
+          if (isValidTieOrder(params.teamIds, ordered)) {
+            randomOrderByTieKey.set(tieKey, ordered);
+            return {
+              orderedTeamIds: ordered,
+              source: "random" as const,
+            };
+          }
         }
         throw new Error("Unable to resolve random draw order.");
       }
@@ -119,7 +170,7 @@ async function createGroupRandomDrawResolver(
 
 async function resolveStandingsForGroup(
   group: GroupForStandings,
-  randomDrawResolver: RandomDrawResolver
+  tieOrderResolver: TieOrderResolver
 ): Promise<GroupResolvedStandings> {
   const stats = new Map<string, StandingRow>();
   const teams = group.teams.map((entry) => entry.team);
@@ -170,16 +221,38 @@ async function resolveStandingsForGroup(
     }
   }
 
+  const fallbackTies: GroupStandingFallbackTie[] = [];
   const resolved = await resolveStandingRows({
     rows: Array.from(stats.values(), finalizeStandingMetrics),
     completedMatches,
-    getRandomDrawOrder: (teamIds) => randomDrawResolver.getOrder(teamIds),
+    buildTieKey: (tieGroup) =>
+      buildGroupStandingOverrideTieKey({
+        groupId: group.id,
+        teamIds: tieGroup.map((row) => row.teamId),
+        wins: tieGroup[0]?.wins ?? 0,
+        avgPointDiff: tieGroup[0]?.avgPointDiff ?? 0,
+        avgPointsFor: tieGroup[0]?.avgPointsFor ?? 0,
+      }),
+    getFallbackOrder: (tie) =>
+      tieOrderResolver.getOrder({
+        exactTieKey: tie.tieKey,
+        teamIds: tie.teamIds,
+      }),
+    onFallbackResolved: (tie) => {
+      fallbackTies.push({
+        tieKey: tie.tieKey,
+        source: tie.source,
+        orderedTeamIds: tie.orderedTeamIds,
+        rows: tie.rows,
+      });
+    },
   });
 
   return {
     group,
     matches: group.matches,
     standings: resolved,
+    fallbackTies,
   };
 }
 
@@ -248,12 +321,12 @@ export async function computeStandings(groupId: string) {
   if (!group) return null;
 
   const resolvedGroup = group as GroupForStandings;
-  const randomDrawResolver = await createGroupRandomDrawResolver(
+  const tieOrderResolver = await createGroupTieOrderResolver(
     resolvedGroup.id,
     resolvedGroup.category.code
   );
 
-  return resolveStandingsForGroup(resolvedGroup, randomDrawResolver);
+  return resolveStandingsForGroup(resolvedGroup, tieOrderResolver);
 }
 
 export async function computeStandingsForCategory(categoryCode: StandingsCategoryCode) {
@@ -266,11 +339,11 @@ export async function computeStandingsForCategory(categoryCode: StandingsCategor
   return Promise.all(
     groups.map(async (group) => {
       const resolvedGroup = group as GroupForStandings;
-      const randomDrawResolver = await createGroupRandomDrawResolver(
+      const tieOrderResolver = await createGroupTieOrderResolver(
         resolvedGroup.id,
         resolvedGroup.category.code
       );
-      return resolveStandingsForGroup(resolvedGroup, randomDrawResolver);
+      return resolveStandingsForGroup(resolvedGroup, tieOrderResolver);
     })
   );
 }

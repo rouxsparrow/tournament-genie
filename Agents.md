@@ -98,7 +98,8 @@ Group standings are calculated from match results using:
 2. Average point difference per match ((pointsFor - pointsAgainst) / matchesPlayed)
 3. Average points scored per match (pointsFor / matchesPlayed)
 4. Head-to-head (only if tied teams played each other)
-5. Random draw (stored; last resort)
+5. Manual admin tie override for the exact current fallback tie, if one exists
+6. Random draw (stored; last resort)
 
 ---
 
@@ -187,7 +188,8 @@ After group stage is locked:
 - Global Group Stage Ranking order is based on:
   1. Final group rank
   2. Average point difference per match ((PF - PA) / matchesPlayed)
-  3. Stored random draw
+  3. Manual admin tie override for the exact current fallback tie, if one exists
+  4. Stored random draw
 - Series A must contain exactly those qualified teams.
 - Teams outside the qualification boundary must not appear in Series A.
 
@@ -305,7 +307,7 @@ Pair the play-in teams using:
 ## Schedule Page Controls
 - Stage toggle: Group Stage / Knockout; courts, locks, rest, in-play guard, queue, and Force Next are stage-scoped
 - Live Courts view is split into Playing (court assignments) and Upcoming (top 5 eligible)
-- Auto Schedule ON fills free unlocked courts from Upcoming
+- Auto Schedule is permanently disabled; court assignment is manual-only
 - Playing actions: Back to Queue, Block (default reason: injury / absent), Completed (verify DB), Lock, Assign Next
 - Queue view filters: Status (Eligible/Blocked) + Category
 - Force Next elevates a match to the top of eligible order and persists across refresh
@@ -314,7 +316,7 @@ Pair the play-in teams using:
 - Empty courts show a muted note when no assignable match exists due to in-play conflicts
 - Queue controls include per-match “Back to correct position” and global “Reset the Queue” for forced priorities
 - Back to Queue on a playing court swaps in the next assignable match when possible
-- Back to Queue swaps only when Auto Schedule is ON; otherwise it just clears the court
+- Back to Queue always clears the court; it does not auto-swap in a replacement match
 - Upcoming is derived from the sorted queue as the next playable set with no duplicate players
 - Upcoming prioritizes Force Next matches when selecting the next playable set
 - Upcoming selection is forced-first (before normal queue items), while still avoiding duplicate players

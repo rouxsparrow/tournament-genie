@@ -29,9 +29,29 @@ function makeRow(params: {
   });
 }
 
+function resolveRowsForTest(rows: StandingRow[], options?: {
+  completedMatches?: {
+    winnerTeamId: string | null;
+    homeTeamId: string | null;
+    awayTeamId: string | null;
+  }[];
+  getFallbackOrder?: (teamIds: string[]) => Promise<string[]>;
+}) {
+  return resolveStandingRows({
+    rows,
+    completedMatches: options?.completedMatches ?? [],
+    buildTieKey: (tieGroup) => tieGroup.map((row) => row.teamId).sort().join(","),
+    getFallbackOrder: async (tie) => ({
+      orderedTeamIds: options?.getFallbackOrder
+        ? await options.getFallbackOrder(tie.teamIds)
+        : tie.teamIds,
+      source: "random",
+    }),
+  });
+}
+
 test("standings order uses avg PD when teams played different match counts", async () => {
-  const rows = await resolveStandingRows({
-    rows: [
+  const rows = await resolveRowsForTest([
       makeRow({
         teamId: "team-b",
         wins: 2,
@@ -46,10 +66,7 @@ test("standings order uses avg PD when teams played different match counts", asy
         pointsFor: 21,
         pointsAgainst: 9,
       }),
-    ],
-    completedMatches: [],
-    getRandomDrawOrder: async (teamIds) => teamIds,
-  });
+    ]);
 
   assert.deepEqual(
     rows.map((row) => row.teamId),
@@ -58,8 +75,7 @@ test("standings order uses avg PD when teams played different match counts", asy
 });
 
 test("standings tie-break uses avg PD before avg PF", async () => {
-  const rows = await resolveStandingRows({
-    rows: [
+  const rows = await resolveRowsForTest([
       makeRow({
         teamId: "higher-avg-pd",
         wins: 2,
@@ -74,10 +90,7 @@ test("standings tie-break uses avg PD before avg PF", async () => {
         pointsFor: 50,
         pointsAgainst: 32,
       }),
-    ],
-    completedMatches: [],
-    getRandomDrawOrder: async (teamIds) => teamIds,
-  });
+    ]);
 
   assert.deepEqual(
     rows.map((row) => row.teamId),
@@ -86,8 +99,7 @@ test("standings tie-break uses avg PD before avg PF", async () => {
 });
 
 test("standings tie-break uses avg PF when wins and avg PD are equal", async () => {
-  const rows = await resolveStandingRows({
-    rows: [
+  const rows = await resolveRowsForTest([
       makeRow({
         teamId: "higher-avg-pf",
         wins: 1,
@@ -102,10 +114,7 @@ test("standings tie-break uses avg PF when wins and avg PD are equal", async () 
         pointsFor: 21,
         pointsAgainst: 11,
       }),
-    ],
-    completedMatches: [],
-    getRandomDrawOrder: async (teamIds) => teamIds,
-  });
+    ]);
 
   assert.deepEqual(
     rows.map((row) => row.teamId),
@@ -114,8 +123,7 @@ test("standings tie-break uses avg PF when wins and avg PD are equal", async () 
 });
 
 test("standings use head-to-head for a two-team tie after avg metrics match", async () => {
-  const rows = await resolveStandingRows({
-    rows: [
+  const rows = await resolveRowsForTest([
       makeRow({
         teamId: "team-a",
         wins: 1,
@@ -130,7 +138,7 @@ test("standings use head-to-head for a two-team tie after avg metrics match", as
         pointsFor: 42,
         pointsAgainst: 42,
       }),
-    ],
+    ], {
     completedMatches: [
       {
         homeTeamId: "team-a",
@@ -138,7 +146,7 @@ test("standings use head-to-head for a two-team tie after avg metrics match", as
         winnerTeamId: "team-b",
       },
     ],
-    getRandomDrawOrder: async () => {
+    getFallbackOrder: async () => {
       throw new Error("random draw should not run");
     },
   });
@@ -150,8 +158,7 @@ test("standings use head-to-head for a two-team tie after avg metrics match", as
 });
 
 test("standings fall back to stored random draw for unresolved multi-team ties", async () => {
-  const rows = await resolveStandingRows({
-    rows: [
+  const rows = await resolveRowsForTest([
       makeRow({
         teamId: "team-a",
         wins: 1,
@@ -173,13 +180,50 @@ test("standings fall back to stored random draw for unresolved multi-team ties",
         pointsFor: 21,
         pointsAgainst: 11,
       }),
-    ],
-    completedMatches: [],
-    getRandomDrawOrder: async () => ["team-c", "team-a", "team-b"],
+    ], {
+    getFallbackOrder: async () => ["team-c", "team-a", "team-b"],
   });
 
   assert.deepEqual(
     rows.map((row) => row.teamId),
     ["team-c", "team-a", "team-b"]
   );
+});
+
+test("standings can use a manual override before random draw", async () => {
+  let source: string | null = null;
+
+  const rows = await resolveStandingRows({
+    rows: [
+      makeRow({
+        teamId: "team-a",
+        wins: 1,
+        played: 1,
+        pointsFor: 21,
+        pointsAgainst: 11,
+      }),
+      makeRow({
+        teamId: "team-b",
+        wins: 1,
+        played: 1,
+        pointsFor: 21,
+        pointsAgainst: 11,
+      }),
+    ],
+    completedMatches: [],
+    buildTieKey: (tieGroup) => tieGroup.map((row) => row.teamId).sort().join(","),
+    getFallbackOrder: async () => ({
+      orderedTeamIds: ["team-b", "team-a"],
+      source: "manual",
+    }),
+    onFallbackResolved: (tie) => {
+      source = tie.source;
+    },
+  });
+
+  assert.deepEqual(
+    rows.map((row) => row.teamId),
+    ["team-b", "team-a"]
+  );
+  assert.equal(source, "manual");
 });

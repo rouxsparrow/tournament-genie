@@ -17,6 +17,7 @@ type ResultRow = {
   groupLabel: string;
   qualifierSeries: "A" | "B" | null;
   avgPD: number;
+  avgPF: number;
 };
 
 type CategoryResult = {
@@ -226,6 +227,7 @@ export function GroupStageResultRotator({ results }: { results: CategoryResult[]
                   <th className="w-28 py-1 text-left">Group</th>
                   <th className="w-36 py-1 text-left">Status</th>
                   <th className="w-20 py-1 text-right">Avg PD</th>
+                  <th className="w-20 py-1 text-right">Avg PF</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -242,6 +244,9 @@ export function GroupStageResultRotator({ results }: { results: CategoryResult[]
                     </td>
                     <td className="py-1 text-right whitespace-nowrap">
                       {formatAverageMetric(row.avgPD)}
+                    </td>
+                    <td className="py-1 text-right whitespace-nowrap">
+                      {formatAverageMetric(row.avgPF)}
                     </td>
                   </tr>
                 ))}

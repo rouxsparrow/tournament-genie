@@ -98,6 +98,7 @@ async function getAssignedTeamsFromCourt(page: Page, courtLabel: string) {
 
 async function ensureAutoScheduleOff(adminPage: Page) {
   const autoButton = adminPage.getByRole("button", { name: /Auto Schedule/i });
+  if ((await autoButton.count()) === 0) return;
   await expect(autoButton).toBeVisible();
   const label = (await autoButton.textContent()) ?? "";
   if (label.includes("ON")) {

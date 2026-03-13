@@ -221,7 +221,13 @@ export async function getGroupProgress() {
 
 export async function getActiveGroupMatchId() {
   const assignment = await prisma.courtAssignment.findFirst({
-    where: { stage: "GROUP", status: "ACTIVE", matchType: "GROUP", groupMatchId: { not: null } },
+    where: {
+      stage: "GROUP",
+      status: "ACTIVE",
+      matchType: "GROUP",
+      groupMatchId: { not: null },
+      groupMatch: { status: { not: "COMPLETED" } },
+    },
     orderBy: { assignedAt: "asc" },
     select: { groupMatchId: true },
   });
@@ -337,6 +343,7 @@ export async function getActiveGroupAssignmentSnapshot() {
       status: "ACTIVE",
       matchType: "GROUP",
       groupMatchId: { not: null },
+      groupMatch: { status: { not: "COMPLETED" } },
     },
     orderBy: { assignedAt: "asc" },
     include: {
@@ -366,6 +373,7 @@ export async function getActiveKnockoutMatchId() {
       status: "ACTIVE",
       matchType: "KNOCKOUT",
       knockoutMatchId: { not: null },
+      knockoutMatch: { status: { not: "COMPLETED" } },
     },
     orderBy: { assignedAt: "asc" },
     select: { knockoutMatchId: true },
@@ -453,6 +461,7 @@ export async function getActiveKnockoutAssignmentSnapshot() {
       status: "ACTIVE",
       matchType: "KNOCKOUT",
       knockoutMatchId: { not: null },
+      knockoutMatch: { status: { not: "COMPLETED" } },
     },
     orderBy: { assignedAt: "asc" },
     include: {

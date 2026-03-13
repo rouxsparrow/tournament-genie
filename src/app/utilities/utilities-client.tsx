@@ -12,7 +12,6 @@ import {
   clearDuplicateAssignments,
   type DuplicateAssignmentSummary,
   fixLegacyCourtIds,
-  setAutoScheduleFunctionEnabled as setAutoScheduleFunctionEnabledAction,
   type LegacyCourtSummary,
   previewTestDataCleanup,
   removeTestDataCleanup,
@@ -82,9 +81,7 @@ export function UtilitiesClient({
   const [confirmToken, setConfirmToken] = useState("");
   const [summary, setSummary] = useState(initialSummary);
   const [legacySummary, setLegacySummary] = useState(initialLegacySummary);
-  const [autoScheduleFunctionEnabled, setAutoScheduleFunctionEnabledState] = useState(
-    initialAutoScheduleFunctionEnabled
-  );
+  const [autoScheduleFunctionEnabled] = useState(initialAutoScheduleFunctionEnabled);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -194,23 +191,6 @@ export function UtilitiesClient({
         return;
       }
       setMessage(`All players unchecked: ${result.updatedCount}.`);
-    });
-  };
-
-  const runSetAutoScheduleFunctionEnabled = (enabled: boolean) => {
-    setMessage(null);
-    startTransition(async () => {
-      const result = await setAutoScheduleFunctionEnabledAction(enabled);
-      if (!result || "error" in result) {
-        setMessage(result?.error ?? "Failed to update Auto Schedule function.");
-        return;
-      }
-      setAutoScheduleFunctionEnabledState(result.enabled);
-      setMessage(
-        result.enabled
-          ? "Auto Schedule function enabled."
-          : "Auto Schedule function disabled. Group and Knockout auto schedule were turned off."
-      );
     });
   };
 
@@ -369,25 +349,16 @@ export function UtilitiesClient({
 
       <SectionShell
         title="Auto Schedule Function"
-        subtitle="Global toggle for Auto Schedule controls across Group and Knockout."
+        subtitle="Deprecated. Auto Schedule is permanently disabled for manual-only scheduling."
       >
         <div className="rounded-md border border-border bg-muted/30 p-3">
           <div className="text-xs text-muted-foreground">Current status</div>
           <div className="text-lg font-semibold text-foreground">
-            {autoScheduleFunctionEnabled ? "Enabled" : "Disabled"}
+            {autoScheduleFunctionEnabled ? "Enabled" : "Disabled (forced off)"}
           </div>
-        </div>
-        <div className="flex justify-end">
-          <Button
-            type="button"
-            variant={autoScheduleFunctionEnabled ? "destructive" : "outline"}
-            onClick={() => runSetAutoScheduleFunctionEnabled(!autoScheduleFunctionEnabled)}
-            disabled={pending}
-          >
-            {autoScheduleFunctionEnabled
-              ? "Disable Auto Schedule Function"
-              : "Enable Auto Schedule Function"}
-          </Button>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Runtime scheduling no longer allows Auto Schedule to be enabled.
+          </div>
         </div>
       </SectionShell>
 

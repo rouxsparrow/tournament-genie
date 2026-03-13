@@ -1,3 +1,5 @@
+import type { RankingTieOrderSource } from "@/lib/ranking-tie-override";
+
 export type StandingRow = {
   teamId: string;
   teamName: string;
@@ -15,6 +17,12 @@ export type StandingTieMatch = {
   winnerTeamId: string | null;
   homeTeamId: string | null;
   awayTeamId: string | null;
+};
+
+export type StandingFallbackTie = {
+  rows: StandingRow[];
+  teamIds: string[];
+  tieKey: string;
 };
 
 const STANDING_TIE_PRECISION = 6;
@@ -65,7 +73,16 @@ function applyStandingOrder(tieGroup: StandingRow[], orderedIds: string[]) {
 export async function resolveStandingRows(params: {
   rows: StandingRow[];
   completedMatches: StandingTieMatch[];
-  getRandomDrawOrder: (teamIds: string[]) => Promise<string[]>;
+  buildTieKey: (tieGroup: StandingRow[]) => string;
+  getFallbackOrder: (
+    tie: StandingFallbackTie
+  ) => Promise<{ orderedTeamIds: string[]; source: RankingTieOrderSource }>;
+  onFallbackResolved?: (
+    tie: StandingFallbackTie & {
+      orderedTeamIds: string[];
+      source: RankingTieOrderSource;
+    }
+  ) => void | Promise<void>;
 }) {
   const baseSorted = [...params.rows].sort(compareStandingRows);
   const resolved: StandingRow[] = [];
@@ -78,6 +95,11 @@ export async function resolveStandingRows(params: {
     }
 
     const tieGroup = baseSorted.slice(index, nextIndex);
+    const fallbackTie: StandingFallbackTie = {
+      rows: tieGroup,
+      teamIds: tieGroup.map((row) => row.teamId),
+      tieKey: params.buildTieKey(tieGroup),
+    };
 
     if (tieGroup.length === 2) {
       const [first, second] = tieGroup;
@@ -92,12 +114,24 @@ export async function resolveStandingRows(params: {
       } else if (headToHead?.winnerTeamId === second.teamId) {
         resolved.push(second, first);
       } else {
-        const order = await params.getRandomDrawOrder([first.teamId, second.teamId]);
-        resolved.push(...applyStandingOrder(tieGroup, order));
+        const fallbackOrder = await params.getFallbackOrder(fallbackTie);
+        const orderedRows = applyStandingOrder(tieGroup, fallbackOrder.orderedTeamIds);
+        await params.onFallbackResolved?.({
+          ...fallbackTie,
+          orderedTeamIds: fallbackOrder.orderedTeamIds,
+          source: fallbackOrder.source,
+        });
+        resolved.push(...orderedRows);
       }
     } else if (tieGroup.length > 2) {
-      const order = await params.getRandomDrawOrder(tieGroup.map((team) => team.teamId));
-      resolved.push(...applyStandingOrder(tieGroup, order));
+      const fallbackOrder = await params.getFallbackOrder(fallbackTie);
+      const orderedRows = applyStandingOrder(tieGroup, fallbackOrder.orderedTeamIds);
+      await params.onFallbackResolved?.({
+        ...fallbackTie,
+        orderedTeamIds: fallbackOrder.orderedTeamIds,
+        source: fallbackOrder.source,
+      });
+      resolved.push(...orderedRows);
     } else {
       resolved.push(...tieGroup);
     }

@@ -127,20 +127,15 @@ test.afterAll(async () => {
 test("Admin auth + schedule load smoke @critical @smoke", async ({ page }) => {
   await loginAsAdmin(page);
   await expect(page.getByRole("heading", { name: "Schedule" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Auto Schedule/i })).toBeVisible();
+  await expect(page.getByText("Auto Schedule disabled").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /Auto Schedule/i })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Playing" })).toBeVisible();
 });
 
-test("Auto Schedule happy path @critical @smoke", async ({ page }) => {
+test("Manual schedule completion path @critical @smoke", async ({ page }) => {
   await loginAsAdmin(page);
   await page.goto("/schedule");
-
-  const autoButton = page.getByRole("button", { name: /Auto Schedule/i });
-  const autoLabel = (await autoButton.textContent()) ?? "";
-  if (autoLabel.includes("OFF")) {
-    await autoButton.click();
-    await expect(page.getByRole("button", { name: /Auto Schedule ON/i })).toBeVisible();
-  }
+  await expect(page.getByText("Auto Schedule disabled").first()).toBeVisible();
 
   await markAllActiveGroupAssignmentsCompleted();
   await page.getByRole("button", { name: "Completed" }).first().click();

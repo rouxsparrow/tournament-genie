@@ -466,18 +466,20 @@ export function MatchesListClient({
 
             return (
               <div key={match.id} className="rounded-lg border border-border p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm text-foreground">
-                      {teamLabel(match.homeTeam)}{" "}
-                      <span className="text-emerald-500">Vs.</span>{" "}
-                      {teamLabel(match.awayTeam)}
-                    </p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="space-y-1 text-sm text-foreground">
+                      <p className="break-words">{teamLabel(match.homeTeam)}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-emerald-500">
+                        vs
+                      </p>
+                      <p className="break-words">{teamLabel(match.awayTeam)}</p>
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       {match.categoryCode} - Group {match.group.name}
                     </p>
                   </div>
-                  <div className="text-right">
+                  <div className="shrink-0 text-right">
                     <span
                       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusClass}`}
                     >

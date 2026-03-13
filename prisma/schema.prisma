@@ -45,6 +45,11 @@ enum Series {
   B
 }
 
+enum RankingTieScope {
+  GROUP_STANDINGS
+  GLOBAL_GROUP_RANKING
+}
+
 enum MatchType {
   GROUP
   KNOCKOUT
@@ -130,6 +135,7 @@ model Group {
   teams            GroupTeam[]
   matches          Match[]
   randomDraws      GroupRandomDraw[]
+  tieOverrides     RankingTieOverride[]
   seriesQualifiers SeriesQualifier[]
 
   @@unique([name, categoryId])
@@ -333,6 +339,21 @@ model GroupRandomDraw {
 
   @@index([groupId])
   @@index([categoryCode])
+}
+
+model RankingTieOverride {
+  id             String          @id @default(cuid())
+  scope          RankingTieScope
+  categoryCode   CategoryCode
+  groupId        String?
+  tieKey         String          @unique
+  orderedTeamIds Json
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  group          Group?          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([scope, categoryCode])
+  @@index([groupId])
 }
 
 model ScheduleConfig {
