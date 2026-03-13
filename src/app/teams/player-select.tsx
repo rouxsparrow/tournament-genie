@@ -14,6 +14,7 @@ type PlayerSelectProps = {
   label: string;
   players: PlayerOption[];
   defaultPlayerId?: string;
+  disabled?: boolean;
 };
 
 export function PlayerSelect({
@@ -22,6 +23,7 @@ export function PlayerSelect({
   label,
   players,
   defaultPlayerId,
+  disabled = false,
 }: PlayerSelectProps) {
   const options = useMemo(
     () =>
@@ -79,11 +81,12 @@ export function PlayerSelect({
           setIsOpen(true);
         }}
         onFocus={() => setIsOpen(true)}
-        className="mt-2 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground shadow-sm focus:border-ring focus:outline-none"
+        className="mt-2 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground shadow-sm focus:border-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
         placeholder="Search by name"
+        disabled={disabled}
         required
       />
-      {isOpen ? (
+      {isOpen && !disabled ? (
         <div className="absolute z-10 mt-2 w-full rounded-md border border-border bg-card shadow-lg">
           <ul className="max-h-48 overflow-auto py-1 text-sm text-foreground">
             {filteredOptions.length === 0 ? (
@@ -106,10 +109,9 @@ export function PlayerSelect({
         </div>
       ) : null}
       <p className="mt-1 text-xs text-muted-foreground">
-        Start typing to filter the player list.
+        {disabled ? "Editing is disabled for this team." : "Start typing to filter the player list."}
       </p>
       <input type="hidden" name={name} value={selectedId} />
     </div>
   );
 }
-

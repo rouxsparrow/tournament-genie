@@ -54,7 +54,13 @@ function revalidateTagLater(tag: string) {
 }
 
 function expireTagNow(tag: string) {
-  updateTag(tag);
+  try {
+    updateTag(tag);
+  } catch {
+    // `updateTag` can throw outside supported contexts (for example route handlers).
+    // Fallback keeps remote webhook invalidation best-effort instead of failing with 500.
+    revalidateTagLater(tag);
+  }
 }
 
 function applyLocalPublicReadModelInvalidation(change: PublicChangeEvent) {

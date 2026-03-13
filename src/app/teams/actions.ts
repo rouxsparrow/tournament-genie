@@ -5,6 +5,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
+import { invalidatePublicReadModels } from "@/lib/public-read-models/cache-tags";
+import {
+  evaluateTeamEditRestriction,
+  type TeamEditMatchState,
+} from "@/app/teams/substitution-policy";
 
 const teamSchema = z.object({
   category: z.enum(["MD", "WD", "XD"]),
@@ -160,6 +165,64 @@ export async function updateTeam(teamId: string, formData: FormData) {
     redirect(`/teams/${teamId}/edit?error=${encodeURIComponent(message)}`);
   }
 
+  const [team, generatedGroupCount, playedGroupCount, generatedKnockoutCount, playedKnockoutCount] =
+    await Promise.all([
+      prisma.team.findUnique({
+        where: { id: teamId },
+        select: {
+          category: {
+            select: {
+              code: true,
+            },
+          },
+          members: {
+            select: {
+              playerId: true,
+            },
+            orderBy: {
+              createdAt: "asc",
+            },
+          },
+        },
+      }),
+      prisma.match.count({
+        where: {
+          stage: "GROUP",
+          OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }],
+        },
+      }),
+      prisma.match.count({
+        where: {
+          stage: "GROUP",
+          status: "COMPLETED",
+          OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }],
+        },
+      }),
+      prisma.knockoutMatch.count({
+        where: {
+          OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }],
+        },
+      }),
+      prisma.knockoutMatch.count({
+        where: {
+          status: "COMPLETED",
+          OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }],
+        },
+      }),
+    ]);
+
+  if (!team) {
+    redirect(`/teams?error=${encodeURIComponent("Team not found.")}`);
+  }
+
+  if (team.members.length !== 2) {
+    redirect(
+      `/teams/${teamId}/edit?error=${encodeURIComponent(
+        "Team must contain exactly two players before applying substitutions."
+      )}`
+    );
+  }
+
   const validation = await validateTeamInputs({
     categoryCode: result.data.category,
     player1Id: result.data.player1Id,
@@ -169,6 +232,24 @@ export async function updateTeam(teamId: string, formData: FormData) {
 
   if (typeof validation === "string") {
     redirect(`/teams/${teamId}/edit?error=${encodeURIComponent(validation)}`);
+  }
+
+  const matchState: TeamEditMatchState = {
+    generatedGroupCount,
+    generatedKnockoutCount,
+    playedGroupCount,
+    playedKnockoutCount,
+  };
+  const policyError = evaluateTeamEditRestriction({
+    currentCategoryCode: team.category.code,
+    nextCategoryCode: result.data.category,
+    currentPlayerIds: [team.members[0].playerId, team.members[1].playerId],
+    nextPlayerIds: [result.data.player1Id, result.data.player2Id],
+    matchState,
+  });
+
+  if (policyError) {
+    redirect(`/teams/${teamId}/edit?error=${encodeURIComponent(policyError)}`);
   }
 
   const teamName = `${validation.player1.name} + ${validation.player2.name}`;
@@ -205,7 +286,14 @@ export async function updateTeam(teamId: string, formData: FormData) {
     });
   });
 
+  await invalidatePublicReadModels({ type: "all" });
   revalidatePath("/teams");
+  revalidatePath("/matches");
+  revalidatePath("/standings");
+  revalidatePath("/brackets");
+  revalidatePath("/knockout");
+  revalidatePath("/schedule");
+  revalidatePath("/presenting");
   redirect("/teams");
 }
 
