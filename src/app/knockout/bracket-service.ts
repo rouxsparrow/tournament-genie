@@ -8,6 +8,10 @@ import {
 import { buildProtectedSeriesAFirstRound } from "@/app/knockout/bracket-layout";
 import { buildSeriesBWithSecondChance } from "@/app/knockout/series-b-second-chance";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
+import {
+  mapKnockoutMatchCreateData,
+  type BaseMatch,
+} from "@/app/knockout/match-create-data";
 
 type CategoryCode = "MD" | "WD" | "XD";
 type SeriesCode = "A" | "B";
@@ -73,12 +77,7 @@ function wireSeriesBPlayInMatches(params: {
 }
 
 function ensureBronzeMatch(
-  matches: {
-    round: number;
-    matchNo: number;
-    homeTeamId: string | null;
-    awayTeamId: string | null;
-  }[]
+  matches: BaseMatch[]
 ) {
   const hasFinal = matches.some((match) => match.round === 4 && match.matchNo === 1);
   if (!hasFinal) return matches;
@@ -288,12 +287,7 @@ export async function generateKnockoutBracketInternal(params: {
 
   const useSecondChance = secondChanceEnabled;
 
-  let baseMatches: {
-    round: number;
-    matchNo: number;
-    homeTeamId: string | null;
-    awayTeamId: string | null;
-  }[] = [];
+  let baseMatches: BaseMatch[] = [];
   let playInTargets: {
     matchNo: number;
     nextRound: number;
@@ -449,15 +443,11 @@ export async function generateKnockoutBracketInternal(params: {
     });
 
     await tx.knockoutMatch.createMany({
-      data: baseMatches.map((match) => ({
+      data: mapKnockoutMatchCreateData({
         categoryCode,
         series,
-        round: match.round,
-        matchNo: match.matchNo,
-        homeTeamId: match.homeTeamId,
-        awayTeamId: match.awayTeamId,
-        isPublished: false,
-      })),
+        matches: baseMatches,
+      }),
     });
 
     if (orderedTeamIds.length > 0) {

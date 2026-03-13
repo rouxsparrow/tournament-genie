@@ -5,6 +5,11 @@ import { updateTeam } from "@/app/teams/actions";
 import { Button } from "@/components/ui/button";
 import { PlayerSelect } from "@/app/teams/player-select";
 import { GlobalFormPendingBridge } from "@/components/global-form-pending-bridge";
+import {
+  hasGeneratedMatches,
+  hasPlayedMatches,
+  type TeamEditMatchState,
+} from "@/app/teams/substitution-policy";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Edit Team" };
@@ -32,9 +37,45 @@ export default async function TeamsEditPage({
     notFound();
   }
 
-  const players = await prisma.player.findMany({
-    orderBy: { name: "asc" },
-  });
+  const [players, generatedGroupCount, playedGroupCount, generatedKnockoutCount, playedKnockoutCount] =
+    await Promise.all([
+      prisma.player.findMany({
+        orderBy: { name: "asc" },
+      }),
+      prisma.match.count({
+        where: {
+          stage: "GROUP",
+          OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }],
+        },
+      }),
+      prisma.match.count({
+        where: {
+          stage: "GROUP",
+          status: "COMPLETED",
+          OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }],
+        },
+      }),
+      prisma.knockoutMatch.count({
+        where: {
+          OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }],
+        },
+      }),
+      prisma.knockoutMatch.count({
+        where: {
+          status: "COMPLETED",
+          OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }],
+        },
+      }),
+    ]);
+
+  const matchState: TeamEditMatchState = {
+    generatedGroupCount,
+    generatedKnockoutCount,
+    playedGroupCount,
+    playedKnockoutCount,
+  };
+  const generatedMatchExists = hasGeneratedMatches(matchState);
+  const playedMatchExists = hasPlayedMatches(matchState);
 
   const [member1, member2] = team.members;
 
@@ -61,6 +102,16 @@ export default async function TeamsEditPage({
             {errorMessage}
           </div>
         ) : null}
+        {playedMatchExists ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            This team already has completed matches. Team members cannot be changed.
+          </div>
+        ) : generatedMatchExists ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Matches are already generated for this team. Category is locked and exactly one player
+            must be replaced.
+          </div>
+        ) : null}
         <div>
           <span className="text-sm font-medium text-muted-foreground">Category</span>
           <div className="mt-2 flex flex-wrap gap-4">
@@ -71,6 +122,7 @@ export default async function TeamsEditPage({
                 value="MD"
                 className="h-4 w-4"
                 defaultChecked={team.category.code === "MD"}
+                disabled={generatedMatchExists}
                 required
               />
               Men&apos;s Doubles (MD)
@@ -82,6 +134,7 @@ export default async function TeamsEditPage({
                 value="WD"
                 className="h-4 w-4"
                 defaultChecked={team.category.code === "WD"}
+                disabled={generatedMatchExists}
                 required
               />
               Women&apos;s Doubles (WD)
@@ -93,11 +146,15 @@ export default async function TeamsEditPage({
                 value="XD"
                 className="h-4 w-4"
                 defaultChecked={team.category.code === "XD"}
+                disabled={generatedMatchExists}
                 required
               />
               Mixed Doubles (XD)
             </label>
           </div>
+          {generatedMatchExists ? (
+            <input type="hidden" name="category" value={team.category.code} />
+          ) : null}
         </div>
         <PlayerSelect
           id="player1"
@@ -105,6 +162,7 @@ export default async function TeamsEditPage({
           label="Player 1"
           players={players}
           defaultPlayerId={member1?.playerId}
+          disabled={playedMatchExists}
         />
         <PlayerSelect
           id="player2"
@@ -112,6 +170,7 @@ export default async function TeamsEditPage({
           label="Player 2"
           players={players}
           defaultPlayerId={member2?.playerId}
+          disabled={playedMatchExists}
         />
         <label className="flex items-center gap-2 text-sm text-muted-foreground">
           <input
@@ -119,11 +178,14 @@ export default async function TeamsEditPage({
             name="isGroupSeed"
             className="h-4 w-4 rounded border-input"
             defaultChecked={team.flags?.isGroupSeed ?? false}
+            disabled={playedMatchExists}
           />
           Mark as group seed
         </label>
         <div className="flex justify-end">
-          <Button type="submit">Save changes</Button>
+          <Button type="submit" disabled={playedMatchExists}>
+            Save changes
+          </Button>
         </div>
       </form>
     </section>
