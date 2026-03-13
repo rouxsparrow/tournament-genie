@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { buildSecondChanceHomeAssignments } from "@/app/knockout/bracket-layout";
 import { loadGlobalGroupRanking } from "@/app/knockout/logic";
 import { BracketError, generateKnockoutBracketInternal } from "@/app/knockout/bracket-service";
 import { requireAdmin } from "@/lib/auth";
@@ -148,6 +149,7 @@ export async function applySecondChanceDrop(formData: FormData) {
   if (!(config?.secondChanceEnabled ?? true)) {
     redirect(`/knockout?category=${categoryCode}&error=${encodeURIComponent("Second chance is not enabled.")}`);
   }
+  const playInsEnabled = config?.playInsEnabled ?? false;
 
   await assertGroupStageLocked(categoryCode);
 
@@ -197,16 +199,23 @@ export async function applySecondChanceDrop(formData: FormData) {
     );
   }
 
+  const assignmentByMatchNo = playInsEnabled
+    ? new Map(seriesASeeds.map((seed, index) => [index + 1, seed.teamId]))
+    : new Map(
+        buildSecondChanceHomeAssignments(
+          seriesASeeds.map((seed) => seed.teamId)
+        ).map((assignment) => [assignment.matchNo, assignment.homeTeamId])
+      );
+
   await prisma.$transaction(
-    qfMatches.map((match, index) => {
-      const aDrop = seriesASeeds[index];
-      return prisma.knockoutMatch.update({
+    qfMatches.map((match) =>
+      prisma.knockoutMatch.update({
         where: { id: match.id },
         data: {
-          homeTeamId: aDrop?.teamId ?? null,
+          homeTeamId: assignmentByMatchNo.get(match.matchNo) ?? null,
         },
-      });
-    })
+      })
+    )
   );
 
   await invalidatePublicReadModels({

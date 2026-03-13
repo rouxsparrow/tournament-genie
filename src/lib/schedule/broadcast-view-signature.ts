@@ -1,4 +1,10 @@
 import { prisma } from "@/lib/prisma";
+import {
+  buildGroupRemainingLoadMap,
+  buildUpcomingFromSortedQueue,
+  computeGroupBottleneckForPlayers,
+  sortQueueMatches,
+} from "@/lib/schedule/group-priority";
 
 type ScheduleStage = "GROUP" | "KNOCKOUT";
 type MatchType = "GROUP" | "KNOCKOUT";
@@ -13,6 +19,8 @@ type EligibleMatch = {
   matchId: string;
   matchType: MatchType;
   restScore: number;
+  bottleneckMaxLoad: number;
+  bottleneckSumLoad: number;
   forcedRank?: number;
   isForced?: boolean;
   series?: "A" | "B";
@@ -32,11 +40,6 @@ export type BroadcastViewChangeType = "assignment" | "upcoming" | "both";
 
 function buildMatchKey(matchType: MatchType, matchId: string) {
   return `${matchType}:${matchId}`;
-}
-
-function hasInPlayPlayers(playerIds: string[], inPlayPlayerIds: Set<string>) {
-  if (inPlayPlayerIds.size === 0) return false;
-  return playerIds.some((playerId) => inPlayPlayerIds.has(playerId));
 }
 
 function hasUncheckedPlayers(playerIds: string[], uncheckedPlayerIds: Set<string>) {
@@ -59,59 +62,25 @@ function computeRestScore(
   return rested;
 }
 
-function sortEligible(matches: EligibleMatch[]) {
-  return [...matches].sort((a, b) => {
-    const aForced = a.forcedRank ?? Number.POSITIVE_INFINITY;
-    const bForced = b.forcedRank ?? Number.POSITIVE_INFINITY;
-    if (aForced !== bForced) return aForced - bForced;
-
-    const aType = a.matchType === "GROUP" ? 0 : 1;
-    const bType = b.matchType === "GROUP" ? 0 : 1;
-    if (aType !== bType) return aType - bType;
-    if (a.restScore !== b.restScore) return b.restScore - a.restScore;
-
-    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.round !== b.round) {
-      return (a.round ?? 0) - (b.round ?? 0);
-    }
-    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.series !== b.series) {
-      const seriesRank: Record<string, number> = { B: 0, A: 1 };
-      const aSeries = a.series ? seriesRank[a.series] ?? 2 : 2;
-      const bSeries = b.series ? seriesRank[b.series] ?? 2 : 2;
-      if (aSeries !== bSeries) return aSeries - bSeries;
-    }
-    if (a.matchNo !== b.matchNo) return (a.matchNo ?? 0) - (b.matchNo ?? 0);
-    return a.matchId.localeCompare(b.matchId);
-  });
+function sortEligible(
+  matches: EligibleMatch[],
+  stage: ScheduleStage,
+  inPlayPlayerIds: Set<string>
+) {
+  return sortQueueMatches(matches, { stage, inPlayPlayerIds });
 }
 
 function buildUpcoming(
   queueMatches: EligibleMatch[],
   playingPlayerIds: Set<string>,
+  stage: ScheduleStage,
   limit = 5
 ) {
-  const forcedCandidates = queueMatches.filter((match) => match.isForced);
-  const normalCandidates = queueMatches.filter((match) => !match.isForced);
-  const upcoming: EligibleMatch[] = [];
-  const pickedPlayerIds = new Set<string>();
-
-  const pickFrom = (candidates: EligibleMatch[], requireAssignable: boolean) => {
-    for (const match of candidates) {
-      if (upcoming.length >= limit) break;
-      const overlapsPicked = hasInPlayPlayers(match.teams.playerIds, pickedPlayerIds);
-      if (overlapsPicked) continue;
-      const overlapsPlaying = hasInPlayPlayers(match.teams.playerIds, playingPlayerIds);
-      if (requireAssignable && overlapsPlaying) continue;
-      upcoming.push(match);
-      match.teams.playerIds.forEach((id) => pickedPlayerIds.add(id));
-    }
-  };
-
-  pickFrom(forcedCandidates, true);
-  pickFrom(forcedCandidates, false);
-  pickFrom(normalCandidates, true);
-  pickFrom(normalCandidates, false);
-
-  return upcoming;
+  return buildUpcomingFromSortedQueue(queueMatches, {
+    stage,
+    inPlayPlayerIds: playingPlayerIds,
+    limit,
+  });
 }
 
 async function getForcedData(stage: ScheduleStage): Promise<ForcedData> {
@@ -282,6 +251,17 @@ export async function getUpcomingSignature(stage: ScheduleStage) {
       },
       orderBy: [{ group: { name: "asc" } }, { createdAt: "asc" }],
     });
+    const groupRemainingLoadMap = buildGroupRemainingLoadMap(
+      groupMatches.map((match) => ({
+        status: match.status,
+        homeTeamId: match.homeTeamId,
+        awayTeamId: match.awayTeamId,
+        playerIds: [
+          ...(match.homeTeam?.members.map((member) => member.playerId) ?? []),
+          ...(match.awayTeam?.members.map((member) => member.playerId) ?? []),
+        ],
+      }))
+    );
 
     for (const match of groupMatches) {
       if (
@@ -298,6 +278,7 @@ export async function getUpcomingSignature(stage: ScheduleStage) {
         ...(match.homeTeam?.members.map((member) => member.playerId) ?? []),
         ...(match.awayTeam?.members.map((member) => member.playerId) ?? []),
       ];
+      const bottleneck = computeGroupBottleneckForPlayers(playerIds, groupRemainingLoadMap);
       if (hasUncheckedPlayers(playerIds, uncheckedPlayerIds)) continue;
       eligible.push({
         key,
@@ -308,6 +289,8 @@ export async function getUpcomingSignature(stage: ScheduleStage) {
           context.inPlayPlayerIds,
           recentlyPlayedIds
         ),
+        bottleneckMaxLoad: bottleneck.bottleneckMaxLoad,
+        bottleneckSumLoad: bottleneck.bottleneckSumLoad,
         forcedRank: forcedData.rankMap.get(key),
         isForced: forcedData.forcedSet.has(key),
         teams: { playerIds },
@@ -349,6 +332,8 @@ export async function getUpcomingSignature(stage: ScheduleStage) {
           context.inPlayPlayerIds,
           recentlyPlayedIds
         ),
+        bottleneckMaxLoad: 0,
+        bottleneckSumLoad: 0,
         forcedRank: forcedData.rankMap.get(key),
         isForced: forcedData.forcedSet.has(key),
         series: match.series,
@@ -359,7 +344,8 @@ export async function getUpcomingSignature(stage: ScheduleStage) {
     }
   }
 
-  const upcoming = buildUpcoming(sortEligible(eligible), context.inPlayPlayerIds, 5);
+  const sorted = sortEligible(eligible, stage, context.inPlayPlayerIds);
+  const upcoming = buildUpcoming(sorted, context.inPlayPlayerIds, stage, 5);
   return upcoming
     .map((match) => `${match.key}|${match.forcedRank ?? ""}`)
     .join("||");

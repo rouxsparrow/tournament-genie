@@ -58,7 +58,9 @@ Scheduling is **rolling**, not fixed-slot:
 - **Upcoming** = next playable set of up to 5 matches from the sorted Queue
 - Upcoming avoids duplicate players within itself
 - Upcoming prioritizes Force Next matches first (assignable, then waiting) before normal matches
+- Group-stage Upcoming uses bounded lookahead (top 14 candidates per tier) to improve non-overlap packing
 - Upcoming is recalculated whenever scheduling runs
+- Assign modal shows two assignable-only sections: `Upcoming` first, then `More from Queue`
 
 ---
 
@@ -92,9 +94,12 @@ This rule applies **across all categories** (MD / WD / XD).
 
 ### Tie-breaks (when rest score is equal)
 Use the following deterministic order:
-1) KO round (earlier rounds first)
-2) Series (B before A)
-3) Match ID (stable fallback)
+1) Group stage only: assignable-now first (no in-play player conflict)
+2) Group stage only: bottleneck max load (higher first)
+3) Group stage only: bottleneck sum load (higher first)
+4) KO round (earlier rounds first)
+5) Series (B before A)
+6) Match ID (stable fallback)
 
 ---
 
@@ -176,8 +181,10 @@ Admin has full control for urgent or manual adjustments:
 - Overview is separate from live scheduling
 - Hard cap: no player may be scheduled more than 2 consecutive slots
 - Hard cap: total consecutive matches per player is capped at 2
-- Fairness-first: courts may remain idle if constraints prevent assignment
-- Avoid consecutive assignments for high totalMatchesPlanned players
+- Within eligible matches, Group ordering follows the shared scheduler priority:
+  Force (always false in overview) -> Rest -> assignable -> bottleneck max -> bottleneck sum
+- Overview slot fill uses the same bounded lookahead pack (K=14) as Group Upcoming
+- Courts may remain idle if the consecutive caps prevent assignment
 - Rest badge uses only the previous slot (Rest: X/4)
 - Overview ignores completion status (analytics uses all group matches)
 

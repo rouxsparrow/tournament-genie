@@ -29,6 +29,13 @@ import type {
   ScheduleActionResponse,
 } from "@/app/schedule/actions";
 import { getRealtimeBrowserClient } from "@/lib/supabase/realtime-client";
+import {
+  buildGroupRemainingLoadMap,
+  buildUpcomingFromSortedQueue,
+  computeGroupBottleneckForPlayers,
+  sortQueueMatches,
+} from "@/lib/schedule/group-priority";
+import { buildAssignModalSections } from "@/lib/schedule/assign-modal";
 
 type ScheduleState = Awaited<ReturnType<typeof getScheduleState>>;
 type UserRole = "admin" | "viewer";
@@ -39,6 +46,7 @@ type ScheduleStage = "GROUP" | "KNOCKOUT";
 type RefereeNotificationItem = NonNullable<
   Awaited<ReturnType<typeof getScheduleState>>
 >["refereeNotifications"][number];
+type ScheduleMatchListItem = ScheduleState["eligibleMatches"][number];
 
 type ModalState =
   | null
@@ -188,60 +196,51 @@ function computeRestScore(
   return rested;
 }
 
-function sortScheduleMatches(matches: ScheduleState["eligibleMatches"]) {
-  return [...matches].sort((a, b) => {
-    const aForced = a.forcedRank ?? Number.POSITIVE_INFINITY;
-    const bForced = b.forcedRank ?? Number.POSITIVE_INFINITY;
-    if (aForced !== bForced) return aForced - bForced;
+function sortScheduleMatches(
+  matches: ScheduleState["eligibleMatches"],
+  stage: ScheduleStage,
+  inPlayPlayerIds: Set<string>
+) {
+  return sortQueueMatches(matches, { stage, inPlayPlayerIds });
+}
 
-    const aType = a.matchType === "GROUP" ? 0 : 1;
-    const bType = b.matchType === "GROUP" ? 0 : 1;
-    if (aType !== bType) return aType - bType;
-    if (a.restScore !== b.restScore) return b.restScore - a.restScore;
-    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.round !== b.round) {
-      return (a.round ?? 0) - (b.round ?? 0);
-    }
-    if (a.matchType === "KNOCKOUT" && b.matchType === "KNOCKOUT" && a.series !== b.series) {
-      const seriesRank: Record<string, number> = { B: 0, A: 1 };
-      const aSeries = a.series ? seriesRank[a.series] ?? 2 : 2;
-      const bSeries = b.series ? seriesRank[b.series] ?? 2 : 2;
-      if (aSeries !== bSeries) return aSeries - bSeries;
-    }
-    if (a.matchNo !== b.matchNo) return (a.matchNo ?? 0) - (b.matchNo ?? 0);
-    return a.matchId.localeCompare(b.matchId);
+function recomputeGroupBottleneck(
+  matches: ScheduleState["eligibleMatches"]
+): ScheduleState["eligibleMatches"] {
+  const groupMatches = matches.filter((match) => match.matchType === "GROUP");
+  if (groupMatches.length === 0) return matches;
+
+  const remainingLoadMap = buildGroupRemainingLoadMap(
+    groupMatches.map((match) => ({
+      status: "SCHEDULED" as const,
+      homeTeamId: match.teams.homePlayerIds.length > 0 ? "HOME" : null,
+      awayTeamId: match.teams.awayPlayerIds.length > 0 ? "AWAY" : null,
+      playerIds: match.teams.playerIds,
+    }))
+  );
+
+  return matches.map((match) => {
+    if (match.matchType !== "GROUP") return match;
+    const bottleneck = computeGroupBottleneckForPlayers(match.teams.playerIds, remainingLoadMap);
+    return {
+      ...match,
+      bottleneckMaxLoad: bottleneck.bottleneckMaxLoad,
+      bottleneckSumLoad: bottleneck.bottleneckSumLoad,
+    };
   });
 }
 
 function buildUpcomingMatches(
   queueMatches: ScheduleState["eligibleMatches"],
   inPlayPlayerIds: Set<string>,
+  stage: ScheduleStage,
   limit = 5
 ) {
-  const forcedCandidates = queueMatches.filter((match) => match.isForced);
-  const normalCandidates = queueMatches.filter((match) => !match.isForced);
-  const pickedPlayerIds = new Set<string>();
-  const upcoming: ScheduleState["upcomingMatches"] = [];
-
-  const pickFrom = (candidates: ScheduleState["eligibleMatches"], requireAssignable: boolean) => {
-    for (const match of candidates) {
-      if (upcoming.length >= limit) break;
-      const overlapsPicked = hasInPlayConflict(match.teams.playerIds, pickedPlayerIds);
-      if (overlapsPicked) continue;
-      const overlapsInPlay = hasInPlayConflict(match.teams.playerIds, inPlayPlayerIds);
-      if (requireAssignable && overlapsInPlay) continue;
-      upcoming.push(match);
-      for (const playerId of match.teams.playerIds) {
-        pickedPlayerIds.add(playerId);
-      }
-    }
-  };
-
-  pickFrom(forcedCandidates, true);
-  pickFrom(forcedCandidates, false);
-  pickFrom(normalCandidates, true);
-  pickFrom(normalCandidates, false);
-
-  return upcoming;
+  return buildUpcomingFromSortedQueue(queueMatches, {
+    stage,
+    inPlayPlayerIds,
+    limit,
+  });
 }
 
 function applyScheduleActionDelta(
@@ -301,8 +300,10 @@ function applyScheduleActionDelta(
       ...match,
       restScore: computeRestScore(match.teams.playerIds, inPlaySet, recentlyPlayedSet),
     }));
-    const eligibleSorted = sortScheduleMatches(eligibleWithRest);
-    const upcomingMatches = buildUpcomingMatches(eligibleSorted, inPlaySet, 5);
+    const eligibleWithBottleneck = recomputeGroupBottleneck(eligibleWithRest);
+    const stage = previousState.stage as ScheduleStage;
+    const eligibleSorted = sortScheduleMatches(eligibleWithBottleneck, stage, inPlaySet);
+    const upcomingMatches = buildUpcomingMatches(eligibleSorted, inPlaySet, stage, 5);
     const assignableCount = eligibleSorted.filter((match) =>
       isAssignableNow(match.teams.playerIds, inPlaySet)
     ).length;
@@ -315,7 +316,11 @@ function applyScheduleActionDelta(
       courts: nextCourts,
       eligibleMatches: eligibleSorted,
       upcomingMatches,
-      blockedMatches: sortScheduleMatches(Array.from(blockedMap.values())),
+      blockedMatches: sortScheduleMatches(
+        Array.from(blockedMap.values()),
+        stage,
+        new Set<string>()
+      ),
       inPlayPlayerIds,
       assignableCount,
       upcomingAssignableCount,
@@ -640,22 +645,48 @@ export function ScheduleClient({
     });
   }, [state.upcomingMatches, category, search]);
 
-  const eligibleForModal = eligibleFiltered;
-  const eligibleForModalFiltered = useMemo(() => {
-    if (!assignSearch.trim()) return eligibleForModal;
+  const assignModalSections = useMemo(
+    () =>
+      buildAssignModalSections({
+        upcomingMatches: upcomingFiltered,
+        queueMatches: eligibleFiltered,
+        inPlayPlayerIds,
+      }),
+    [eligibleFiltered, inPlayPlayerIds, upcomingFiltered]
+  );
+  const allAssignableForModal = useMemo(
+    () => [
+      ...assignModalSections.assignableUpcoming,
+      ...assignModalSections.assignableQueueOverflow,
+    ],
+    [assignModalSections]
+  );
+  const assignModalSectionsFiltered = useMemo(() => {
     const needle = assignSearch.trim().toLowerCase();
-    return eligibleForModal.filter((match) =>
-      match.teams.playerNames.join(" ").toLowerCase().includes(needle)
+    const filterBySearch = (matches: ScheduleMatchListItem[]) => {
+      if (!needle) return matches;
+      return matches.filter((match) =>
+        match.teams.playerNames.join(" ").toLowerCase().includes(needle)
+      );
+    };
+    const assignableUpcoming = filterBySearch(assignModalSections.assignableUpcoming);
+    const assignableQueueOverflow = filterBySearch(
+      assignModalSections.assignableQueueOverflow
     );
-  }, [assignSearch, eligibleForModal]);
+    return {
+      assignableUpcoming,
+      assignableQueueOverflow,
+      all: [...assignableUpcoming, ...assignableQueueOverflow],
+    };
+  }, [assignModalSections, assignSearch]);
   const selectedMatchForModal =
-    eligibleForModal.find((entry) => entry.key === selectedMatchKey) ?? null;
+    allAssignableForModal.find((entry) => entry.key === selectedMatchKey) ?? null;
   const selectedMatchHasConflict = selectedMatchForModal
     ? hasInPlayConflict(selectedMatchForModal.teams.playerIds, inPlayPlayerIds)
     : false;
   const isSelectedHiddenByFilter =
     Boolean(selectedMatchForModal) &&
-    !eligibleForModalFiltered.some((match) => match.key === selectedMatchKey);
+    !assignModalSectionsFiltered.all.some((match) => match.key === selectedMatchKey);
 
   return (
     <div className="space-y-6">
@@ -828,12 +859,8 @@ export function ScheduleClient({
                           size="sm"
                           className="w-full"
                           onClick={() => {
-                            const firstAssignable = eligibleForModal.find(
-                              (match) =>
-                                !hasInPlayConflict(match.teams.playerIds, inPlayPlayerIds)
-                            );
                             setAssignSearch("");
-                            setSelectedMatchKey(firstAssignable?.key ?? "");
+                            setSelectedMatchKey(assignModalSections.defaultSelectedKey);
                             setModal({ type: "assign", courtId: court.id });
                           }}
                           disabled={isActionDisabled || court.isLocked}
@@ -1323,101 +1350,178 @@ export function ScheduleClient({
                 />
               </div>
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                {eligibleForModalFiltered.length === 0 ? (
+                {assignModalSectionsFiltered.all.length === 0 ? (
                   <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-                    No eligible matches.
+                    No assignable matches.
                   </div>
                 ) : (
-                  eligibleForModalFiltered.map((match) => {
-                    const isConflict = hasInPlayConflict(
-                      match.teams.playerIds,
-                      inPlayPlayerIds
-                    );
-                    const isSelected = match.key === selectedMatchKey;
-                    return (
-                      <button
-                        key={match.key}
-                        type="button"
-                        aria-pressed={isSelected}
-                        onClick={() => {
-                          if (isConflict) return;
-                          setSelectedMatchKey(match.key);
-                        }}
-                        disabled={isConflict}
-                        className={`w-full rounded-lg border p-3 text-left transition ${
-                          isSelected
-                            ? "border-lime-400 bg-lime-500/10 ring-1 ring-lime-400/30"
-                            : "border-border bg-muted/30"
-                        } ${
-                          isConflict
-                            ? "cursor-not-allowed opacity-60"
-                            : isSelected
-                              ? ""
-                              : "hover:border-border/70 hover:bg-muted/50"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="text-xs text-muted-foreground">
-                            {match.categoryCode} • {match.label} • {match.detail}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div
-                              className={`rounded-full border px-2 py-1 text-xs ${restBadgeClass(
-                                match.restScore
-                              )}`}
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Upcoming
+                      </div>
+                      {assignModalSectionsFiltered.assignableUpcoming.length === 0 ? (
+                        <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
+                          No assignable matches in Upcoming.
+                        </div>
+                      ) : (
+                        assignModalSectionsFiltered.assignableUpcoming.map((match) => {
+                          const isSelected = match.key === selectedMatchKey;
+                          return (
+                            <button
+                              key={match.key}
+                              type="button"
+                              aria-pressed={isSelected}
+                              onClick={() => setSelectedMatchKey(match.key)}
+                              className={`w-full rounded-lg border p-3 text-left transition ${
+                                isSelected
+                                  ? "border-lime-400 bg-lime-500/10 ring-1 ring-lime-400/30"
+                                  : "border-border bg-muted/30 hover:border-border/70 hover:bg-muted/50"
+                              }`}
                             >
-                              <span className="rounded-sm bg-red-500/15 px-1 dark:bg-red-400/30">
-                                {match.restScore}
-                              </span>{" "}
-                              / 4 rest
-                              {match.restScore === 0 ? " (warning)" : ""}
-                            </div>
-                            {match.isForced ? (
-                              <Badge variant="outline" className="border-red-600 text-red-600">
-                                Forced
-                              </Badge>
-                            ) : null}
-                            {isSelected ? (
-                              <Badge className="border-lime-500 bg-lime-500 text-slate-950">
-                                <Check className="mr-1 h-3.5 w-3.5" />
-                                Selected
-                              </Badge>
-                            ) : null}
-                            {isConflict ? (
-                              <Badge className="border-orange-500 bg-orange-500 text-white">
-                                Waiting
-                              </Badge>
-                            ) : null}
-                          </div>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="text-xs text-muted-foreground">
+                                  {match.categoryCode} • {match.label} • {match.detail}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <div
+                                    className={`rounded-full border px-2 py-1 text-xs ${restBadgeClass(
+                                      match.restScore
+                                    )}`}
+                                  >
+                                    <span className="rounded-sm bg-red-500/15 px-1 dark:bg-red-400/30">
+                                      {match.restScore}
+                                    </span>{" "}
+                                    / 4 rest
+                                    {match.restScore === 0 ? " (warning)" : ""}
+                                  </div>
+                                  {match.isForced ? (
+                                    <Badge variant="outline" className="border-red-600 text-red-600">
+                                      Forced
+                                    </Badge>
+                                  ) : null}
+                                  {isSelected ? (
+                                    <Badge className="border-lime-500 bg-lime-500 text-slate-950">
+                                      <Check className="mr-1 h-3.5 w-3.5" />
+                                      Selected
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="mt-2 space-y-1 text-sm text-foreground">
+                                <div className="font-medium">
+                                  {renderTeamLineWithRestHighlight({
+                                    players: match.teams.homePlayers,
+                                    playerIds: match.teams.homePlayerIds,
+                                    fallback: match.teams.homeName,
+                                    favouritePlayerName,
+                                    inPlayPlayerIds,
+                                    notRestedPlayerIds,
+                                  })}
+                                </div>
+                                <div className="text-center text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  ----vs----
+                                </div>
+                                <div className="font-medium">
+                                  {renderTeamLineWithRestHighlight({
+                                    players: match.teams.awayPlayers,
+                                    playerIds: match.teams.awayPlayerIds,
+                                    fallback: match.teams.awayName,
+                                    favouritePlayerName,
+                                    inPlayPlayerIds,
+                                    notRestedPlayerIds,
+                                  })}
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                    <div className="border-t border-border" />
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        More from Queue
+                      </div>
+                      {assignModalSectionsFiltered.assignableQueueOverflow.length === 0 ? (
+                        <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
+                          No additional assignable matches.
                         </div>
-                        <div className="mt-2 space-y-1 text-sm text-foreground">
-                          <div className="font-medium">
-                            {renderTeamLineWithRestHighlight({
-                              players: match.teams.homePlayers,
-                              playerIds: match.teams.homePlayerIds,
-                              fallback: match.teams.homeName,
-                              favouritePlayerName,
-                              inPlayPlayerIds,
-                              notRestedPlayerIds,
-                            })}
-                          </div>
-                          <div className="text-center text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                            ----vs----
-                          </div>
-                          <div className="font-medium">
-                            {renderTeamLineWithRestHighlight({
-                              players: match.teams.awayPlayers,
-                              playerIds: match.teams.awayPlayerIds,
-                              fallback: match.teams.awayName,
-                              favouritePlayerName,
-                              inPlayPlayerIds,
-                              notRestedPlayerIds,
-                            })}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })
+                      ) : (
+                        assignModalSectionsFiltered.assignableQueueOverflow.map((match) => {
+                          const isSelected = match.key === selectedMatchKey;
+                          return (
+                            <button
+                              key={match.key}
+                              type="button"
+                              aria-pressed={isSelected}
+                              onClick={() => setSelectedMatchKey(match.key)}
+                              className={`w-full rounded-lg border p-3 text-left transition ${
+                                isSelected
+                                  ? "border-lime-400 bg-lime-500/10 ring-1 ring-lime-400/30"
+                                  : "border-border bg-muted/30 hover:border-border/70 hover:bg-muted/50"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="text-xs text-muted-foreground">
+                                  {match.categoryCode} • {match.label} • {match.detail}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <div
+                                    className={`rounded-full border px-2 py-1 text-xs ${restBadgeClass(
+                                      match.restScore
+                                    )}`}
+                                  >
+                                    <span className="rounded-sm bg-red-500/15 px-1 dark:bg-red-400/30">
+                                      {match.restScore}
+                                    </span>{" "}
+                                    / 4 rest
+                                    {match.restScore === 0 ? " (warning)" : ""}
+                                  </div>
+                                  {match.isForced ? (
+                                    <Badge variant="outline" className="border-red-600 text-red-600">
+                                      Forced
+                                    </Badge>
+                                  ) : null}
+                                  {isSelected ? (
+                                    <Badge className="border-lime-500 bg-lime-500 text-slate-950">
+                                      <Check className="mr-1 h-3.5 w-3.5" />
+                                      Selected
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="mt-2 space-y-1 text-sm text-foreground">
+                                <div className="font-medium">
+                                  {renderTeamLineWithRestHighlight({
+                                    players: match.teams.homePlayers,
+                                    playerIds: match.teams.homePlayerIds,
+                                    fallback: match.teams.homeName,
+                                    favouritePlayerName,
+                                    inPlayPlayerIds,
+                                    notRestedPlayerIds,
+                                  })}
+                                </div>
+                                <div className="text-center text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  ----vs----
+                                </div>
+                                <div className="font-medium">
+                                  {renderTeamLineWithRestHighlight({
+                                    players: match.teams.awayPlayers,
+                                    playerIds: match.teams.awayPlayerIds,
+                                    fallback: match.teams.awayName,
+                                    favouritePlayerName,
+                                    inPlayPlayerIds,
+                                    notRestedPlayerIds,
+                                  })}
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
               {isSelectedHiddenByFilter ? (

@@ -1,3 +1,5 @@
+import { buildProtectedSeriesBFourTeamAwaySlots } from "@/app/knockout/bracket-layout";
+
 type SeriesBRankingEntry = {
   teamId: string;
   groupRank: number;
@@ -62,6 +64,27 @@ export function buildSeriesBWithSecondChance(
   const autoAdvanceCount = Math.max(0, 8 - teamCount);
   const autoAdvance = ranked.slice(0, autoAdvanceCount);
   const playInTeams = ranked.slice(autoAdvanceCount);
+
+  if (teamCount === 4) {
+    const protectedAwaySlots = buildProtectedSeriesBFourTeamAwaySlots(
+      ranked.map((entry) => entry.teamId)
+    );
+    const baseQFSeeds: SeriesBBaseSeed[] = protectedAwaySlots.map((slot) => ({
+      teamId: slot.awayTeamId ?? undefined,
+    }));
+    const bqfMatches: SeriesBQFMatch[] = protectedAwaySlots.map((slot) => ({
+      round: 2,
+      matchNo: slot.matchNo,
+      homeTeamId: null,
+      awayTeamId: slot.awayTeamId,
+    }));
+    return {
+      playInMatches: [],
+      baseQFSeeds,
+      bqfMatches,
+      playInTargets: [],
+    };
+  }
 
   const playInMatches: SeriesBPlayInMatch[] = [];
   let left = 0;

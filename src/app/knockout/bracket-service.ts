@@ -5,6 +5,7 @@ import {
   loadGlobalGroupRanking,
   sortSeeds,
 } from "@/app/knockout/logic";
+import { buildProtectedSeriesAFirstRound } from "@/app/knockout/bracket-layout";
 import { buildSeriesBWithSecondChance } from "@/app/knockout/series-b-second-chance";
 import { syncKnockoutPropagation } from "@/app/knockout/sync";
 
@@ -87,95 +88,6 @@ function ensureBronzeMatch(
     ...matches,
     { round: 4, matchNo: 2, homeTeamId: null, awayTeamId: null },
   ];
-}
-
-async function chooseOpponentWithDraw(params: {
-  categoryCode: CategoryCode;
-  series: SeriesCode;
-  round: number;
-  high: SeedEntry;
-  candidates: SeedEntry[];
-}) {
-  const bestTier = params.candidates[0]?.groupRank;
-  if (bestTier === undefined) return null;
-  const sameTierCandidates = params.candidates.filter(
-    (candidate) => candidate.groupRank === bestTier
-  );
-  if (sameTierCandidates.length === 1) return sameTierCandidates[0];
-
-  const maxAvgPA = Math.max(...sameTierCandidates.map((candidate) => candidate.avgPA));
-  const weakestCandidates = sameTierCandidates.filter(
-    (candidate) => candidate.avgPA === maxAvgPA
-  );
-  if (weakestCandidates.length === 1) {
-    return weakestCandidates[0];
-  }
-
-  const candidateIds = weakestCandidates.map((candidate) => candidate.teamId);
-  const candidateIdsSorted = [...candidateIds].sort();
-  const drawKey = `${params.categoryCode}:${params.series}:${params.round}:${params.high.teamId}:${candidateIdsSorted.join(",")}`;
-
-  const existing = await prisma.knockoutRandomDraw.findUnique({
-    where: { drawKey },
-  });
-
-  if (existing && typeof existing.payload === "object" && existing.payload) {
-    const payload = existing.payload as { chosenOpponentId?: string };
-    const chosenId = payload.chosenOpponentId;
-    const chosen = weakestCandidates.find((candidate) => candidate.teamId === chosenId);
-    if (chosen) return chosen;
-  }
-
-  const chosen = weakestCandidates[Math.floor(Math.random() * weakestCandidates.length)];
-  await prisma.knockoutRandomDraw.create({
-    data: {
-      categoryCode: params.categoryCode,
-      series: params.series,
-      round: params.round,
-      drawKey,
-      payload: {
-        highTeamId: params.high.teamId,
-        chosenOpponentId: chosen.teamId,
-        candidateIds: candidateIdsSorted,
-      },
-    },
-  });
-
-  return chosen;
-}
-
-async function buildRoundOnePairs(params: {
-  categoryCode: CategoryCode;
-  series: SeriesCode;
-  round: number;
-  seeds: SeedEntry[];
-}) {
-  const unpaired = new Map(params.seeds.map((seed) => [seed.teamId, seed]));
-  const ordered = params.seeds;
-  const pairs: Array<{ home: SeedEntry; away: SeedEntry }> = [];
-
-  for (const high of ordered) {
-    if (!unpaired.has(high.teamId)) continue;
-    const remaining = ordered
-      .filter((seed) => seed.teamId !== high.teamId && unpaired.has(seed.teamId))
-      .sort((a, b) => b.seedNo - a.seedNo);
-    if (remaining.length === 0) break;
-    const crossGroup = remaining.filter((seed) => seed.groupId !== high.groupId);
-    const candidates = crossGroup.length > 0 ? crossGroup : remaining;
-    const chosen = await chooseOpponentWithDraw({
-      categoryCode: params.categoryCode,
-      series: params.series,
-      round: params.round,
-      high,
-      candidates,
-    });
-    if (!chosen) continue;
-    pairs.push({ home: high, away: chosen });
-    unpaired.delete(high.teamId);
-    unpaired.delete(chosen.teamId);
-  }
-
-  return pairs;
 }
 
 function throwBracketError(code: string, message: string, status = 400): never {
@@ -485,18 +397,7 @@ export async function generateKnockoutBracketInternal(params: {
     }
     if (isPowerOfTwo) {
       const startRound = categoryCode === "WD" && teamCount === 4 ? 3 : 2;
-      const pairs = await buildRoundOnePairs({
-        categoryCode,
-        series,
-        round: startRound,
-        seeds: orderedSeedEntries,
-      });
-      baseMatches = pairs.map((pair, index) => ({
-        round: startRound,
-        matchNo: index + 1,
-        homeTeamId: pair.home.teamId,
-        awayTeamId: pair.away.teamId,
-      }));
+      baseMatches = buildProtectedSeriesAFirstRound(orderedTeamIds, startRound);
       const rounds = Math.log2(teamCount);
       for (let roundOffset = 1; roundOffset < rounds; roundOffset += 1) {
         const round = startRound + roundOffset;
