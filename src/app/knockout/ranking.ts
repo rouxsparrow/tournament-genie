@@ -1,4 +1,4 @@
-const GLOBAL_RANKING_TIE_PRECISION = 6;
+import type { RankingTieOrderSource } from "@/lib/ranking-tie-override";
 
 export type GlobalRankingEntry = {
   teamId: string;
@@ -7,8 +7,17 @@ export type GlobalRankingEntry = {
   groupName: string;
   groupRank: number;
   avgPD: number;
+  avgPF: number;
   played: number;
 };
+
+export type GlobalRankingFallbackTie = {
+  entries: GlobalRankingEntry[];
+  teamIds: string[];
+  tieKey: string;
+};
+
+const GLOBAL_RANKING_TIE_PRECISION = 6;
 
 export function compareGlobalRankingEntries(a: GlobalRankingEntry, b: GlobalRankingEntry) {
   if (a.groupRank !== b.groupRank) return a.groupRank - b.groupRank;
@@ -16,7 +25,7 @@ export function compareGlobalRankingEntries(a: GlobalRankingEntry, b: GlobalRank
   return a.teamId.localeCompare(b.teamId);
 }
 
-export function buildGlobalRankingTieKey(entry: GlobalRankingEntry) {
+function buildGlobalRankingComparisonKey(entry: GlobalRankingEntry) {
   return `${entry.groupRank}:${entry.avgPD.toFixed(GLOBAL_RANKING_TIE_PRECISION)}`;
 }
 
@@ -32,7 +41,16 @@ function applyGlobalRankingOrder(tieGroup: GlobalRankingEntry[], orderedIds: str
 
 export async function resolveGlobalRanking(params: {
   entries: GlobalRankingEntry[];
-  getRandomDrawOrder: (tieKey: string, teamIds: string[]) => Promise<string[]>;
+  buildTieKey: (tieGroup: GlobalRankingEntry[]) => string;
+  getFallbackOrder: (
+    tie: GlobalRankingFallbackTie
+  ) => Promise<{ orderedTeamIds: string[]; source: RankingTieOrderSource }>;
+  onFallbackResolved?: (
+    tie: GlobalRankingFallbackTie & {
+      orderedTeamIds: string[];
+      source: RankingTieOrderSource;
+    }
+  ) => void | Promise<void>;
 }) {
   const sorted = [...params.entries].sort(compareGlobalRankingEntries);
   const resolved: GlobalRankingEntry[] = [];
@@ -40,15 +58,29 @@ export async function resolveGlobalRanking(params: {
   let index = 0;
   while (index < sorted.length) {
     let nextIndex = index + 1;
-    const tieKey = buildGlobalRankingTieKey(sorted[index]);
-    while (nextIndex < sorted.length && buildGlobalRankingTieKey(sorted[nextIndex]) === tieKey) {
+    const comparisonKey = buildGlobalRankingComparisonKey(sorted[index] as GlobalRankingEntry);
+    while (
+      nextIndex < sorted.length &&
+      buildGlobalRankingComparisonKey(sorted[nextIndex] as GlobalRankingEntry) === comparisonKey
+    ) {
       nextIndex += 1;
     }
 
     const tieGroup = sorted.slice(index, nextIndex);
     if (tieGroup.length > 1) {
-      const order = await params.getRandomDrawOrder(tieKey, tieGroup.map((entry) => entry.teamId));
-      resolved.push(...applyGlobalRankingOrder(tieGroup, order));
+      const fallbackTie: GlobalRankingFallbackTie = {
+        entries: tieGroup,
+        teamIds: tieGroup.map((entry) => entry.teamId),
+        tieKey: params.buildTieKey(tieGroup),
+      };
+      const fallbackOrder = await params.getFallbackOrder(fallbackTie);
+      const orderedEntries = applyGlobalRankingOrder(tieGroup, fallbackOrder.orderedTeamIds);
+      await params.onFallbackResolved?.({
+        ...fallbackTie,
+        orderedTeamIds: fallbackOrder.orderedTeamIds,
+        source: fallbackOrder.source,
+      });
+      resolved.push(...orderedEntries);
     } else {
       resolved.push(...tieGroup);
     }

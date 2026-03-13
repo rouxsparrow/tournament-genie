@@ -148,8 +148,9 @@ async function createCourts(courts = ["C1", "C2", "C3", "C4", "C5"]) {
     });
   }
 
+  // Guardrail: seed scripts must never turn Auto Schedule on in a shared database.
   await ensureStageLocksForCourts(courts);
-  await upsertScheduleConfig("GROUP", true);
+  await upsertScheduleConfig("GROUP", false);
   await upsertScheduleConfig("KNOCKOUT", false);
 
   return courts;

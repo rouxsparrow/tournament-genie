@@ -2,8 +2,17 @@ import { prisma } from "@/lib/prisma";
 import { computeStandings } from "@/app/standings/actions";
 import {
   resolveGlobalRanking,
+  type GlobalRankingFallbackTie,
   type GlobalRankingEntry,
 } from "@/app/knockout/ranking";
+import {
+  buildGlobalRandomDrawKey,
+  buildGlobalRankingOverrideTieKey,
+  buildGlobalRankingRandomTieKey,
+  isValidTieOrder,
+  normalizeOrderedTeamIds,
+  type RankingTieOrderSource,
+} from "@/lib/ranking-tie-override";
 
 type CategoryCode = "MD" | "WD" | "XD";
 
@@ -24,6 +33,18 @@ type SeedInput = {
   avgPD: number;
   stats: StandingStats;
   isKnockOutSeed: boolean;
+};
+
+export type GlobalRankingFallbackState = {
+  tieKey: string;
+  source: RankingTieOrderSource;
+  orderedTeamIds: string[];
+  entries: GlobalRankingEntry[];
+};
+
+export type GlobalRankingDetailedResult = {
+  rankings: Awaited<ReturnType<typeof resolveGlobalRanking>>;
+  fallbackTies: GlobalRankingFallbackState[];
 };
 
 export function nextPowerOfTwo(value: number) {
@@ -100,54 +121,115 @@ export async function loadSeedInputs(categoryCode: CategoryCode, series: "A" | "
   }));
 }
 
-async function getGlobalDrawOrder(params: {
-  categoryCode: CategoryCode;
-  tieKey: string;
-  teamIds: string[];
-}) {
-  const sortedIds = [...params.teamIds].sort();
-  const drawKey = `global:${params.categoryCode}:${params.tieKey}:${sortedIds.join(",")}`;
-
-  const existing = await prisma.knockoutRandomDraw.findUnique({
-    where: { drawKey },
-  });
-  if (existing && typeof existing.payload === "object" && existing.payload) {
-    const payload = existing.payload as { orderedTeamIds?: string[] };
-    if (Array.isArray(payload.orderedTeamIds)) {
-      return payload.orderedTeamIds;
-    }
-  }
-
-  const shuffled = [...sortedIds];
+function shuffleIds(teamIds: string[]) {
+  const shuffled = [...teamIds];
   for (let index = shuffled.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(Math.random() * (index + 1));
     [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
   }
-
-  try {
-    await prisma.knockoutRandomDraw.create({
-      data: {
-        categoryCode: params.categoryCode,
-        series: "A",
-        round: 0,
-        drawKey,
-        payload: { orderedTeamIds: shuffled },
-      },
-    });
-    return shuffled;
-  } catch (error) {
-    const fallback = await prisma.knockoutRandomDraw.findUnique({ where: { drawKey } });
-    if (fallback && typeof fallback.payload === "object" && fallback.payload) {
-      const payload = fallback.payload as { orderedTeamIds?: string[] };
-      if (Array.isArray(payload.orderedTeamIds)) {
-        return payload.orderedTeamIds;
-      }
-    }
-    throw error;
-  }
+  return shuffled;
 }
 
-export async function loadGlobalGroupRanking(categoryCode: CategoryCode) {
+async function createGlobalTieOrderResolver(categoryCode: CategoryCode) {
+  const [existingRandom, existingManual] = await Promise.all([
+    prisma.knockoutRandomDraw.findMany({
+      where: {
+        categoryCode,
+        series: "A",
+        round: 0,
+      },
+      select: { drawKey: true, payload: true },
+    }),
+    prisma.rankingTieOverride.findMany({
+      where: {
+        scope: "GLOBAL_GROUP_RANKING",
+        categoryCode,
+      },
+      select: { tieKey: true, orderedTeamIds: true },
+    }),
+  ]);
+
+  const randomOrderByDrawKey = new Map<string, string[]>();
+  for (const row of existingRandom) {
+    const orderedTeamIds =
+      row.payload && typeof row.payload === "object"
+        ? normalizeOrderedTeamIds((row.payload as { orderedTeamIds?: unknown }).orderedTeamIds)
+        : [];
+    if (orderedTeamIds.length > 0) {
+      randomOrderByDrawKey.set(row.drawKey, orderedTeamIds);
+    }
+  }
+
+  const manualOrderByTieKey = new Map<string, string[]>();
+  for (const row of existingManual) {
+    const orderedTeamIds = normalizeOrderedTeamIds(row.orderedTeamIds);
+    if (orderedTeamIds.length > 0) {
+      manualOrderByTieKey.set(row.tieKey, orderedTeamIds);
+    }
+  }
+
+  return {
+    async getOrder(tie: GlobalRankingFallbackTie) {
+      const manualOrder = manualOrderByTieKey.get(tie.tieKey);
+      if (manualOrder && isValidTieOrder(tie.teamIds, manualOrder)) {
+        return {
+          orderedTeamIds: manualOrder,
+          source: "manual" as const,
+        };
+      }
+
+      const randomTieKey = buildGlobalRankingRandomTieKey({
+        groupRank: tie.entries[0]?.groupRank ?? 0,
+        avgPD: tie.entries[0]?.avgPD ?? 0,
+      });
+      const drawKey = buildGlobalRandomDrawKey(categoryCode, randomTieKey, tie.teamIds);
+      const cached = randomOrderByDrawKey.get(drawKey);
+      if (cached && isValidTieOrder(tie.teamIds, cached)) {
+        return {
+          orderedTeamIds: cached,
+          source: "random" as const,
+        };
+      }
+
+      const shuffled = shuffleIds([...tie.teamIds].sort());
+      try {
+        await prisma.knockoutRandomDraw.create({
+          data: {
+            categoryCode,
+            series: "A",
+            round: 0,
+            drawKey,
+            payload: { orderedTeamIds: shuffled },
+          },
+        });
+        randomOrderByDrawKey.set(drawKey, shuffled);
+        return {
+          orderedTeamIds: shuffled,
+          source: "random" as const,
+        };
+      } catch (error) {
+        const fallback = await prisma.knockoutRandomDraw.findUnique({ where: { drawKey } });
+        if (fallback && typeof fallback.payload === "object" && fallback.payload) {
+          const orderedTeamIds = normalizeOrderedTeamIds(
+            (fallback.payload as { orderedTeamIds?: unknown }).orderedTeamIds
+          );
+          if (isValidTieOrder(tie.teamIds, orderedTeamIds)) {
+            randomOrderByDrawKey.set(drawKey, orderedTeamIds);
+            return {
+              orderedTeamIds,
+              source: "random" as const,
+            };
+          }
+        }
+        throw error;
+      }
+    },
+  };
+}
+
+export async function loadGlobalGroupRankingDetailed(
+  categoryCode: CategoryCode
+): Promise<GlobalRankingDetailedResult> {
   const groups = await prisma.group.findMany({
     where: { category: { code: categoryCode } },
     orderBy: { name: "asc" },
@@ -158,31 +240,54 @@ export async function loadGlobalGroupRanking(categoryCode: CategoryCode) {
   );
 
   const entries: GlobalRankingEntry[] = [];
+  const tieOrderResolver = await createGlobalTieOrderResolver(categoryCode);
+  const fallbackTies: GlobalRankingFallbackState[] = [];
 
   for (const result of standingsList) {
     if (!result) continue;
     result.standings.forEach((row, index) => {
-      entries.push({
-        teamId: row.teamId,
-        teamName: row.teamName,
-        groupId: result.group.id,
-        groupName: result.group.name,
-        groupRank: index + 1,
-        avgPD: row.avgPointDiff,
-        played: row.played,
+        entries.push({
+          teamId: row.teamId,
+          teamName: row.teamName,
+          groupId: result.group.id,
+          groupName: result.group.name,
+          groupRank: index + 1,
+          avgPD: row.avgPointDiff,
+          avgPF: row.avgPointsFor,
+          played: row.played,
+        });
       });
-    });
   }
 
-  return resolveGlobalRanking({
+  const rankings = await resolveGlobalRanking({
     entries,
-    getRandomDrawOrder: (tieKey, teamIds) =>
-      getGlobalDrawOrder({
+    buildTieKey: (tieGroup) =>
+      buildGlobalRankingOverrideTieKey({
         categoryCode,
-        tieKey,
-        teamIds,
+        teamIds: tieGroup.map((entry) => entry.teamId),
+        groupRank: tieGroup[0]?.groupRank ?? 0,
+        avgPD: tieGroup[0]?.avgPD ?? 0,
       }),
+    getFallbackOrder: (tie) => tieOrderResolver.getOrder(tie),
+    onFallbackResolved: (tie) => {
+      fallbackTies.push({
+        tieKey: tie.tieKey,
+        source: tie.source,
+        orderedTeamIds: tie.orderedTeamIds,
+        entries: tie.entries,
+      });
+    },
   });
+
+  return {
+    rankings,
+    fallbackTies,
+  };
+}
+
+export async function loadGlobalGroupRanking(categoryCode: CategoryCode) {
+  const result = await loadGlobalGroupRankingDetailed(categoryCode);
+  return result.rankings;
 }
 
 export function buildStandardBracket(teamIds: string[], startRound = 2) {

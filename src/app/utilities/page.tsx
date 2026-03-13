@@ -32,7 +32,7 @@ export default async function UtilitiesPage() {
   const initialAutoScheduleFunctionEnabled =
     autoScheduleFunctionResult && !("error" in autoScheduleFunctionResult)
       ? autoScheduleFunctionResult.enabled
-      : true;
+      : false;
 
   return (
     <section className="rounded-2xl border border-border bg-card p-8">

@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+// Guardrail: this script must not enable Auto Schedule against any shared/live database.
 
 function isPrismaP2002(error) {
   return Boolean(error && typeof error === "object" && error.code === "P2002");
@@ -24,13 +25,13 @@ async function ensureStageSetup(stage) {
       data: {
         stage,
         dayStartAt: new Date(),
-        autoScheduleEnabled: true,
+        autoScheduleEnabled: false,
       },
     });
-  } else if (!config.autoScheduleEnabled) {
+  } else if (config.autoScheduleEnabled) {
     await prisma.scheduleConfig.update({
       where: { id: config.id },
-      data: { autoScheduleEnabled: true },
+      data: { autoScheduleEnabled: false },
     });
   }
 

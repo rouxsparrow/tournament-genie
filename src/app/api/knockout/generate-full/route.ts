@@ -185,6 +185,7 @@ export async function POST(request: Request) {
     type: "knockout-results",
     categoryCodes: [category],
   });
+  revalidatePath("/brackets");
   revalidatePath("/knockout");
   revalidatePath("/matches");
   revalidatePath("/schedule");

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { BracketDiagram } from "@/app/knockout/bracket-diagram";
 import { getRoleFromRequest } from "@/lib/auth";
 import { getFavouritePlayerCategoryMap, getFavouritePlayerContext } from "@/lib/favourite-player";
-import { getCachedBracketsState } from "@/lib/public-read-models/loaders";
+import { getFreshBracketsState } from "@/lib/public-read-models/loaders";
 import type { CategoryCode, SeriesCode } from "@/lib/public-read-models/types";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +46,7 @@ export default async function BracketsPage({ searchParams }: BracketsPageProps) 
     ? parseSeries(preferredSeries)
     : parseSeries(resolvedSearchParams?.series);
 
-  const bracketsState = await getCachedBracketsState(selectedCategory, requestedSeries);
+  const bracketsState = await getFreshBracketsState(selectedCategory, requestedSeries);
   const selectedSeries = bracketsState.series;
 
   return (

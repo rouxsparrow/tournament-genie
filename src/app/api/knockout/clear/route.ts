@@ -47,6 +47,7 @@ export async function DELETE(request: Request) {
     categoryCodes: [category],
     series: seriesParsed?.success ? [seriesParsed.data] : undefined,
   });
+  revalidatePath("/brackets");
   revalidatePath("/knockout");
   revalidatePath("/matches");
   revalidatePath("/schedule");

@@ -10,19 +10,27 @@ function createPrismaClient() {
   });
 }
 
-function hasCurrentRefereeDelegates(client: PrismaClient | undefined) {
+const REQUIRED_PRISMA_DELEGATES = [
+  "refereeAccount",
+  "refereeSession",
+  "rankingTieOverride",
+] as const;
+
+function hasCurrentPrismaDelegates(client: PrismaClient | undefined) {
   if (!client) return false;
   const value = client as unknown as Record<string, unknown>;
-  return typeof value.refereeAccount !== "undefined" && typeof value.refereeSession !== "undefined";
+  return REQUIRED_PRISMA_DELEGATES.every(
+    (delegateName) => typeof value[delegateName] !== "undefined"
+  );
 }
 
 const cached = globalForPrisma.prisma;
-if (cached && !hasCurrentRefereeDelegates(cached)) {
+if (cached && !hasCurrentPrismaDelegates(cached)) {
   void cached.$disconnect().catch(() => undefined);
 }
 
 const resolvedPrisma: PrismaClient =
-  cached && hasCurrentRefereeDelegates(cached) ? cached : createPrismaClient();
+  cached && hasCurrentPrismaDelegates(cached) ? cached : createPrismaClient();
 
 export const prisma = resolvedPrisma;
 

@@ -304,6 +304,13 @@ export function KnockoutMatchesSection({
         </div>
       </div>
 
+      <div className="mt-3 flex justify-end">
+        <span data-testid="knockout-match-count" className="text-xs text-muted-foreground">
+          {filteredMatches.length} match
+          {filteredMatches.length === 1 ? "" : "es"}
+        </span>
+      </div>
+
       {filteredMatches.length === 0 ? (
         <p className="mt-4 text-sm text-muted-foreground">
           No knockout matches found for this filter.
@@ -322,20 +329,26 @@ export function KnockoutMatchesSection({
               .join(", ");
             const isFinal = match.round === 4 && match.matchNo === 1;
             return (
-              <div key={match.id} className="rounded-lg border border-border p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-sm text-foreground">
-                    {teamLabel(match.homeTeam)}{" "}
-                    <span className="text-emerald-500">Vs.</span>{" "}
-                    {teamLabel(match.awayTeam)}
-                  </p>
+              <div
+                key={match.id}
+                data-testid="knockout-match-card"
+                className="rounded-lg border border-border p-4"
+              >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="space-y-1 text-sm text-foreground">
+                    <p className="break-words">{teamLabel(match.homeTeam)}</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-500">
+                      vs
+                    </p>
+                    <p className="break-words">{teamLabel(match.awayTeam)}</p>
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     {match.categoryCode} · {matchRoundLabel(match.round, match.matchNo)}{" "}
                     · Series {match.series} · Match {match.matchNo}
                   </p>
                 </div>
-                <div className="text-right">
+                <div className="shrink-0 text-right">
                   <span
                     className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusBadge(match.status)}`}
                   >

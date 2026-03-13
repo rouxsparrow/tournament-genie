@@ -20,7 +20,6 @@ import {
   markCompleted,
   resetQueueForcedPriorities,
   toggleRefereeNotificationRead,
-  toggleAutoSchedule,
   unblockMatch,
 } from "@/app/schedule/actions";
 import type {
@@ -362,10 +361,6 @@ export function ScheduleClient({
   const [statusFilter, setStatusFilter] = useState<QueueStatus>("ELIGIBLE");
   const [search, setSearch] = useState("");
   const [assignSearch, setAssignSearch] = useState("");
-  const [autoScheduleOverride, setAutoScheduleOverride] = useState<{
-    stage: ScheduleStage;
-    value: boolean;
-  } | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
   const [selectedMatchKey, setSelectedMatchKey] = useState("");
   const [refereeNotifications, setRefereeNotifications] = useState<RefereeNotificationItem[]>(
@@ -374,7 +369,6 @@ export function ScheduleClient({
   const [error, setError] = useState<string | null>(null);
   const [isHotActionInFlight, setIsHotActionInFlight] = useState(false);
   const [isPending, startTransition] = useGlobalTransition();
-  const [isAutoScheduleSubmitting, setIsAutoScheduleSubmitting] = useState(false);
   const inPlayPlayerIds = useMemo(
     () => new Set(state.inPlayPlayerIds ?? []),
     [state.inPlayPlayerIds]
@@ -387,14 +381,8 @@ export function ScheduleClient({
     return union;
   }, [state.inPlayPlayerIds, state.recentlyPlayedPlayerIds]);
   const scheduleDebug = process.env.NEXT_PUBLIC_SCHEDULE_DEBUG === "1";
-  const autoScheduleFunctionEnabled =
-    state.config.autoScheduleFunctionEnabled ?? true;
-  const autoScheduleStageValue =
-    autoScheduleOverride?.stage === stage
-      ? autoScheduleOverride.value
-      : state.config.autoScheduleEnabled;
-  const autoSchedule = autoScheduleFunctionEnabled && autoScheduleStageValue;
-  const isActionDisabled = isPending || isAutoScheduleSubmitting || isHotActionInFlight;
+  const autoSchedule = false;
+  const isActionDisabled = isPending || isHotActionInFlight;
 
   useEffect(() => {
     stateRef.current = state;
@@ -555,10 +543,8 @@ export function ScheduleClient({
       const result = (await action()) as { error?: string } | undefined;
       if (result?.error) {
         setError(result.error);
-        setAutoScheduleOverride(null);
         return;
       }
-      setAutoScheduleOverride(null);
       const refreshed = await refreshState();
       if (!refreshed) {
         router.refresh();
@@ -718,43 +704,8 @@ export function ScheduleClient({
           <section className="rounded-xl border border-border bg-card p-4 xl:col-span-7">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-foreground">Playing</h2>
-              {isAdmin && autoScheduleFunctionEnabled ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className={
-                    autoSchedule
-                      ? "border-lime-300 bg-lime-300 text-slate-950 hover:bg-lime-400 hover:text-slate-950 dark:!border-lime-300 dark:!bg-lime-300 dark:!text-slate-950 dark:hover:!bg-lime-400"
-                      : undefined
-                  }
-                  disabled={isActionDisabled}
-                  onClick={async () => {
-                    if (isAutoScheduleSubmitting) return;
-                    const next = !autoSchedule;
-                    setAutoScheduleOverride({ stage, value: next });
-                    setError(null);
-                    setIsAutoScheduleSubmitting(true);
-                    try {
-                      const result = (await toggleAutoSchedule(stage, next)) as
-                        | { error?: string }
-                        | undefined;
-                      if (result?.error) {
-                        setError(result.error);
-                        setAutoScheduleOverride(null);
-                        return;
-                      }
-                      const refreshed = await refreshState();
-                      if (!refreshed) {
-                        router.refresh();
-                      }
-                    } finally {
-                      setIsAutoScheduleSubmitting(false);
-                    }
-                  }}
-                >
-                  Auto Schedule {autoSchedule ? "ON" : "OFF"}
-                </Button>
+              {isAdmin ? (
+                <div className="text-xs text-muted-foreground">Auto Schedule disabled</div>
               ) : null}
             </div>
             <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -909,9 +860,9 @@ export function ScheduleClient({
             <section className="rounded-xl border border-border bg-card p-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold text-foreground">Upcoming</h2>
-                {isAdmin && autoScheduleFunctionEnabled ? (
+                {isAdmin ? (
                   <div className="text-xs text-muted-foreground">
-                    {autoSchedule ? "Auto Schedule ON" : "Auto Schedule OFF"}
+                    Auto Schedule disabled
                   </div>
                 ) : null}
               </div>

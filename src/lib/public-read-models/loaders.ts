@@ -132,61 +132,7 @@ export async function getCachedBracketsState(
   const normalizedSeries = normalizeSeriesCode(series);
 
   const cached = unstable_cache(
-    async () => {
-      const isWD = normalizedCategory === "WD";
-      const resolvedSeries = isWD && normalizedSeries === "B" ? "A" : normalizedSeries;
-      const matches = await prisma.knockoutMatch.findMany({
-        where: { categoryCode: normalizedCategory, series: resolvedSeries },
-        include: {
-          homeTeam: { include: { members: { include: { player: true } } } },
-          awayTeam: { include: { members: { include: { player: true } } } },
-          previousMatches: true,
-          games: true,
-        },
-        orderBy: [{ round: "asc" }, { matchNo: "asc" }],
-      });
-
-      const showPlayIns = !isWD && matches.some((match) => match.round === 1);
-
-      const seeds = await prisma.knockoutSeed.findMany({
-        where: { categoryCode: normalizedCategory, series: resolvedSeries },
-      });
-      const seedMap = new Map(seeds.map((seed) => [seed.teamId, seed.seedNo]));
-
-      return {
-        categoryCode: normalizedCategory,
-        series: resolvedSeries,
-        isWD,
-        showPlayIns,
-        matches: matches.map((match) => ({
-          id: match.id,
-          round: match.round,
-          matchNo: match.matchNo,
-          status: match.status,
-          winnerTeamId: match.winnerTeamId,
-          games: match.games.map((game) => ({
-            gameNumber: game.gameNumber,
-            homePoints: game.homePoints,
-            awayPoints: game.awayPoints,
-          })),
-          previousMatches: match.previousMatches.map((prev) => ({
-            round: prev.round,
-            matchNo: prev.matchNo,
-            nextSlot: prev.nextSlot,
-          })),
-          homeTeam: {
-            id: match.homeTeamId,
-            name: match.homeTeam ? teamLabel(match.homeTeam) : "TBD",
-            seed: match.homeTeamId ? seedMap.get(match.homeTeamId) ?? null : null,
-          },
-          awayTeam: {
-            id: match.awayTeamId,
-            name: match.awayTeam ? teamLabel(match.awayTeam) : "TBD",
-            seed: match.awayTeamId ? seedMap.get(match.awayTeamId) ?? null : null,
-          },
-        })),
-      } satisfies PublicBracketsState;
-    },
+    async () => loadBracketsState(normalizedCategory, normalizedSeries),
     ["public", "brackets", normalizedCategory, normalizedSeries],
     {
       tags: [
@@ -198,6 +144,75 @@ export async function getCachedBracketsState(
   );
 
   return cached();
+}
+
+export async function getFreshBracketsState(
+  categoryCode: CategoryCode,
+  series: SeriesCode
+): Promise<PublicBracketsState> {
+  const normalizedCategory = normalizeCategoryCode(categoryCode);
+  const normalizedSeries = normalizeSeriesCode(series);
+
+  return loadBracketsState(normalizedCategory, normalizedSeries);
+}
+
+async function loadBracketsState(
+  normalizedCategory: CategoryCode,
+  normalizedSeries: SeriesCode
+): Promise<PublicBracketsState> {
+  const isWD = normalizedCategory === "WD";
+  const resolvedSeries = isWD && normalizedSeries === "B" ? "A" : normalizedSeries;
+  const matches = await prisma.knockoutMatch.findMany({
+    where: { categoryCode: normalizedCategory, series: resolvedSeries },
+    include: {
+      homeTeam: { include: { members: { include: { player: true } } } },
+      awayTeam: { include: { members: { include: { player: true } } } },
+      previousMatches: true,
+      games: true,
+    },
+    orderBy: [{ round: "asc" }, { matchNo: "asc" }],
+  });
+
+  const showPlayIns = !isWD && matches.some((match) => match.round === 1);
+
+  const seeds = await prisma.knockoutSeed.findMany({
+    where: { categoryCode: normalizedCategory, series: resolvedSeries },
+  });
+  const seedMap = new Map(seeds.map((seed) => [seed.teamId, seed.seedNo]));
+
+  return {
+    categoryCode: normalizedCategory,
+    series: resolvedSeries,
+    isWD,
+    showPlayIns,
+    matches: matches.map((match) => ({
+      id: match.id,
+      round: match.round,
+      matchNo: match.matchNo,
+      status: match.status,
+      winnerTeamId: match.winnerTeamId,
+      games: match.games.map((game) => ({
+        gameNumber: game.gameNumber,
+        homePoints: game.homePoints,
+        awayPoints: game.awayPoints,
+      })),
+      previousMatches: match.previousMatches.map((prev) => ({
+        round: prev.round,
+        matchNo: prev.matchNo,
+        nextSlot: prev.nextSlot,
+      })),
+      homeTeam: {
+        id: match.homeTeamId,
+        name: match.homeTeam ? teamLabel(match.homeTeam) : "TBD",
+        seed: match.homeTeamId ? seedMap.get(match.homeTeamId) ?? null : null,
+      },
+      awayTeam: {
+        id: match.awayTeamId,
+        name: match.awayTeam ? teamLabel(match.awayTeam) : "TBD",
+        seed: match.awayTeamId ? seedMap.get(match.awayTeamId) ?? null : null,
+      },
+    })),
+  } satisfies PublicBracketsState;
 }
 
 export async function resolvePresentingStageForViewerFromNav(favouritePlayerId: string | null) {

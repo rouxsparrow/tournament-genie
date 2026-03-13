@@ -142,6 +142,8 @@ const matchTypeSchema = z.enum(["GROUP", "KNOCKOUT"]);
 const scheduleStageSchema = z.enum(["GROUP", "KNOCKOUT"]);
 const categoryFilterSchema = z.enum(["ALL", "MD", "WD", "XD"]);
 const COURT_IDS = ["C1", "C2", "C3", "C4", "C5"] as const;
+const AUTO_SCHEDULE_DISABLED_MESSAGE =
+  "Auto Schedule is permanently disabled. Manual scheduling only.";
 const SCHEDULE_DEBUG = process.env.SCHEDULE_DEBUG === "1";
 const SCHEDULE_PERF_DEBUG = process.env.SCHEDULE_PERF_DEBUG === "1";
 const BROADCAST_PUBLISH_WAIT_MS = 250;
@@ -304,17 +306,31 @@ async function ensureCourtStageLocks(
 }
 
 async function ensureScheduleSetup(stage: ScheduleStage) {
-  let config = await prisma.scheduleConfig.findFirst({
+  let configs = await prisma.scheduleConfig.findMany({
     where: { stage },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: "asc" },
   });
-  if (!config) {
-    config = await prisma.scheduleConfig.create({
-      data: {
-        stage,
-        dayStartAt: new Date(),
-      },
+  if (configs.length === 0) {
+    configs = [
+      await prisma.scheduleConfig.create({
+        data: {
+          stage,
+          dayStartAt: new Date(),
+          autoScheduleEnabled: false,
+        },
+      }),
+    ];
+  }
+  let config = configs[0];
+  if (configs.length > 1 || configs.some((entry) => entry.autoScheduleEnabled)) {
+    await prisma.scheduleConfig.updateMany({
+      where: { stage },
+      data: { autoScheduleEnabled: false },
     });
+    config = {
+      ...config,
+      autoScheduleEnabled: false,
+    };
   }
 
   const existingCourts = await prisma.court.findMany({
@@ -336,14 +352,6 @@ async function ensureScheduleSetup(stage: ScheduleStage) {
   return config;
 }
 
-async function loadAutoScheduleFunctionEnabled() {
-  const settings = await prisma.tournamentSettings.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { autoScheduleFunctionEnabled: true },
-  });
-  return settings?.autoScheduleFunctionEnabled ?? true;
-}
-
 const scheduleSetupCache = new Map<ScheduleStage, { at: number }>();
 const scheduleSetupInflight = new Map<ScheduleStage, Promise<void>>();
 const SCHEDULE_SETUP_CACHE_TTL_MS = 60_000;
@@ -354,7 +362,7 @@ async function ensureScheduleSetupCached(stage: ScheduleStage) {
   if (cached && now - cached.at < SCHEDULE_SETUP_CACHE_TTL_MS) {
     const config = await prisma.scheduleConfig.findFirst({
       where: { stage },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: "asc" },
     });
     if (config) return config;
   }
@@ -364,7 +372,7 @@ async function ensureScheduleSetupCached(stage: ScheduleStage) {
     await inflight;
     const config = await prisma.scheduleConfig.findFirst({
       where: { stage },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: "asc" },
     });
     if (config) return config;
   }
@@ -2016,7 +2024,6 @@ export async function getScheduleState(
     forcedData,
     matchPool,
     uncheckedPlayerIds,
-    autoScheduleFunctionEnabled,
   ] = await Promise.all([
       prisma.court.findMany({ orderBy: { id: "asc" } }),
       prisma.courtStageLock.findMany({ where: { stage } }),
@@ -2035,11 +2042,9 @@ export async function getScheduleState(
       loadForcedPriorities(stage),
       loadScheduleMatches(stage, "ALL"),
       loadUncheckedPlayerIds(),
-      loadAutoScheduleFunctionEnabled(),
     ]);
   stopPerfTimer(initialReadsStartedAt, perfEntries, "initialReadBundle");
-  const effectiveAutoScheduleEnabled =
-    config.autoScheduleEnabled && autoScheduleFunctionEnabled;
+  const effectiveAutoScheduleEnabled = false;
 
   const blockedKeys = buildBlockedKeys(blocked);
   const matchPoolCount =
@@ -2500,8 +2505,8 @@ export async function getScheduleState(
     matchPoolCount,
     config: {
       id: config.id,
-      autoScheduleEnabled: config.autoScheduleEnabled,
-      autoScheduleFunctionEnabled,
+      autoScheduleEnabled: false,
+      autoScheduleFunctionEnabled: false,
       lastBatch: lastBatch ?? { matchKeys: [], playerIds: [], updatedAt: "" },
     },
     courts: courts.map((court) => {
@@ -2635,28 +2640,8 @@ export async function toggleAutoSchedule(stage: ScheduleStage, enabled: boolean)
   if (guard) return guard;
   const parsedStage = scheduleStageSchema.safeParse(stage);
   if (!parsedStage.success) return { error: "Invalid stage." };
-  const autoScheduleFunctionEnabled = await loadAutoScheduleFunctionEnabled();
-  if (!autoScheduleFunctionEnabled) {
-    return { error: "Auto Schedule function is disabled in Utilities." };
-  }
-
-  const config = await ensureScheduleSetup(stage);
-  await prisma.scheduleConfig.update({
-    where: { id: config.id },
-    data: { autoScheduleEnabled: enabled },
-  });
-  await prisma.scheduleActionLog.create({
-    data: { action: "AUTO_SCHEDULE", payload: { stage, enabled } },
-  });
-
-  await publishBroadcastRefresh({
-    stage,
-    source: "schedule-action",
-    changeType: "both",
-  });
-  revalidatePath("/schedule");
-  await invalidatePresentingStage(stage);
-  return { ok: true };
+  void enabled;
+  return { error: AUTO_SCHEDULE_DISABLED_MESSAGE };
 }
 
 export async function lockCourt(courtId: string, locked: boolean, stage: ScheduleStage) {
@@ -2690,7 +2675,7 @@ export async function backToQueue(
   if (!parsedStage.success) return { error: "Invalid stage." };
 
   const readStartedAt = startPerfTimer();
-  const config = await ensureScheduleSetup(stage);
+  await ensureScheduleSetup(stage);
   const assignment = await prisma.courtAssignment.findFirst({
     where: { courtId, status: "ACTIVE", stage },
     select: assignmentScheduleSelect,
@@ -2699,14 +2684,6 @@ export async function backToQueue(
   if (!assignment) {
     logHotActionPerf({ action: "backToQueue", stage, entries: perfEntries, meta: { skipped: true } });
     return { ok: true, action: "back-to-queue", stage, delta: {} };
-  }
-
-  if (config.autoScheduleEnabled) {
-    const delegateStartedAt = startPerfTimer();
-    const result = await swapBackToQueue(courtId, stage);
-    stopPerfTimer(delegateStartedAt, perfEntries, "delegate-swap");
-    logHotActionPerf({ action: "backToQueue", stage, entries: perfEntries, meta: { delegated: true } });
-    return result;
   }
 
   const removedPlayerIds =

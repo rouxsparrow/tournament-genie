@@ -124,6 +124,7 @@ export async function generateKnockoutBracket(formData: FormData) {
     categoryCodes: [categoryCode],
     series: [series],
   });
+  revalidatePath("/brackets");
   revalidatePath("/knockout");
   redirect(`/knockout?category=${categoryCode}`);
 }
@@ -223,6 +224,7 @@ export async function applySecondChanceDrop(formData: FormData) {
     categoryCodes: [categoryCode],
     series: ["B"],
   });
+  revalidatePath("/brackets");
   revalidatePath("/knockout");
   redirect(`/knockout?category=${categoryCode}`);
 }

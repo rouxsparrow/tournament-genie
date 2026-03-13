@@ -491,15 +491,18 @@ export function RefereeScoreboard({
   return (
     <>
       <AlertDialog open={!sessionAuthenticated} onOpenChange={() => undefined}>
-        <AlertDialogContent onEscapeKeyDown={(event) => event.preventDefault()}>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Referee Login</AlertDialogTitle>
-            <AlertDialogDescription>
+        <AlertDialogContent
+          onEscapeKeyDown={(event) => event.preventDefault()}
+          className="w-[calc(100vw-1.5rem)] max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-1.5rem)] overflow-y-auto rounded-2xl p-5 sm:w-full sm:max-w-md sm:p-6 md:max-w-lg lg:max-w-xl"
+        >
+          <AlertDialogHeader className="space-y-3">
+            <AlertDialogTitle className="text-2xl sm:text-3xl">Referee Login</AlertDialogTitle>
+            <AlertDialogDescription className="mx-auto max-w-[26rem] text-base leading-relaxed">
               Sign in with your referee account to submit match scores.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-5 space-y-4 sm:mt-6 sm:space-y-5">
             <div>
               <label htmlFor="referee-username" className="text-xs font-medium text-muted-foreground">
                 Username
@@ -518,7 +521,7 @@ export function RefereeScoreboard({
                   }
                 }}
                 autoComplete="username"
-                className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                className="mt-1 h-11 w-full rounded-md border border-input bg-background px-4 text-base sm:h-12"
               />
             </div>
             <div>
@@ -540,11 +543,11 @@ export function RefereeScoreboard({
                   }
                 }}
                 autoComplete="current-password"
-                className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                className="mt-1 h-11 w-full rounded-md border border-input bg-background px-4 text-base sm:h-12"
               />
             </div>
             {authError ? <p className="text-sm text-red-600">{authError}</p> : null}
-            <Button type="button" onClick={submitLogin} className="w-full" disabled={authPending}>
+            <Button type="button" onClick={submitLogin} className="h-11 w-full text-base sm:h-12" disabled={authPending}>
               {authPending ? "Signing in..." : "Sign in"}
             </Button>
           </div>

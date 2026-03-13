@@ -25,6 +25,10 @@ async function clickUtilitiesButton(page: Page, name: string) {
 
 async function setAutoSchedule(page: Page, enabled: boolean) {
   const button = page.getByRole("button", { name: /Auto Schedule/i }).first();
+  if ((await button.count()) === 0) {
+    expect(enabled).toBe(false);
+    return;
+  }
   await expect(button).toBeVisible();
   const label = (await button.textContent()) ?? "";
   const isOn = label.includes("ON");
@@ -68,7 +72,7 @@ test("Player check-in blocks queue until arrival @regression", async ({ page }) 
   }
 });
 
-test("Auto Schedule does not assign pending check-in matches @regression", async ({ page }) => {
+test("Manual schedule does not assign pending check-in matches @regression", async ({ page }) => {
   await loginAsAdmin(page);
 
   try {
@@ -77,7 +81,7 @@ test("Auto Schedule does not assign pending check-in matches @regression", async
     await clearActiveGroupAssignments();
 
     await page.goto("/schedule?stage=group");
-    await setAutoSchedule(page, true);
+    await setAutoSchedule(page, false);
     await page.reload();
 
     await expect

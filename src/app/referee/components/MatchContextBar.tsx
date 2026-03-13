@@ -56,7 +56,7 @@ export function MatchContextBar({
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-3">
+      <div className="mt-4 grid grid-cols-1 gap-3">
         <div>
           <div className="flex items-center justify-between gap-2">
             <label htmlFor="referee-court" className="text-xs font-medium text-muted-foreground">
@@ -111,7 +111,7 @@ export function MatchContextBar({
           </select>
         </div>
 
-        <div className="col-span-2 min-w-0">
+        <div className="min-w-0">
           <label className="text-xs font-medium text-muted-foreground">Match</label>
           <div className="mt-1">
             <Select value={selectedMatchId} onValueChange={onMatchChange} disabled={!hasMatches || disabled}>

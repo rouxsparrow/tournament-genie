@@ -63,6 +63,7 @@ export type BulkCleanupSummary = {
   knockoutMatches: number;
   knockoutSeeds: number;
   knockoutRandomDraws: number;
+  rankingTieOverrides: number;
   gameScores: number;
   groupMatches: number;
   seriesQualifiers: number;
@@ -94,6 +95,7 @@ const UTILITIES_CLEANUP_REVALIDATE_PATHS = [
   "/groups",
   "/matches",
   "/standings",
+  "/tie-breaks",
   "/brackets",
   "/knockout",
   "/schedule",
@@ -118,6 +120,7 @@ export type TestDataCleanupSummary = {
   seriesQualifiers: number;
   knockoutSeeds: number;
   knockoutRandomDraws: number;
+  rankingTieOverrides: number;
   refereeSubmissions: number;
   courtAssignments: number;
   blockedMatches: number;
@@ -137,6 +140,7 @@ type TestCleanupTargets = {
   groupMatchIds: string[];
   knockoutMatchIds: string[];
   groupIds: string[];
+  categoryCodes: ("MD" | "WD" | "XD")[];
   knockoutComboFilters: { categoryCode: "MD" | "WD" | "XD"; series: "A" | "B"; round: number }[];
   scheduleActionLogIds: string[];
 };
@@ -188,6 +192,13 @@ async function resolveTestCleanupTargets(db: PrismaLike): Promise<TestCleanupTar
     prefixedPlayerIds.add(member.playerId);
   }
   const playerIdList = [...prefixedPlayerIds];
+  const teamCategories = teamIdList.length
+    ? await db.team.findMany({
+        where: { id: { in: teamIdList } },
+        select: { category: { select: { code: true } } },
+      })
+    : [];
+  const categoryCodes = [...new Set(teamCategories.map((team) => team.category.code))];
 
   const groupMatches = teamIdList.length
     ? await db.match.findMany({
@@ -291,6 +302,7 @@ async function resolveTestCleanupTargets(db: PrismaLike): Promise<TestCleanupTar
     groupMatchIds,
     knockoutMatchIds,
     groupIds: [...groupIds],
+    categoryCodes,
     knockoutComboFilters,
     scheduleActionLogIds,
   };
@@ -312,6 +324,7 @@ function zeroTestCleanupSummary(): TestDataCleanupSummary {
     seriesQualifiers: 0,
     knockoutSeeds: 0,
     knockoutRandomDraws: 0,
+    rankingTieOverrides: 0,
     refereeSubmissions: 0,
     courtAssignments: 0,
     blockedMatches: 0,
@@ -354,6 +367,11 @@ async function buildTestCleanupPreview(db: PrismaLike): Promise<TestDataCleanupP
       where: { groupId: { in: targets.groupIds } },
     });
     summary.groups = await db.group.count({ where: { id: { in: targets.groupIds } } });
+  }
+  if (targets.categoryCodes.length > 0) {
+    summary.rankingTieOverrides = await db.rankingTieOverride.count({
+      where: { categoryCode: { in: targets.categoryCodes } },
+    });
   }
   if (targets.knockoutComboFilters.length > 0) {
     summary.knockoutRandomDraws = await db.knockoutRandomDraw.count({
@@ -471,11 +489,7 @@ function buildRefereeSubmissionWhere(filters: {
 }
 
 async function readAutoScheduleFunctionEnabledValue() {
-  const settings = await prisma.tournamentSettings.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { autoScheduleFunctionEnabled: true },
-  });
-  return settings?.autoScheduleFunctionEnabled ?? true;
+  return false;
 }
 
 export async function checkDuplicateAssignments() {
@@ -609,36 +623,37 @@ export async function setAutoScheduleFunctionEnabled(enabled: boolean) {
   if (typeof enabled !== "boolean") {
     return { error: "Invalid enabled value." } as const;
   }
+  if (enabled) {
+    return { error: "Auto Schedule is permanently disabled. Manual scheduling only." } as const;
+  }
 
   const existingSettingsCount = await prisma.tournamentSettings.count();
   if (existingSettingsCount === 0) {
     await prisma.tournamentSettings.create({
-      data: { autoScheduleFunctionEnabled: enabled },
+      data: { autoScheduleFunctionEnabled: false },
     });
   } else {
     await prisma.tournamentSettings.updateMany({
-      data: { autoScheduleFunctionEnabled: enabled },
+      data: { autoScheduleFunctionEnabled: false },
     });
   }
 
-  if (!enabled) {
-    await prisma.scheduleConfig.updateMany({
-      where: { stage: { in: ["GROUP", "KNOCKOUT"] } },
-      data: { autoScheduleEnabled: false },
-    });
-  }
+  await prisma.scheduleConfig.updateMany({
+    where: { stage: { in: ["GROUP", "KNOCKOUT"] } },
+    data: { autoScheduleEnabled: false },
+  });
 
   await prisma.scheduleActionLog.create({
     data: {
       action: "AUTO_SCHEDULE_FUNCTION",
-      payload: { enabled, source: "utilities" },
+      payload: { enabled: false, source: "utilities", forcedOff: true },
     },
   });
 
   revalidatePath("/utilities");
   revalidatePath("/schedule");
 
-  return { ok: true as const, enabled };
+  return { ok: true as const, enabled: false };
 }
 
 function zeroBulkCleanupSummary(): BulkCleanupSummary {
@@ -651,6 +666,7 @@ function zeroBulkCleanupSummary(): BulkCleanupSummary {
     knockoutMatches: 0,
     knockoutSeeds: 0,
     knockoutRandomDraws: 0,
+    rankingTieOverrides: 0,
     gameScores: 0,
     groupMatches: 0,
     seriesQualifiers: 0,
@@ -685,6 +701,7 @@ async function clearAllTeamRelatedData(tx: Prisma.TransactionClient): Promise<Bu
   deleted.knockoutMatches = (await tx.knockoutMatch.deleteMany()).count;
   deleted.knockoutSeeds = (await tx.knockoutSeed.deleteMany()).count;
   deleted.knockoutRandomDraws = (await tx.knockoutRandomDraw.deleteMany()).count;
+  deleted.rankingTieOverrides = (await tx.rankingTieOverride.deleteMany()).count;
   deleted.gameScores = (await tx.gameScore.deleteMany()).count;
   deleted.groupMatches = (await tx.match.deleteMany()).count;
   deleted.seriesQualifiers = (await tx.seriesQualifier.deleteMany()).count;
@@ -969,6 +986,11 @@ export async function removeTestDataCleanup(confirmToken: string) {
     const seriesQualifiers = targets.teamIds.length
       ? await tx.seriesQualifier.deleteMany({ where: { teamId: { in: targets.teamIds } } })
       : { count: 0 };
+    const rankingTieOverrides = targets.categoryCodes.length
+      ? await tx.rankingTieOverride.deleteMany({
+          where: { categoryCode: { in: targets.categoryCodes } },
+        })
+      : { count: 0 };
     const knockoutRandomDraws = targets.knockoutComboFilters.length
       ? await tx.knockoutRandomDraw.deleteMany({ where: { OR: targets.knockoutComboFilters } })
       : { count: 0 };
@@ -994,6 +1016,7 @@ export async function removeTestDataCleanup(confirmToken: string) {
             teams: { none: {} },
             seriesQualifiers: { none: {} },
             randomDraws: { none: {} },
+            tieOverrides: { none: {} },
           },
         })
       : { count: 0 };
@@ -1028,6 +1051,7 @@ export async function removeTestDataCleanup(confirmToken: string) {
       seriesQualifiers: seriesQualifiers.count,
       knockoutSeeds: knockoutSeeds.count,
       knockoutRandomDraws: knockoutRandomDraws.count,
+      rankingTieOverrides: rankingTieOverrides.count,
       refereeSubmissions: refereeSubmissions.count,
       courtAssignments: courtAssignments.count,
       blockedMatches: blockedMatches.count,

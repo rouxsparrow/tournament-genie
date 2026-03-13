@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { revalidatePath } from "next/cache";
 import {
   BracketError,
   generateKnockoutBracketInternal,
@@ -50,5 +51,6 @@ export async function POST(request: Request) {
     categoryCodes: [category],
     series: [series],
   });
+  revalidatePath("/brackets");
   return NextResponse.json({ ok: true });
 }

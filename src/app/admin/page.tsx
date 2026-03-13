@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
+  ArrowUpDown,
   BookText,
   CalendarRange,
   FolderKanban,
@@ -21,6 +22,7 @@ const ADMIN_LINKS = [
   { href: "/teams", label: "Teams", icon: ShieldCheck },
   { href: "/groups", label: "Groups", icon: FolderKanban },
   { href: "/knockout", label: "Knockout", icon: Trophy },
+  { href: "/tie-breaks", label: "Tie Breaks", icon: ArrowUpDown },
   { href: "/group-stage-result", label: "Group Stage Result", icon: Trophy },
   { href: "/broadcast", label: "Broadcast", icon: Radio },
   { href: "/referees", label: "Referees", icon: UserCheck },

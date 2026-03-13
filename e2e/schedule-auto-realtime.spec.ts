@@ -44,8 +44,110 @@ function courtCard(page: Page, label: string): Locator {
   return heading.locator("xpath=ancestor::div[contains(@class,'rounded-xl')][1]");
 }
 
+function parseAssignedTeams(rawText: string) {
+  const lines = rawText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const direct = lines.find((line) => /\s+vs\s+/i.test(line));
+  if (direct) {
+    const [home, away] = direct.split(/\s+vs\s+/i);
+    if (home && away) return { home: home.trim(), away: away.trim() };
+  }
+  const vsIndex = lines.findIndex((line) => line.toLowerCase() === "vs.");
+  if (vsIndex > 0 && (vsIndex + 1) < lines.length) {
+    return {
+      home: lines[vsIndex - 1] ?? "",
+      away: lines[vsIndex + 1] ?? "",
+    };
+  }
+  throw new Error(`Unable to parse assigned teams from court card text: ${rawText}`);
+}
+
+async function assignNextOnCourt(page: Page, label: string) {
+  const card = courtCard(page, label);
+  const assignButton = card.getByRole("button", { name: "Assign Next" });
+  if (!(await assignButton.isEnabled())) {
+    throw new Error(`No assignable match available on ${label}.`);
+  }
+
+  await assignButton.click();
+
+  const modal = page
+    .locator("div.fixed.inset-0")
+    .filter({ hasText: `Assign match to ${label}` })
+    .first();
+  await expect(modal).toBeVisible();
+
+  const select = modal.locator("select").first();
+  await expect(select).toBeVisible();
+
+  const options = select.locator("option:not([disabled])");
+  const optionCount = await options.count();
+  if (optionCount === 0) {
+    await modal.getByRole("button", { name: "Close" }).click();
+    throw new Error(`No assignable match available on ${label}.`);
+  }
+
+  let assignedMatchId: string | null = null;
+  for (let index = 0; index < optionCount; index += 1) {
+    const option = options.nth(index);
+    const optionValue = await option.getAttribute("value");
+    if (!optionValue) continue;
+    await select.selectOption(optionValue);
+    const confirmButton = modal.getByRole("button", { name: "Confirm assignment" });
+    if (!(await confirmButton.isEnabled())) continue;
+    await confirmButton.click();
+    try {
+      await expect(modal).toBeHidden({ timeout: 2_000 });
+      assignedMatchId = optionValue;
+      break;
+    } catch {
+      // The candidate may have become invalid between modal open and confirm; try the next one.
+    }
+  }
+
+  if (!assignedMatchId) {
+    throw new Error(`No assignable match available on ${label}.`);
+  }
+
+  await expect(card.getByText("No match assigned.")).toHaveCount(0, { timeout: 5_000 });
+  const teams = parseAssignedTeams(await card.innerText());
+  return { matchId: assignedMatchId, homeTeamName: teams.home, awayTeamName: teams.away };
+}
+
+async function ensureVisibleAssignmentOnCourt(
+  page: Page,
+  snapshot: {
+    courtId: string;
+    matchId: string;
+    homeTeamName: string;
+    awayTeamName: string;
+  }
+) {
+  const label = courtLabel(snapshot.courtId);
+  const card = courtCard(page, label);
+  const homeTeam = card.getByText(snapshot.homeTeamName, { exact: false });
+  const awayTeam = card.getByText(snapshot.awayTeamName, { exact: false });
+
+  if ((await homeTeam.count()) > 0 && (await awayTeam.count()) > 0) {
+    await expect(homeTeam).toBeVisible();
+    await expect(awayTeam).toBeVisible();
+    return { label, matchId: snapshot.matchId, homeTeamName: snapshot.homeTeamName, awayTeamName: snapshot.awayTeamName };
+  }
+
+  const assigned = await assignNextOnCourt(page, label);
+  await expect(card.getByText(assigned.homeTeamName, { exact: false })).toBeVisible();
+  await expect(card.getByText(assigned.awayTeamName, { exact: false })).toBeVisible();
+  return { label, ...assigned };
+}
+
 async function setAutoSchedule(page: Page, enabled: boolean) {
   const button = page.getByRole("button", { name: /Auto Schedule/i }).first();
+  if ((await button.count()) === 0) {
+    expect(enabled).toBe(false);
+    return;
+  }
   await expect(button).toBeVisible();
   const text = (await button.textContent()) ?? "";
   const isOn = text.includes("ON");
@@ -109,7 +211,7 @@ async function submitKnockoutMatchFromMatches(page: Page, matchId: string) {
   return true;
 }
 
-test("Schedule realtime refreshes on GROUP completion when Auto Schedule is ON @regression", async ({
+test("Schedule realtime refreshes on GROUP completion with Auto Schedule disabled @regression", async ({
   browser,
 }) => {
   await ensureActiveGroupMatchId();
@@ -126,13 +228,12 @@ test("Schedule realtime refreshes on GROUP completion when Auto Schedule is ON @
   await loginAsAdmin(observerPage);
 
   await observerPage.goto("/schedule?stage=group");
-  await setAutoSchedule(observerPage, true);
+  await setAutoSchedule(observerPage, false);
 
-  const targetCourt = courtCard(observerPage, courtLabel(snapshot.courtId));
-  await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toBeVisible();
-  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toBeVisible();
+  const assignment = await ensureVisibleAssignmentOnCourt(observerPage, snapshot);
+  const targetCourt = courtCard(observerPage, assignment.label);
 
-  const submitted = await submitGroupMatchFromMatches(operatorPage, snapshot.matchId);
+  const submitted = await submitGroupMatchFromMatches(operatorPage, assignment.matchId);
   if (!submitted) {
     await operatorContext.close();
     await observerContext.close();
@@ -140,10 +241,13 @@ test("Schedule realtime refreshes on GROUP completion when Auto Schedule is ON @
     return;
   }
 
-  await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toHaveCount(0, {
+  await expect(targetCourt.getByText(assignment.homeTeamName, { exact: false })).toHaveCount(0, {
     timeout: 20_000,
   });
-  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toHaveCount(0, {
+  await expect(targetCourt.getByText(assignment.awayTeamName, { exact: false })).toHaveCount(0, {
+    timeout: 20_000,
+  });
+  await expect(targetCourt.getByText("No match assigned.")).toBeVisible({
     timeout: 20_000,
   });
 
@@ -151,7 +255,7 @@ test("Schedule realtime refreshes on GROUP completion when Auto Schedule is ON @
   await observerContext.close();
 });
 
-test("Schedule realtime refreshes on KNOCKOUT completion when Auto Schedule is ON @regression", async ({
+test("Schedule realtime refreshes on KNOCKOUT completion with Auto Schedule disabled @regression", async ({
   browser,
 }) => {
   await ensureActiveKnockoutMatchId();
@@ -168,13 +272,12 @@ test("Schedule realtime refreshes on KNOCKOUT completion when Auto Schedule is O
   await loginAsAdmin(observerPage);
 
   await observerPage.goto("/schedule?stage=ko");
-  await setAutoSchedule(observerPage, true);
+  await setAutoSchedule(observerPage, false);
 
-  const targetCourt = courtCard(observerPage, courtLabel(snapshot.courtId));
-  await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toBeVisible();
-  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toBeVisible();
+  const assignment = await ensureVisibleAssignmentOnCourt(observerPage, snapshot);
+  const targetCourt = courtCard(observerPage, assignment.label);
 
-  const submitted = await submitKnockoutMatchFromMatches(operatorPage, snapshot.matchId);
+  const submitted = await submitKnockoutMatchFromMatches(operatorPage, assignment.matchId);
   if (!submitted) {
     await operatorContext.close();
     await observerContext.close();
@@ -182,10 +285,13 @@ test("Schedule realtime refreshes on KNOCKOUT completion when Auto Schedule is O
     return;
   }
 
-  await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toHaveCount(0, {
+  await expect(targetCourt.getByText(assignment.homeTeamName, { exact: false })).toHaveCount(0, {
     timeout: 20_000,
   });
-  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toHaveCount(0, {
+  await expect(targetCourt.getByText(assignment.awayTeamName, { exact: false })).toHaveCount(0, {
+    timeout: 20_000,
+  });
+  await expect(targetCourt.getByText("No match assigned.")).toBeVisible({
     timeout: 20_000,
   });
 
@@ -213,13 +319,12 @@ test("Schedule realtime refreshes on GROUP completion when Auto Schedule is OFF 
   await observerPage.goto("/schedule?stage=group");
   await setAutoSchedule(observerPage, false);
 
-  const targetCourt = courtCard(observerPage, courtLabel(snapshot.courtId));
-  await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toBeVisible();
-  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toBeVisible();
+  const assignment = await ensureVisibleAssignmentOnCourt(observerPage, snapshot);
+  const targetCourt = courtCard(observerPage, assignment.label);
 
   const submitted = await submitRefereeScoreForCourt(refereePage, {
     stage: "GROUP",
-    court: courtLabel(snapshot.courtId),
+    court: assignment.label,
   });
   if (!submitted) {
     await observerContext.close();
@@ -228,10 +333,10 @@ test("Schedule realtime refreshes on GROUP completion when Auto Schedule is OFF 
     return;
   }
 
-  await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toHaveCount(0, {
+  await expect(targetCourt.getByText(assignment.homeTeamName, { exact: false })).toHaveCount(0, {
     timeout: 20_000,
   });
-  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toHaveCount(0, {
+  await expect(targetCourt.getByText(assignment.awayTeamName, { exact: false })).toHaveCount(0, {
     timeout: 20_000,
   });
   await expect(targetCourt.getByText("No match assigned.")).toBeVisible({
@@ -265,13 +370,12 @@ test("Schedule realtime refreshes on KNOCKOUT completion when Auto Schedule is O
   await observerPage.goto("/schedule?stage=ko");
   await setAutoSchedule(observerPage, false);
 
-  const targetCourt = courtCard(observerPage, courtLabel(snapshot.courtId));
-  await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toBeVisible();
-  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toBeVisible();
+  const assignment = await ensureVisibleAssignmentOnCourt(observerPage, snapshot);
+  const targetCourt = courtCard(observerPage, assignment.label);
 
   const submitted = await submitRefereeScoreForCourt(refereePage, {
     stage: "KNOCKOUT",
-    court: courtLabel(snapshot.courtId),
+    court: assignment.label,
   });
   if (!submitted) {
     await observerContext.close();
@@ -280,10 +384,10 @@ test("Schedule realtime refreshes on KNOCKOUT completion when Auto Schedule is O
     return;
   }
 
-  await expect(targetCourt.getByText(snapshot.homeTeamName, { exact: false })).toHaveCount(0, {
+  await expect(targetCourt.getByText(assignment.homeTeamName, { exact: false })).toHaveCount(0, {
     timeout: 20_000,
   });
-  await expect(targetCourt.getByText(snapshot.awayTeamName, { exact: false })).toHaveCount(0, {
+  await expect(targetCourt.getByText(assignment.awayTeamName, { exact: false })).toHaveCount(0, {
     timeout: 20_000,
   });
   await expect(targetCourt.getByText("No match assigned.")).toBeVisible({
