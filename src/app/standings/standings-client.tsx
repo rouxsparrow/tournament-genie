@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { formatAverageMetric } from "@/lib/format-average-metric";
+import { normalizeStandingsSummary } from "@/lib/public-read-models/standings-normalization";
 import type {
   CategoryCode,
   PublicCompletedMatch,
@@ -79,14 +80,15 @@ export function StandingsClient({
   errorMessage,
 }: StandingsClientProps) {
   const router = useRouter();
+  const normalizedInitialData = normalizeStandingsSummary(initialData);
   const [selectedCategory, setSelectedCategory] = useState<CategoryCode>(initialCategoryCode);
   const [summaryByCategory, setSummaryByCategory] = useState<
     Partial<Record<CategoryCode, PublicStandingsSummary>>
-  >({ [initialCategoryCode]: initialData });
+  >({ [initialCategoryCode]: normalizedInitialData });
   const [groupId, setGroupId] = useState(initialGroupId || "");
   const [loadingCategory, setLoadingCategory] = useState(false);
   const [collapsedMatchesByGroup, setCollapsedMatchesByGroup] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(initialData.groups.map((entry) => [entry.group.id, true]))
+    () => Object.fromEntries(normalizedInitialData.groups.map((entry) => [entry.group.id, true]))
   );
   const [matchesByGroupId, setMatchesByGroupId] = useState<Record<string, PublicCompletedMatch[]>>(
     {}
@@ -149,7 +151,7 @@ export function StandingsClient({
           cache: "no-store",
         });
         if (!response.ok) throw new Error("Unable to load standings summary.");
-        const payload = (await response.json()) as PublicStandingsSummary;
+        const payload = normalizeStandingsSummary((await response.json()) as PublicStandingsSummary);
         setSummaryByCategory((previous) => ({ ...previous, [categoryCode]: payload }));
         return payload;
       })();

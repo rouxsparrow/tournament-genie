@@ -6,6 +6,7 @@ import {
   type StandingsCategoryCode,
 } from "@/app/standings/actions";
 import { getPresentingState } from "@/app/schedule/actions";
+import { normalizeStandingsSummary } from "@/lib/public-read-models/standings-normalization";
 import {
   bracketsAllTag,
   bracketsCategoryTag,
@@ -54,7 +55,7 @@ export async function getCachedStandingsSummary(categoryCode: CategoryCode): Pro
   const cached = unstable_cache(
     async () => {
       const groupData = await computeStandingsForCategory(normalized);
-      return {
+      return normalizeStandingsSummary({
         categoryCode: normalized,
         groups: groupData.map((entry) => ({
           group: {
@@ -65,15 +66,15 @@ export async function getCachedStandingsSummary(categoryCode: CategoryCode): Pro
           standings: entry.standings,
           completedCount: entry.matches.filter((match) => match.status === "COMPLETED").length,
         })),
-      } satisfies PublicStandingsSummary;
+      } satisfies PublicStandingsSummary);
     },
-    ["public", "standings", "summary", normalized],
+    ["public", "standings", "summary", "v2", normalized],
     {
       tags: [standingsAllTag(), standingsCategoryTag(normalized)],
     }
   );
 
-  return cached();
+  return normalizeStandingsSummary(await cached());
 }
 
 export async function getCachedStandingsGroupMatches(
